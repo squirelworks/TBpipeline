@@ -88,7 +88,7 @@ def stages(bin_dir, book_path, debug=False):
 
     if run_reader:
         why = "--debug" if debug and not stage2_failed else "stage 2 did not open the book"
-        block = ["stage 3 file open and process", f"  on ({why})", f"  {book_path}"]
+        block = ["stage 2a open and process", f"  on ({why})", f"  {book_path}"]
         book = load(book_path)
         data = Path(book_path).read_bytes()
         magic = int.from_bytes(data[book.book_offset:book.book_offset + 4], "little")
@@ -102,26 +102,26 @@ def stages(bin_dir, book_path, debug=False):
             shown += 1
             if shown == 3:
                 break
-        note("03_process.txt", "\n".join(block))
+        note("02a_process.txt", "\n".join(block))
         lines.extend(block)
 
         html_path = note("render.html", render(book))
-        block = ["stage 4 file render", f"  wrote {html_path} ({html_path.stat().st_size} bytes)"]
-        note("04_render.txt", "\n".join(block))
+        block = ["stage 2b render", f"  wrote {html_path} ({html_path.stat().st_size} bytes)"]
+        note("02b_render.txt", "\n".join(block))
         lines.extend(block)
     else:
-        block = ["stage 3 file open and process", "  off (stage 2 opened the book; pass --debug to force)"]
-        note("03_process.txt", "\n".join(block))
+        block = ["stage 2a open and process", "  off (stage 2 opened the book; pass --debug to force)"]
+        note("02a_process.txt", "\n".join(block))
         lines.extend(block)
-        block = ["stage 4 file render", "  off"]
-        note("04_render.txt", "\n".join(block))
+        block = ["stage 2b render", "  off"]
+        note("02b_render.txt", "\n".join(block))
         lines.extend(block)
 
     files = sorted(p.name for p in DEBUG.iterdir() if p.is_file())
     prompt = f"Debug information is available in {DEBUG}"
-    lines.append("stage last")
-    lines.append(f"  {prompt}")
-    lines.append(f"  {', '.join(files)}")
+    block = ["stage 2c", f"  {prompt}", f"  {', '.join(files)}"]
+    note("02c.txt", "\n".join(block))
+    lines.extend(block)
     print(f"\n{prompt}", file=sys.stderr)
     return lines
 
