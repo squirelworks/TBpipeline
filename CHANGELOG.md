@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0r1
+
+Cleanup of 1.0.0. Same reader.
+
+- Removed generated files, caches, and the unused `host.py`.
+- WinXP is the preferred VM. Win98 is fine and is the decompile machine. Win11 and Linux are the goal, and they do not run ToolBook yet.
+
 ## 1.0.0
 
 First release. A book reader, not the ToolBook window.

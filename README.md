@@ -51,9 +51,9 @@ This release reads a book. It does not run ToolBook.
 
 The real window is `USER` and `GDI` inside `TB80RTM`. This host has neither, and the entry dies on an unresolved far call before it opens the book. `render.html` is the reader. It is not that window.
 
-Using ToolBook without a VM is the next goal. It is not this release.
+Using ToolBook without a VM is the next goal. It does not exist yet. Win11 and Linux are the machines that should run it. This project is what makes that happen.
 
-For the program itself: WinXP is the preferred machine. Win98 is the floor, and it is the one this decompile work has to use. Both are VMs. WineVDM is a separate Windows program and this command does not call it.
+Until then, WinXP is the preferred VM. Win98 is fine, and it is the one this decompile work uses.
 
 ## What 1.0.0 will not do
 
