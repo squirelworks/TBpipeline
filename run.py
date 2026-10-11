@@ -25,6 +25,7 @@ from unicorn.x86_const import UC_X86_REG_AX
 from .nedllhost.pass06 import Pass06
 
 OUT = Path(__file__).resolve().parent
+DEBUG = ROOT / ".debug"
 
 # Only ordinals we have pinned to USER. 1 and 5 are KERNEL at startup.
 USER = {
@@ -87,9 +88,15 @@ def stages(bin_dir, book_path):
             break
 
     lines.append("stage 4 file render")
-    html_path = OUT / "render.html"
+    DEBUG.mkdir(exist_ok=True)
+    html_path = DEBUG / "render.html"
     html_path.write_text(render(book), encoding="utf-8")
     lines.append(f"  wrote {html_path} ({html_path.stat().st_size} bytes)")
+
+    lines.append("stage 5 debug")
+    lines.append("  these files are for debugging purposes")
+    lines.append(f"  {DEBUG}")
+    lines.append("  TRACE.txt, render.html, RUN.txt")
     return lines
 
 
@@ -129,7 +136,9 @@ def main():
     pass06.UNPACKED = str(bin_dir)
     lines = stages(str(bin_dir), str(book))
     text = "\n".join(lines) + "\n"
-    (OUT / "RUN.txt").write_text(text, encoding="utf-8")
+    DEBUG.mkdir(exist_ok=True)
+    (DEBUG / "RUN.txt").write_text(text, encoding="utf-8")
+    (DEBUG / "TRACE.txt").write_text(text, encoding="utf-8")
     print(text, end="")
     return 0
 

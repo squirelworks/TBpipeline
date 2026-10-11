@@ -30,18 +30,19 @@ All three land in `tbpipeline/`.
 
 | File | Contents |
 |---|---|
-| `RUN.txt` | The four stages from `run.py` |
-| `TRACE.txt` | The four stages from `host.py` |
-| `render.html` | The pages: text and the quoted `P…` jumps |
+| `.debug/RUN.txt` | The five stages |
+| `.debug/TRACE.txt` | The same trace, written before the last line |
+| `.debug/render.html` | The pages: text and the quoted `P…` jumps |
 
-Open `render.html` in a browser. The blue bar is the book name. A button is a page id the handler quoted.
+Stage 5 says these files are for debugging purposes and puts them in `.debug/` at the repo root. Open `render.html` in a browser. The blue bar is the book name. A button is a page id the handler quoted.
 
-## The four stages
+## The five stages
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `unpacked/`, or in `$TBK_UNPACKED`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
 3. **Open and process.** Book magic `0x22222222`, page count, first three pages with text. On `9e954d01.tbk` the magic is at `0x9EC`.
-4. **Render.** Writes `render.html`.
+4. **Render.** Writes `.debug/render.html`.
+5. **Debug.** Says the files are for debugging purposes and leaves `RUN.txt`, `TRACE.txt`, and `render.html` in `.debug/`.
 
 ## What it will not do
 
