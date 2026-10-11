@@ -98,6 +98,7 @@ def document(title, payload, theme, script, extra=""):
 </div>
 <div class="extra">
   <button id="show" type="button">Show rendered files for this page</button>
+  <button id="resources" type="button">Resources extracted</button>
   <div id="files"></div>
 </div>
 <script>
@@ -245,6 +246,28 @@ document.getElementById("show").addEventListener("click", () => {
     box.appendChild(img);
   }
 });
+document.getElementById("resources").addEventListener("click", () => {
+  const box = document.getElementById("files");
+  const page = book.pages[engine.index];
+  const res = book.resources || { book: [], pages: {} };
+  const files = (res.pages && res.pages[page.id]) || [];
+  const bookFiles = res.book || [];
+  box.replaceChildren();
+  const head = document.createElement("p");
+  head.textContent = page.id + ": " + files.length + " on this page, " + bookFiles.length + " book-level.";
+  box.appendChild(head);
+  for (const src of files.concat(bookFiles)) {
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = src;
+    box.appendChild(img);
+  }
+  if (!files.length && !bookFiles.length) {
+    const p = document.createElement("p");
+    p.textContent = "Nothing extracted.";
+    box.appendChild(p);
+  }
+});
 """
 
 
@@ -284,10 +307,11 @@ def walked(book: Book) -> list[dict]:
     return pages
 
 
-def render_new(book: Book, theme="default", files=None) -> str:
+def render_new(book: Book, theme="default", files=None, resources=None) -> str:
     payload = json.dumps({
         "title": book.path.stem,
         "pages": walked(book),
         "files": files or {},
+        "resources": resources or {"book": [], "pages": {}},
     })
     return document(html.escape(book.path.stem), payload, theme, NEW_SCRIPT)

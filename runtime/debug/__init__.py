@@ -8,6 +8,7 @@ to open the book, or the caller passed debug=True.
 from pathlib import Path
 
 from .play import render_new, render_old
+from .resources import write as write_resources
 from .shapes import write as write_shapes
 from ..tbk import BOOK_MAGIC, load
 
@@ -44,10 +45,12 @@ def run(book_path, out, debug=False, stage2_failed=True, theme="default", render
         lines.extend(block)
 
         manifest = write_shapes(book, out)
+        resources = write_resources(book, data, out)
         html_path = out / "render.html"
-        html_path.write_text(render_new(book, theme, manifest), encoding="utf-8")
+        html_path.write_text(render_new(book, theme, manifest, resources), encoding="utf-8")
         wrote = [f"  wrote {html_path} ({html_path.stat().st_size} bytes) engine"]
         wrote.append(f"  render/ {len(manifest)} pages")
+        wrote.append(f"  resources/ {len(resources['book'])} book, {sum(len(v) for v in resources['pages'].values())} in pages")
         if render == "old":
             old_path = out / "render-old.html"
             old_path.write_text(render_old(book, theme), encoding="utf-8")
