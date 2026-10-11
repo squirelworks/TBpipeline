@@ -41,8 +41,10 @@ def render(book: Book) -> str:
 <title>{title}</title>
 <style>
   body {{ margin: 0; background: #1c2430; color: #e8eef6; font: 16px/1.45 Georgia, serif; }}
-  header {{ background: #1e4d8c; padding: 10px 16px; display: flex; justify-content: space-between; }}
+  header {{ background: #1e4d8c; padding: 10px 16px; display: flex; align-items: center; gap: 16px; }}
   header b {{ font-family: system-ui, sans-serif; }}
+  header select {{ font: 14px system-ui, sans-serif; padding: 4px 8px; min-width: 120px; }}
+  #count {{ margin-left: auto; }}
   main {{ max-width: 760px; margin: 24px auto; background: #f4f1e8; color: #1b1b1b; min-height: 420px; padding: 28px 32px 20px; }}
   p {{ margin: 0 0 12px; }}
   .empty {{ color: #666; font-style: italic; }}
@@ -53,7 +55,7 @@ def render(book: Book) -> str:
 </style>
 </head>
 <body>
-<header><b id="title"></b><span id="count"></span></header>
+<header><b id="title"></b><select id="pages"></select><span id="count"></span></header>
 <main id="stage"></main>
 <footer>
   <span>
@@ -66,12 +68,20 @@ def render(book: Book) -> str:
 const book = {payload};
 let i = 0;
 const stage = document.getElementById("stage");
+const menu = document.getElementById("pages");
 document.getElementById("title").textContent = book.title;
+for (const page of book.pages) {{
+  const opt = document.createElement("option");
+  opt.value = page.id;
+  opt.textContent = page.id;
+  menu.appendChild(opt);
+}}
 function show(n) {{
   i = Math.max(0, Math.min(book.pages.length - 1, n));
   const page = book.pages[i];
   document.getElementById("count").textContent = (i + 1) + " / " + book.pages.length;
   document.getElementById("pid").textContent = page.id;
+  menu.value = page.id;
   stage.replaceChildren();
   if (!page.text.length) {{
     const p = document.createElement("p");
@@ -103,6 +113,7 @@ function go(id) {{
 }}
 document.getElementById("next").addEventListener("click", () => show(i + 1));
 document.getElementById("back").addEventListener("click", () => show(i - 1));
+menu.addEventListener("change", () => go(menu.value));
 show(0);
 </script>
 </body>

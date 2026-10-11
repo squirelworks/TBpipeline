@@ -42,7 +42,7 @@ Each stage writes its file into `_debug/` as it finishes. The last stage tells y
 | `_debug/02_launch.txt` | Where the 16-bit entry stopped |
 | `_debug/03_process.txt` | Book magic, page count, first pages |
 | `_debug/04_render.txt` | Render note |
-| `_debug/render.html` | The pages |
+| `_debug/render.html` | The pages, with a page menu in the top bar |
 | `_debug/RUN.txt` | The whole run |
 
 ## Scope of 1.0.0r1
