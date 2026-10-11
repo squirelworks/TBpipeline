@@ -1,31 +1,31 @@
-ordinal 1 probe, stop at first far call
+ordinal 1 probe, FFFF imports bound to return stubs
   TB80ACX.DLL: not NE
-  TB80BAS.DLL: ord1 fixed seg 12:0x0 far call 0x14 9a0000ffff stack 0000 2000 0000 0000
-  TB80BMP.DLL: ord1 fixed seg 11:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TB80CMP.DLL: ord1 fixed seg 3:0x8e far call 0xf4e 9affff0000 stack 0064 0000 0066 0000
-  TB80ENU1.DLL: ord1 fixed seg 2:0x0 far call 0x1d 9affff0000 stack 0000 0000 0000 0000
+  TB80BAS.DLL: ord1 seg 12:0x0 called [none] unbound 0x14 9a0000ffff
+  TB80BMP.DLL: ord1 seg 11:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TB80CMP.DLL: ord1 seg 3:0x8e called [KERNEL.60, KERNEL.61, KERNEL.60, KERNEL.61, KERNEL.60, KERNEL.61, KERNEL.60, KERNEL.61] unbound 0x1540 9a5c150000
+  TB80ENU1.DLL: ord1 seg 2:0x0 called [USER.176] 0x30:0xf6a returned
   TB80ENU2.DLL: not NE
-  TB80FLT.DLL: ord1 fixed seg 3:0x0 far call 0x20 9a4b000000 stack 00c8 3f2e 3000 030b
-  TB80JPG.DLL: ord1 fixed seg 2:0x10 far call 0x43 9a82a17100 stack 0000 0000 0000 0114
-  TB80LNL.DLL: ord1 fixed seg 14:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TB80MM.DLL: ord1 fixed seg 2:0x0 far call 0x18 9affff0000 stack 0000 f000 0000 0401
+  TB80FLT.DLL: ord1 seg 3:0x0 called [none] unbound 0x20 9a4b000000
+  TB80JPG.DLL: ord1 seg 2:0x10 called [none] unbound 0x43 9a82a17100
+  TB80LNL.DLL: ord1 seg 14:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TB80MM.DLL: ord1 seg 2:0x0 called [USER.110] 0x30:0xf78 returned
   TB80OCX.DLL: ordinal 1 seg 11583 out of range
-  TB80OLE.DLL: ord1 fixed seg 3:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TB80RCR.DLL: ord1 fixed seg 3:0x82 far call 0x8e 9a62aa0f00 stack 2000 0001 0000 0030
+  TB80OLE.DLL: ord1 seg 3:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TB80RCR.DLL: ord1 seg 3:0x82 called [none] unbound 0x8e 9a62aa0f00
   TB80RMT.DLL: not NE
-  TB80UTL.DLL: ord1 fixed seg 4:0x278c ran 0x30:0x3ce no far call
-  TB80VBX.DLL: ord1 fixed seg 3:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TB80W16.DLL: ord1 fixed seg 2:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TB80UTL.DLL: ord1 seg 4:0x278c called [none] 0x30:0xf86 returned
+  TB80VBX.DLL: ord1 seg 3:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TB80W16.DLL: ord1 seg 2:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
   TB80W32.DLL: not NE
-  TBCBT.DLL: ord1 fixed seg 3:0x3c far call 0x5d 9a4400ffff stack 0000 0000 0000 0000
-  TBDB3.DLL: ord1 fixed seg 2:0x1d24 ran 0x30:0x3ce no far call
-  TBDLG.DLL: ord1 fixed seg 2:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TBDOS.DLL: ord1 fixed seg 4:0x258 far call 0x267 9a81020000 stack 0001 0000 0000 2000
-  TBFILE32.DLL: ord1 fixed seg 2:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TBPDX.DLL: ord1 fixed seg 2:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TBREG.DLL: ord1 fixed seg 3:0x0 ran 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
-  TBWIN.DLL: ord1 fixed seg 7:0x0 far call 0xfd 9affff0000 stack 0000 0000 0000 3ff6
+  TBCBT.DLL: ord1 seg 3:0x3c called [none] unbound 0x5d 9a4400ffff
+  TBDB3.DLL: ord1 seg 2:0x1d24 called [none] 0x30:0xf86 returned
+  TBDLG.DLL: ord1 seg 2:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TBDOS.DLL: ord1 seg 4:0x258 called [KERNEL.107] unbound 0x280 9affff0000
+  TBFILE32.DLL: ord1 seg 2:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TBPDX.DLL: ord1 seg 2:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TBREG.DLL: ord1 seg 3:0x0 called [none] 0x1000:0xc Invalid instruction (UC_ERR_INSN_INVALID)
+  TBWIN.DLL: ord1 seg 7:0x0 called [GDI.52] 0x30:0xf6c returned
   TB80MAIN.EXE: not NE
-  TB80NET.EXE: ord1 fixed seg 3:0x202 far call 0x65e 9affff0000 stack 0000 0000 0000 0000
-  TB80RTM.EXE: ord1 fixed seg 20:0x0 far call 0x286 9a8815ffff stack 0000 0000 0000 0000
+  TB80NET.EXE: ord1 seg 3:0x202 called [USER.107] 0x30:0xf48 returned
+  TB80RTM.EXE: ord1 seg 20:0x0 called [none] unbound 0x286 9a8815ffff
   TB80RUN.EXE: not NE

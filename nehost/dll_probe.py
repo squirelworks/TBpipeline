@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Call ordinal 1 of each unpacked 16-bit ToolBook DLL.
+"""Call ordinal 1 of each unpacked 16-bit DLL, with FFFF imports bound.
 
-This is the path taken when TB80RTM does not open the book. Each DLL is
-loaded the way TBKBITMAP was: its first export, real mode, stop at the
-first far call. 32-bit images are skipped.
+A FFFF far call is a type-3 reloc: module index and ordinal. Each one is
+patched to a stub that returns. The log says which ordinals ran, and
+where the next unbound call is.
 """
 
 import struct
@@ -28,6 +28,18 @@ def ne_at(buf):
     return off
 
 
+def modules(buf, ne):
+    cmod = struct.unpack_from("<H", buf, ne + 0x1E)[0]
+    modtab = struct.unpack_from("<H", buf, ne + 0x28)[0]
+    imptab = struct.unpack_from("<H", buf, ne + 0x2A)[0]
+    out = []
+    for i in range(cmod):
+        nameoff = struct.unpack_from("<H", buf, ne + modtab + i * 2)[0]
+        n = buf[ne + imptab + nameoff]
+        out.append(buf[ne + imptab + nameoff + 1:ne + imptab + nameoff + 1 + n].decode("ascii", "replace"))
+    return out
+
+
 def first_ordinal(buf, ne):
     enttab = struct.unpack_from("<H", buf, ne + 0x04)[0]
     cbenttab = struct.unpack_from("<H", buf, ne + 0x06)[0]
@@ -42,15 +54,15 @@ def first_ordinal(buf, ne):
         off += 2
         for _ in range(count):
             if kind == 0xFF:
-                flags, _int3f, seg, entry = struct.unpack_from("<BBHH", buf, off)
+                _flags, _int3f, seg, entry = struct.unpack_from("<BBHH", buf, off)
                 off += 6
                 if ordinal == 1:
-                    return seg, entry, "movable"
+                    return seg, entry
             elif kind != 0:
-                flags, entry = struct.unpack_from("<BH", buf, off)
+                _flags, entry = struct.unpack_from("<BH", buf, off)
                 off += 3
                 if ordinal == 1:
-                    return kind, entry, "fixed"
+                    return kind, entry
             ordinal += 1
         if ordinal > 1:
             break
@@ -64,6 +76,23 @@ def segment(buf, ne, index):
     return bytearray(buf[(sec << shift):(sec << shift) + ln])
 
 
+def imports(buf, ne, seg):
+    names = modules(buf, ne)
+    segtab = struct.unpack_from("<H", buf, ne + 0x22)[0]
+    shift = struct.unpack_from("<H", buf, ne + 0x32)[0] or 9
+    sec, ln, fl, alloc = struct.unpack_from("<HHHH", buf, ne + segtab + (seg - 1) * 8)
+    if not fl & 0x0100:
+        return {}
+    base = sec << shift
+    count = struct.unpack_from("<H", buf, base + ln)[0]
+    found = {}
+    for n in range(count):
+        typ, flags, src, mod, ordinal = struct.unpack_from("<BBHHH", buf, base + ln + 2 + n * 8)
+        if typ == 3 and flags & 1 and 1 <= mod <= len(names):
+            found[src - 1] = (names[mod - 1], ordinal)
+    return found
+
+
 def probe(path):
     buf = path.read_bytes()
     ne = ne_at(buf)
@@ -72,18 +101,32 @@ def probe(path):
     found = first_ordinal(buf, ne)
     if not found:
         return f"{path.name}: no ordinal 1"
-    seg, entry, kind = found
+    seg, entry = found
     if seg == 0 or seg > struct.unpack_from("<H", buf, ne + 0x1C)[0]:
         return f"{path.name}: ordinal 1 seg {seg} out of range"
     autodata = struct.unpack_from("<H", buf, ne + 0x0E)[0]
-    code = segment(buf, ne, seg)
+    code = bytearray(segment(buf, ne, seg))
     data = segment(buf, ne, autodata) if autodata else bytearray(0x100)
     data += b"\x00" * (0x8000 - len(data))
+
+    bound = imports(buf, ne, seg)
+    stubs = {}
+    for at, (mod, ordinal) in bound.items():
+        if at < 0 or at + 5 > len(code) or code[at] != 0x9A:
+            continue
+        slot = len(stubs)
+        stubs[slot] = f"{mod}.{ordinal}"
+        struct.pack_into("<HH", code, at + 1, slot * 4, 0x4000)
 
     uc = Uc(UC_ARCH_X86, UC_MODE_16)
     uc.mem_map(0, 0x80000)
     uc.mem_write(0x10000, bytes(code[:0x10000]))
     uc.mem_write(0x20000, bytes(data[:0x8000]))
+    stub = bytearray(0x800)
+    for slot in range(len(stubs)):
+        stub[slot * 4:slot * 4 + 4] = b"\xb8" + struct.pack("<H", slot) + b"\xcb"
+    uc.mem_write(0x40000, bytes(stub))
+
     stack = 0x4000
     frame = struct.pack("<HHHH", 0, 0x30, 0, 0)
     uc.mem_write(0x30000 + stack - len(frame), frame)
@@ -93,34 +136,41 @@ def probe(path):
     uc.reg_write(UC_X86_REG_SS, 0x3000)
     uc.reg_write(UC_X86_REG_SP, stack - len(frame))
 
+    hits = []
     stop = {}
 
     def on_code(uc, address, size, user):
+        if 0x40000 <= address < 0x40800:
+            slot = (address - 0x40000) // 4
+            if slot in stubs and (not hits or hits[-1] != stubs[slot]):
+                hits.append(stubs[slot])
+            return
         if not (0x10000 <= address < 0x10000 + len(code)):
             return
         ip = address - 0x10000
         if ip + 5 <= len(code) and code[ip] == 0x9A:
-            sp = uc.reg_read(UC_X86_REG_SP)
-            frame = bytes(uc.mem_read(0x30000 + sp, 8))
-            stop["at"] = (ip, bytes(code[ip:ip + 5]), frame)
+            sel = struct.unpack_from("<H", code, ip + 3)[0]
+            if sel == 0x4000:
+                return
+            stop["at"] = (ip, bytes(code[ip:ip + 5]))
             uc.emu_stop()
 
     uc.hook_add(UC_HOOK_CODE, on_code)
     try:
-        uc.emu_start(0x10000 + entry, 0, count=500)
+        uc.emu_start(0x10000 + entry, 0, count=2000)
     except Exception as exc:
         stop["fault"] = str(exc)
     cs = uc.reg_read(UC_X86_REG_CS)
     ip = uc.reg_read(UC_X86_REG_IP)
+    called = ", ".join(hits[:8]) or "none"
     if "at" in stop:
-        at, raw, frame = stop["at"]
-        words = " ".join(f"{w:04x}" for w in struct.unpack("<4H", frame))
-        return f"{path.name}: ord1 {kind} seg {seg}:{entry:#x} far call {at:#x} {raw.hex()} stack {words}"
-    return f"{path.name}: ord1 {kind} seg {seg}:{entry:#x} ran {cs:#x}:{ip:#x} {stop.get('fault', 'no far call')}"
+        at, raw = stop["at"]
+        return f"{path.name}: ord1 seg {seg}:{entry:#x} called [{called}] unbound {at:#x} {raw.hex()}"
+    return f"{path.name}: ord1 seg {seg}:{entry:#x} called [{called}] {cs:#x}:{ip:#x} {stop.get('fault', 'returned')}"
 
 
 def main():
-    lines = ["ordinal 1 probe, stop at first far call"]
+    lines = ["ordinal 1 probe, FFFF imports bound to return stubs"]
     for path in sorted(UNPACKED.glob("TB*.DLL")) + sorted(UNPACKED.glob("TB*.EXE")):
         try:
             lines.append("  " + probe(path))
