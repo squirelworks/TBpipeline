@@ -19,3 +19,9 @@ python3 -m tbpipeline.nehost.bmp_bitmap
 ```
 
 Calls unpacked `TB80BMP` ordinal 3 (`TBKBITMAP`, segment 3 offset `0x3E0`) and stops at the first far call, `0x1FCD`. The selector there is a reloc and is not bound. The log is `nehost/bmp_bitmap.txt`.
+
+```
+python3 -m tbpipeline.nehost.dll_probe
+```
+
+Calls ordinal 1 of every unpacked 16-bit DLL and stops at the first far call. 32-bit images are skipped. The log is `nehost/dll_probe.txt`.
