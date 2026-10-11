@@ -115,12 +115,17 @@ def write(book: Book, out: Path) -> dict:
     folder.mkdir(exist_ok=True)
     manifest = {}
     for page in book.pages:
+        files = []
         shapes = polygons(page.blob)
-        lines = curves(page.blob)
-        if not shapes and not lines:
-            continue
-        name = f"{page.name}.png"
-        draw(shapes, lines, folder / name)
-        manifest[page.name] = [f"render/{name}"]
+        if shapes:
+            name = f"{page.name}.png"
+            draw(shapes, [], folder / name)
+            files.append(f"render/{name}")
+        for n, run in enumerate(curves(page.blob), 1):
+            name = f"{page.name}_curve_{n}.png"
+            draw([], [run], folder / name)
+            files.append(f"render/{name}")
+        if files:
+            manifest[page.name] = files
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
