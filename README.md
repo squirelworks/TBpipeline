@@ -37,9 +37,9 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
-3. **2a. Open and process.** Debug route, in `runtime/debug`. Off unless stage 2 failed to open the book, or you passed `--debug`.
-4. **2b. Render.** Off with 2a. Writes `render.html`. `--render old` also writes `render-old.html`.
-5. **2c.** Says the debug folder is there.
+3. **2a. Open and process.** Not reached if stage 2 opened the book, unless you passed `--debug`.
+4. **2b. Render.** Not reached with 2a. Writes `render.html`. `--render old` also writes `render-old.html`.
+5. **2c.** Not reached with 2a. Says the debug folder is there.
 
 | File | What it is |
 |---|---|

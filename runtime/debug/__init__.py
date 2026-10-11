@@ -54,12 +54,8 @@ def run(book_path, out, debug=False, stage2_failed=True, theme="default", render
         (out / "02b_render.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
         lines.extend(block)
     else:
-        block = ["stage 2a open and process", "  off (stage 2 opened the book; pass --debug to force)"]
-        (out / "02a_process.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
-        lines.extend(block)
-        block = ["stage 2b render", "  off"]
-        (out / "02b_render.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
-        lines.extend(block)
+        lines.append("stage 2a not reached (stage 2 opened the book; pass --debug to force)")
+        return lines, ""
 
     files = sorted(p.name for p in out.iterdir() if p.is_file())
     drawn = sorted(p.stem for p in (out / "render").glob("*.png")) if (out / "render").is_dir() else []
