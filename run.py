@@ -56,7 +56,7 @@ def note(name, text):
     return path
 
 
-def stages(bin_dir, book_path):
+def stages(bin_dir, book_path, debug=False):
     lines = []
 
     block = ["stage 1 startup", f"  bin {bin_dir}"]
@@ -83,28 +83,39 @@ def stages(bin_dir, book_path):
     block.append(f"  engine opens {host.opens or 'none'}")
     note("02_launch.txt", "\n".join(block))
     lines.extend(block)
+    stage2_failed = not host.opens or bool(host.fault)
+    run_reader = debug or stage2_failed
 
-    block = ["stage 3 file open and process", f"  {book_path}"]
-    book = load(book_path)
-    data = Path(book_path).read_bytes()
-    magic = int.from_bytes(data[book.book_offset:book.book_offset + 4], "little")
-    block.append(f"  book at {book.book_offset:#x} magic {magic:#x} ok {magic == BOOK_MAGIC} pages {len(book.pages)}")
-    shown = 0
-    for page in book.pages:
-        text = [f.text for f in page.fields] + [p for p in page.paragraphs if p not in [f.text for f in page.fields]]
-        if not text:
-            continue
-        block.append(f"  {page.name} @{page.offset:#x} {text[0][:80]}")
-        shown += 1
-        if shown == 3:
-            break
-    note("03_process.txt", "\n".join(block))
-    lines.extend(block)
+    if run_reader:
+        why = "--debug" if debug and not stage2_failed else "stage 2 did not open the book"
+        block = ["stage 3 file open and process", f"  on ({why})", f"  {book_path}"]
+        book = load(book_path)
+        data = Path(book_path).read_bytes()
+        magic = int.from_bytes(data[book.book_offset:book.book_offset + 4], "little")
+        block.append(f"  book at {book.book_offset:#x} magic {magic:#x} ok {magic == BOOK_MAGIC} pages {len(book.pages)}")
+        shown = 0
+        for page in book.pages:
+            text = [f.text for f in page.fields] + [p for p in page.paragraphs if p not in [f.text for f in page.fields]]
+            if not text:
+                continue
+            block.append(f"  {page.name} @{page.offset:#x} {text[0][:80]}")
+            shown += 1
+            if shown == 3:
+                break
+        note("03_process.txt", "\n".join(block))
+        lines.extend(block)
 
-    html_path = note("render.html", render(book))
-    block = ["stage 4 file render", f"  wrote {html_path} ({html_path.stat().st_size} bytes)"]
-    note("04_render.txt", "\n".join(block))
-    lines.extend(block)
+        html_path = note("render.html", render(book))
+        block = ["stage 4 file render", f"  wrote {html_path} ({html_path.stat().st_size} bytes)"]
+        note("04_render.txt", "\n".join(block))
+        lines.extend(block)
+    else:
+        block = ["stage 3 file open and process", "  off (stage 2 opened the book; pass --debug to force)"]
+        note("03_process.txt", "\n".join(block))
+        lines.extend(block)
+        block = ["stage 4 file render", "  off"]
+        note("04_render.txt", "\n".join(block))
+        lines.extend(block)
 
     files = sorted(p.name for p in DEBUG.iterdir() if p.is_file())
     prompt = f"Debug information is available in {DEBUG}"
@@ -138,18 +149,18 @@ def resolve(argv):
     book = Path(course).expanduser()
     if not book.is_file():
         book = bin_dir / "courses" / course
-    return bin_dir, book
+    return bin_dir, book, "--debug" in argv
 
 
 def main():
-    bin_dir, book = resolve(sys.argv[1:])
+    bin_dir, book, debug = resolve(sys.argv[1:])
     if not book.is_file():
         print(f"not a book: {book}", file=sys.stderr)
         print("usage: python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
         print("       python3 -m tbpipeline 9e954d01.tbk", file=sys.stderr)
         return 2
     pass06.UNPACKED = str(bin_dir)
-    lines = stages(str(bin_dir), str(book))
+    lines = stages(str(bin_dir), str(book), debug)
     text = "\n".join(lines) + "\n"
     note("RUN.txt", text)
     print(text, end="")

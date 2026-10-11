@@ -32,8 +32,8 @@ Each stage writes its file into `_debug/` as it finishes. The last stage tells y
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
-3. **Open and process.** Book magic `0x22222222`, page count, first pages with text.
-4. **Render.** Writes `_debug/render.html`.
+3. **Open and process.** Debug route. Off unless stage 2 failed to open the book, or you passed `--debug`. Then it reads the book itself: magic `0x22222222`, page count, first pages with text.
+4. **Render.** Off with stage 3. When stage 3 runs, writes `_debug/render.html`.
 5. **Last.** Prompts that debug information is available in `_debug/`.
 
 | File | Stage |
