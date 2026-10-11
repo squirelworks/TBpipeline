@@ -1,4 +1,4 @@
-# TBpipeline 1.0.0r2
+# TBpipeline 1.0.0r3
 
 Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It is not the ToolBook window.
 
@@ -54,11 +54,11 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 
 ## Scope
 
-This cut is the reader, split and polished. It does not draw the book.
+This cut is the debugging. The reader is unchanged. What is new is what a run shows you.
 
-`render.html` has the page text and the quoted `P…` jumps. It does not have the pictures, the polygons, or the widget bounds. Graphics are the next goal.
+`render/` holds shapes that can be drawn and are not placed. A button under the reader shows the files for the current page. `nehost/bmp_bitmap.py` calls `TB80BMP` ordinal 3 and stops at the unbound call. `nehost/scaffold.py` walks the later ordinals of the working DLLs.
 
-`2.0.0` is total functionality. It is not this release.
+Graphics are still not placed. `2.0.0` is total functionality. It is not this release.
 
 WinXP is the preferred VM. Win98 is fine and is the decompile machine. Win11 and Linux are where it should eventually run.
 

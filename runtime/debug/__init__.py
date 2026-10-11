@@ -62,8 +62,14 @@ def run(book_path, out, debug=False, stage2_failed=True, theme="default", render
         lines.extend(block)
 
     files = sorted(p.name for p in out.iterdir() if p.is_file())
+    drawn = sorted(p.stem for p in (out / "render").glob("*.png")) if (out / "render").is_dir() else []
     prompt = f"Debug information is available in {out}"
-    block = ["stage 2c", f"  {prompt}", f"  {', '.join(files)}"]
+    block = [
+        "stage 2c",
+        f"  {prompt}",
+        f"  {', '.join(files)}",
+        f"  render/ {len(drawn)} pages that can be drawn and are not placed",
+    ]
     (out / "02c.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
     lines.extend(block)
     return lines, prompt

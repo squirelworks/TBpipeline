@@ -2,7 +2,12 @@
 
 ## 1.0.0r3
 
-Not started as a release. Scaffolding is `nehost/scaffold.py`.
+The debugging, visible.
+
+- Each run writes `render/` beside the reader: one PNG per page with drawable polygons, and a button under the reader shows the files for the current page.
+- `TB80BMP` ordinal 3 is callable. It stops at the unbound far call at `0x1FCD`.
+- `FFFF` imports bind to the ordinal they name. Six DLLs get past that wall.
+- `nehost/scaffold.py` walks the later ordinals. Ordinal 1 is startup.
 
 ## 1.0.0r2
 
