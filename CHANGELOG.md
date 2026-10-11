@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0r2
+
+Prepared. Not tagged.
+
+- Debug route is stage 2a, 2b, 2c, in `runtime/debug/`.
+- Each run writes `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`, beside the script.
+- `render.html` is the engine reader. `render-old.html` is the old index reader.
+- `--theme default` is a Windows 95 window. `--theme modern` is the dark reader.
+- `--debug` forces the reader.
+- Graphics are still the next goal. `2.0.0` is not this release.
+
 ## 1.0.0r1
 
 Cleanup of 1.0.0. Same reader.

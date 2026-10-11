@@ -1,13 +1,11 @@
 # runtime/debug
 
-The debug route for the book reader.
+The debug route for the book reader. Off unless stage 2 failed to open the book, or you passed `--debug`.
 
-| File | Stage |
+| File | What it is |
 |---|---|
-| `__init__.py` | 2a opens the book, 2b writes `render.html` and `render-old.html`, 2c says the files are there |
-| `play.py` | `render_new` is the engine reader, written as `render.html`. `render_old` is the old index reader. |
-
-Off unless stage 2 failed to open the book, or you passed `--debug`.
+| `__init__.py` | 2a opens the book, 2b writes the readers, 2c says the folder is there |
+| `play.py` | `render.html` is the engine reader. `render-old.html` is the old index reader. |
 
 ```
 python3 -m tbpipeline.runtime.debug --b ~/TBK/bin --c 9e954d01.tbk

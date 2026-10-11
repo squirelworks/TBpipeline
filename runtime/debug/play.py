@@ -233,9 +233,6 @@ def write(book: Book, dest: str | Path, theme="default") -> Path:
     return dest
 
 
-render = render_old
-
-
 def walked(book: Book) -> list[dict]:
     """Pages in the order engine.py walks them. Works for a .tbk or a .sbk."""
     engine = Engine(book)

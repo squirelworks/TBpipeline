@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Pipeline rewrite. One command, four stages, a USER stub.
+"""Pipeline host. Stage 1, stage 2, then the debug route.
 
-  python3 artifacts/pipeline/run.py [book.tbk]
+  python3 -m tbpipeline --b ~/TBK/bin --c book.tbk
 
 Startup is the SoftICE load order. Launch is the TB80RUN handoff to
 TB80NET. The 16-bit side is the Unicorn host with a USER stub:
-ordinal 266 is SetMessageQueue and returns 1. Open, process, and
-render then read the book the engine never reached.
+ordinal 266 is SetMessageQueue and returns 1. If that does not open
+the book, runtime/debug reads it and writes the reader.
 """
 
 import os
@@ -25,7 +25,6 @@ pass06.UNPACKED = os.environ.get("TBK_UNPACKED", str(ROOT / "bin"))
 from unicorn.x86_const import UC_X86_REG_AX
 from .nedllhost.pass06 import Pass06
 
-OUT = Path(__file__).resolve().parent
 DEBUG = HERE / "_debug"
 
 
