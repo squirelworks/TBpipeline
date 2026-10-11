@@ -1,6 +1,6 @@
 book /workspace/artifacts/courses/9e954d01.tbk
-stopped 0x20:0x13f7 cb8f065020 returned
+stopped 0x0:0x0  dos exit 0x0
 opens []
 skipped []
 names ['___EXPORTEDSTUB', 'CDBGETVALUEEX', 'CDBSETVALUEEX', 'CDBSENDVALUEEX']
-calls [91, 3, 30, 5, 'dos35', 'dos25', 1, 1, 1, 23, 5, 24, 49, 131, 23, 5, 24, 23, 5, 24, 266, 77, 70, 15, 18, 15, 18, 14, 76, 7, 19, 17, 19, 17, 3, 8, 52, 52, 52, 5]
+calls [91, 3, 30, 5, 'dos35', 'dos25', 1, 1, 1, 23, 5, 24, 49, 131, 23, 5, 24, 23, 5, 24, 266, 77, 70, 15, 18, 15, 18, 14, 76, 7, 19, 17, 19, 17, 3, 179, 363, 46, 90, 5]

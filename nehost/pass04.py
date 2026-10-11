@@ -793,8 +793,11 @@ class Pass04:
             uc.reg_write(UC_X86_REG_DI, self.segs[139])
             uc.reg_write(UC_X86_REG_ES, self.psp)
             return
-        if ordinal == 3:
+        if ordinal == 3 and (not self.pending or self.pending[0] == "KERNEL"):
             uc.reg_write(UC_X86_REG_AX, 0x0A03)
+            return
+        if self.pending and self.pending[0] == "TB80UTL" and ordinal == 3:
+            self._strmgr()
             return
         if ordinal == 132:
             # Enhanced-mode 386: PMODE|CPU386|ENHANCED|80x87|PAGING.
@@ -834,6 +837,26 @@ class Pass04:
                 return
         uc.reg_write(UC_X86_REG_AX, 1)
         uc.reg_write(UC_X86_REG_DX, 0)
+
+    def _strmgr(self):
+        """TB80UTL.3 GETSTRMGRSTRING. Pascal, five words.
+
+        length is the last push. An empty first byte at DS:0x41F2 is the
+        check that jumps to the CRT exit, so a missing table still has to
+        leave a string there. 0x0FBD is the product-name id.
+        """
+        length = self._word(0) or 1
+        seg, off = self._word(2), self._word(1)
+        key = (self._word(4) << 16) | self._word(3)
+        text = self._manager_string(key)
+        self._copy_to(seg, off, text, length)
+        self.uc.reg_write(UC_X86_REG_AX, 1 if text else 0)
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+
+    def _manager_string(self, key):
+        return {
+            0x0FBD: "ToolBook II",
+        }.get(key, "ToolBook")
 
     def _on_intr(self, uc, intno, user):
         if intno == 0x21:

@@ -1,0 +1,6 @@
+book /workspace/artifacts/courses/9e954d01.tbk
+stopped 0x0:0x0  dos exit 0x0
+opens ['C:\\TOOLBOOK\\TB80.INI', 'C:\\WINDOWS\\asym\\runtime\\TB80.INI', 'C:\\TOOLBOOK\\TB80enu', 'C:\\TOOLBOOK\\TB80.INI', 'C:\\WINDOWS\\asym\\runtime\\TB80.INI']
+dll entries bound 580
+skipped []
+calls [4, 3, 102, 1, 1, 131, 23, 5, 24, 23, 5, 24, 4, 24, 118, 24, 24, 15, 18, 118, 118, 291, 49, 47]
