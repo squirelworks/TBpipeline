@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0
+
+The book reader. Same tree as 1.0.0r1, named for what it is.
+
+- `python3 -m tbpipeline --b <bin> --c <book>` runs startup, launch, open, render.
+- Each stage writes its file into `.debug/`. The last stage says the debug information is there.
+- `runtime`, `nehost`, and `nedllhost` each run on their own.
+- OPTLOADER unpacker credits moralrecordings' `optloader.py`.
+- Next goal is a `render.html` that faithfully reproduces a book, especially the graphics.
+
 ## 1.0.0r1
 
 Cleanup of 1.0.0. Same reader.

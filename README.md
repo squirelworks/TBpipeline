@@ -1,4 +1,4 @@
-# TBpipeline 1.0.0
+# TBpipeline 2.0.0
 
 Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It is not the ToolBook window.
 
@@ -45,17 +45,15 @@ Each stage writes its file into `.debug/` as it finishes. The last stage tells y
 | `.debug/render.html` | The pages |
 | `.debug/RUN.txt` | The whole run |
 
-## Scope of 1.0.0
+## Scope of 2.0.0
 
-This release reads a book. It does not run ToolBook.
+This release reads a book and writes a page reader. It does not draw the book.
 
-The real window is `USER` and `GDI` inside `TB80RTM`. This host has neither, and the entry dies on an unresolved far call before it opens the book. `render.html` is the reader. It is not that window.
+`render.html` has the page text and the quoted `P…` jumps. It does not have the pictures, the polygons, or the widget bounds. A faithful reproduction, especially the graphics, is the next goal. That needs more of the book format and more of the decompile.
 
-Using ToolBook without a VM is the next goal. It does not exist yet. Win11 and Linux are the machines that should run it. This project is what makes that happen.
+Using ToolBook without a VM is later. It is not this goal. WinXP is the preferred VM. Win98 is fine and is the decompile machine. Win11 and Linux are where it should eventually run.
 
-Until then, WinXP is the preferred VM. Win98 is fine, and it is the one this decompile work uses.
-
-## What 1.0.0 will not do
+## What 2.0.0 will not do
 
 - Open the book from the engine.
 - Draw widget bounds or ToolBook compressed pictures.
