@@ -654,6 +654,48 @@ class Pass04:
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
 
+    def _com_unk(self):
+        """One IUnknown whose Query/AddRef/Release just return."""
+        pair = getattr(self, "_com_pair", None)
+        if pair:
+            return pair
+        code = self.arena.alloc_selector(16, 0x9A, b"\xb8\x01\x00\xcb" + bytes(12))
+        vt = bytearray(24)
+        for slot in range(6):
+            struct.pack_into("<HH", vt, slot * 4, 0, code)
+        vsel = self.arena.alloc_selector(len(vt), 0x92, bytes(vt))
+        obj = struct.pack("<HHH", 0, vsel, 1) + bytes(10)
+        osel = self.arena.alloc_selector(16, 0x92, obj)
+        self._com_pair = (0, osel)
+        return self._com_pair
+
+    def _store(self, seg, off, data):
+        info = self.arena.segs.get(seg)
+        if not info or off + len(data) > info["size"]:
+            return
+        self.arena.write(seg, off, data)
+
+    def _oleapi(self):
+        """HRESULT 0. AX=1 made CreateDispTypeInfo fail and Release(NULL)."""
+        mod, ordinal = self.pending[0], self.pending[1]
+        uc = self.uc
+        if mod == "OLE2DISP" and ordinal in (31, 32):
+            off, seg = self._com_unk()
+            self._store(self._word(1), self._word(0), struct.pack("<HH", off, seg))
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if (mod == "COMPOBJ" and ordinal == 5) or (mod == "OLE2DISP" and ordinal == 35):
+            self._store(self._word(1), self._word(0), struct.pack("<I", 1))
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if (mod == "COMPOBJ" and ordinal == 6) or (mod == "OLE2DISP" and ordinal == 36):
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        return False
+
     def _kernel_string(self, ordinal):
         """Far-string helpers. A stub return of 1 was loaded as a selector."""
         uc = self.uc
@@ -781,6 +823,15 @@ class Pass04:
             return
         if self.pending and self.pending[0] == "USER" and self._user(ordinal):
             return
+        if self.pending and self.pending[0] in ("COMPOBJ", "OLE2", "OLE2DISP") and self._oleapi():
+            return
+        # KERNEL.102 is DOS3Call. The CRT exit path sets AH=4Ch and calls
+        # it instead of int 21h when __WINFLAGS says protected mode. A
+        # stub return made exit() fall into R6021.
+        if self.pending and self.pending[0] == "KERNEL" and ordinal == 102:
+            if ((uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF) == 0x4C:
+                self._dos()
+                return
         uc.reg_write(UC_X86_REG_AX, 1)
         uc.reg_write(UC_X86_REG_DX, 0)
 

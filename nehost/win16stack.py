@@ -124,4 +124,15 @@ POP = {
         616: 2, 650: 0, 701: 0, 702: 0, 703: 0, 704: 0, 820: 0, 821: 0, 822: 0, 823: 0, 824: 0, 1000: 6,
         1001: 0,
     },
+    # 16-bit OLE pascal sizes, checked against the TB80OLE call sites.
+    'COMPOBJ': {
+        5: 20,   # CoRegisterClassObject(ptr ptr long long ptr)
+        6: 4,    # CoRevokeClassObject(long)
+    },
+    'OLE2DISP': {
+        31: 12,  # CreateDispTypeInfo(ptr long ptr)
+        32: 16,  # CreateStdDispatch(ptr ptr ptr ptr)
+        35: 16,  # RegisterActiveObject(ptr ptr long ptr)
+        36: 8,   # RevokeActiveObject(long ptr)
+    },
 }

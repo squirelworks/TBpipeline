@@ -245,7 +245,7 @@ class Pass06(Pass04):
     def _bind(self, sel, atype, fl, disp, t1, t2):
         info = self.arena.segs[sel]
         seen = set()
-        while disp not in (0, 0xFFFF) and disp not in seen and disp + 4 <= info["size"]:
+        while disp not in (0, 0xFFFF) and disp not in seen and disp + (4 if atype == 3 else 2) <= info["size"]:
             seen.add(disp)
             nxt = int.from_bytes(self.arena.read(sel, disp, 2), "little")
             stub = self._import_stub(fl, t1, t2)
