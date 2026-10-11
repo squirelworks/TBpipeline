@@ -7,7 +7,7 @@ to open the book, or the caller passed debug=True.
 
 from pathlib import Path
 
-from ..play import render
+from .play import render
 from ..tbk import BOOK_MAGIC, load
 
 

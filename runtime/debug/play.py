@@ -10,7 +10,7 @@ import html
 import json
 from pathlib import Path
 
-from .tbk import Book
+from ..tbk import Book
 
 
 def page_text(book: Book) -> list[dict]:

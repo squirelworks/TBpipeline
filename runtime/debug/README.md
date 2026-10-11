@@ -1,6 +1,11 @@
 # runtime/debug
 
-The debug route for the book reader. Stage 2a opens the book, stage 2b writes `render.html`, stage 2c says the files are there.
+The debug route for the book reader.
+
+| File | Stage |
+|---|---|
+| `__init__.py` | 2a opens the book, 2b writes `render.html`, 2c says the files are there |
+| `play.py` | The HTML reader, with the page dropdown |
 
 Off unless stage 2 failed to open the book, or you passed `--debug`.
 
