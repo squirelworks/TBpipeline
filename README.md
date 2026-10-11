@@ -38,7 +38,7 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
 3. **2a. Open and process.** Debug route. Off unless stage 2 failed to open the book, or you passed `--debug`. Then it reads the book itself.
-4. **2b. Render.** Off with 2a. When 2a runs, writes `render.html` and `render-new.html` in the run folder. Theme is `default` unless `--theme modern`.
+4. **2b. Render.** Off with 2a. When 2a runs, writes `render.html` (engine) and `render-old.html` in the run folder. Theme is `default` unless `--theme modern`.
 5. **2c.** Prompts that debug information is available in `_debug/`.
 
 | File | Stage |
@@ -48,8 +48,8 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 | `_debug/db-…/02a_process.txt` | Book magic, page count, first pages |
 | `_debug/db-…/02b_render.txt` | Render note |
 | `_debug/db-…/02c.txt` | The prompt |
-| `_debug/db-…/render.html` | render-old, the current reader |
-| `_debug/db-…/render-new.html` | render-new, walked by `engine.py` |
+| `_debug/db-…/render.html` | The engine reader |
+| `_debug/db-…/render-old.html` | The old index reader |
 | `_debug/db-…/RUN.txt` | The whole run |
 
 ## Scope of 1.0.0r1

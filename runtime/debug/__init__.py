@@ -40,15 +40,15 @@ def run(book_path, out, debug=False, stage2_failed=True, theme="default"):
         (out / "02a_process.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
         lines.extend(block)
 
+        old_path = out / "render-old.html"
+        old_path.write_text(render_old(book, theme), encoding="utf-8")
         html_path = out / "render.html"
-        html_path.write_text(render_old(book, theme), encoding="utf-8")
-        new_path = out / "render-new.html"
-        new_path.write_text(render_new(book, theme), encoding="utf-8")
+        html_path.write_text(render_new(book, theme), encoding="utf-8")
         block = [
             "stage 2b render",
             f"  theme {theme}",
-            f"  wrote {html_path} ({html_path.stat().st_size} bytes) render-old",
-            f"  wrote {new_path} ({new_path.stat().st_size} bytes) render-new",
+            f"  wrote {html_path} ({html_path.stat().st_size} bytes) engine",
+            f"  wrote {old_path} ({old_path.stat().st_size} bytes) render-old",
         ]
         (out / "02b_render.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
         lines.extend(block)
