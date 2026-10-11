@@ -51,6 +51,9 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 | `render.html` | Engine reader: `go`, `next`, `back`, `buttonClick` |
 | `render-old.html` | Old index reader, only with `--render old` |
 | `render/` | Shapes that can be drawn but are not placed in `render.html` |
+| `bmp_bitmap.txt` | The `TB80BMP` ordinal 3 stop |
+| `dll_probe.txt` | Ordinal 1 of every DLL, `FFFF` bound |
+| `scaffold.txt` | The ordinal walk. The big one. |
 
 ## Scope
 

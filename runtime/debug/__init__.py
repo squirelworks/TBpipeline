@@ -11,6 +11,8 @@ from .play import render_new, render_old
 from .shapes import write as write_shapes
 from ..tbk import BOOK_MAGIC, load
 
+PROBE_LOGS = ("bmp_bitmap.txt", "dll_probe.txt", "scaffold.txt")
+
 
 def run(book_path, out, debug=False, stage2_failed=True, theme="default", render="new"):
     out = Path(out)
@@ -53,6 +55,16 @@ def run(book_path, out, debug=False, stage2_failed=True, theme="default", render
         block = ["stage 2b render", f"  theme {theme}", *wrote]
         (out / "02b_render.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
         lines.extend(block)
+
+        probe = Path(__file__).resolve().parents[2] / "nehost"
+        copied = []
+        for name in PROBE_LOGS:
+            src = probe / name
+            if src.is_file():
+                (out / name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                copied.append(name)
+        if copied:
+            lines.append("  probes " + ", ".join(copied))
     else:
         lines.append("stage 2a not reached (stage 2 opened the book; pass --debug to force)")
         return lines, ""
