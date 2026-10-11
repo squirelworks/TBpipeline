@@ -58,7 +58,7 @@ This cut is the debugging. The reader is unchanged. What is new is what a run sh
 
 `render/` holds shapes that can be drawn and are not placed. A button under the reader shows the files for the current page. `nehost/bmp_bitmap.py` calls `TB80BMP` ordinal 3 and stops at the unbound call. `nehost/scaffold.py` walks the later ordinals of the working DLLs.
 
-Graphics are still not placed. `2.0.0` is total functionality. It is not this release.
+Graphics are still not placed. The plan is `plannedmilestones.md`. `v1.0.1` is the work that was waiting. `v2.0.0` is total functionality.
 
 WinXP is the preferred VM. Win98 is fine and is the decompile machine. Win11 and Linux are where it should eventually run.
 
