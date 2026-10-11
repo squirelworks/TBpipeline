@@ -37,6 +37,29 @@ def modules(data, ne):
     return names
 
 
+def export_names(data):
+    """Resident and non-resident export names, as (name, ordinal) pairs."""
+    ne = u16(data, 0x3C)
+    def walk(buf):
+        out = []
+        i = 0
+        while i < len(buf):
+            n = buf[i]
+            if n == 0 or i + 1 + n + 2 > len(buf):
+                break
+            name = buf[i + 1:i + 1 + n].decode("latin1", "replace")
+            ordinal = u16(buf, i + 1 + n)
+            out.append((name, ordinal))
+            i += 1 + n + 2
+        return out
+    resident = ne + u16(data, ne + 0x26)
+    names = walk(data[resident:])
+    nonres = struct.unpack_from("<I", data, ne + 0x2C)[0]
+    if nonres and nonres < len(data):
+        names += walk(data[nonres:])
+    return names
+
+
 def exports(data):
     ne = u16(data, 0x3C)
     entoff, entlen = struct.unpack_from("<HH", data, ne + 4)

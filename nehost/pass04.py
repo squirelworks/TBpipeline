@@ -12,6 +12,7 @@ import struct
 import sys
 
 from .unfold import AHINCR, Arena, _u16
+from .win16stack import POP
 
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16
 from unicorn import UC_HOOK_INSN, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED
@@ -19,7 +20,7 @@ from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
     UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP,
-    UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_EFLAGS,
+    UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS,
 )
 
 API_PORT = 0xE0
@@ -40,9 +41,16 @@ class Pass04:
         self.misses = []
         self.named = []
         self.calls = []
+        self._args = b""
         self.files = {}
         self.pos = {}
+        self.heap = {}
+        self.local = {}
+        self.mods = {}
+        self.hrsrc = {}
+        self.next_hrsrc = 1
         self.next_handle = 4
+        self.exe_inst = 0
         self.last = (0, 0, b"")
         self.startup = 0
 
@@ -56,17 +64,30 @@ class Pass04:
         self.flat = self.arena.alloc_selector(0x10000, 0x9A, fixed_base=0)
         self.thunk = self.arena.alloc_selector(0x1000, 0x9A)
         self.segs = {}
+        self.sites = {}
+        self.pending = None
+        self.modnames = self._module_names()
+        auto = _u16(self.file, self.ne + 0x0E)
+        heap = _u16(self.file, self.ne + 0x10)
+        stack = _u16(self.file, self.ne + 0x12)
+        self.stack_top = 0x4000
         for i in range(self.nseg):
             off, size, flags, alloc = self.record(i)
             alloc = 0x10000 if alloc == 0 else alloc
-            blob = bytearray(alloc)
+            if i + 1 == auto:
+                alloc = min(0x10000, alloc + heap + stack)
+                self.stack_top = alloc
+            blob = bytearray(alloc if alloc < 0x10000 else 0x10000)
             raw = self.file[(off << self.shift):(off << self.shift) + size]
-            blob[:len(raw)] = raw
+            blob[:len(raw)] = raw[:len(blob)]
             access = 0x9A if not (flags & 1) else 0x92
-            sel = self.arena.alloc_selector(alloc, access, bytes(blob))
+            sel = self.arena.alloc_selector(len(blob), access, bytes(blob))
             self.segs[i + 1] = sel
         self._thunks()
         self._relocs()
+        auto = _u16(self.file, self.ne + 0x0E)
+        self.exe_inst = self.segs.get(auto, 0)
+        self._index_module(self.exe_inst, self.file, "TB80RTM")
         entry = self.arena.read(self.segs[2], 0x35A, 8)
         print(f"entry bytes {entry.hex()} thunk {self.thunk:#x}", file=sys.stderr, flush=True)
         self.uc.hook_add(UC_HOOK_INSN, self._on_out, None, 1, 0, UC_X86_INS_OUT)
@@ -91,9 +112,14 @@ class Pass04:
         return True
 
     def _thunks(self):
+        # One slot per ordinal through 511. Slot 266 is USER.SetMessageQueue;
+        # stopping at 199 left that call in the zero fill, and the RETF pad
+        # returned into segment 13 at the LES (0xCBEA) with a frame of 0xCB.
         blob = bytearray(0x1000)
-        for ordinal in range(1, 200):
+        for ordinal in range(1, 512):
             at = ordinal * 8
+            if at + 8 > len(blob):
+                break
             blob[at:at + 8] = bytes([
                 0xBA, ordinal & 0xFF, (ordinal >> 8) & 0xFF,
                 0xE6, API_PORT, 0xCA, 0x00, 0x00,
@@ -127,11 +153,559 @@ class Pass04:
                 self.arena.write(sel, disp, struct.pack("<H", self.thunk))
             elif atype == 3 and stub is not None:
                 self.arena.write(sel, disp, struct.pack("<HH", stub, self.thunk))
+                self._note_call(sel, disp, fl, t1, t2)
             elif atype == 5 and stub is not None:
                 self.arena.write(sel, disp, struct.pack("<H", stub))
             disp = nxt
 
+    def _module_names(self):
+        nmod = _u16(self.file, self.ne + 0x1E)
+        modref = _u16(self.file, self.ne + 0x28)
+        imp = _u16(self.file, self.ne + 0x2A)
+        names = []
+        for i in range(nmod):
+            at = self.ne + imp + _u16(self.file, self.ne + modref + 2 * i)
+            n = self.file[at]
+            names.append(self.file[at + 1:at + 1 + n].decode("ascii", "replace"))
+        return names
+
+    def _note_call(self, sel, disp, fl, module, ordinal):
+        if not fl & 1 or disp < 1 or module < 1 or module > len(self.modnames):
+            return
+        if self.arena.read(sel, disp - 1, 1) != b"\x9a":
+            return
+        name = self.modnames[module - 1]
+        pop = POP.get(name, {}).get(ordinal)
+        if pop is None:
+            return
+        self.sites[(sel, (disp + 4) & 0xFFFF)] = (name, ordinal, pop)
+
+    def _pushed(self, sel, ret_ip):
+        if sel not in self.arena.segs or ret_ip < 2:
+            return 0
+        start = max(0, ret_ip - 24)
+        buf = self.arena.read(sel, start, ret_ip - start)
+        call = 5 if len(buf) >= 5 and buf[-5] == 0x9A else 0
+        if not call:
+            return 0
+        end = len(buf) - call
+        run = 0
+        one = set(range(0x50, 0x58)) | {0x06, 0x0E, 0x16, 0x1E}
+        while end > 0:
+            op = buf[end - 1]
+            if op in one:
+                run += 2
+                end -= 1
+                continue
+            if end >= 2 and buf[end - 2] == 0x6A:
+                run += 2
+                end -= 2
+                continue
+            if end >= 3 and buf[end - 3] == 0x68:
+                run += 2
+                end -= 3
+                continue
+            if end >= 3 and buf[end - 3] == 0xFF and ((buf[end - 2] >> 3) & 7) == 6 and (buf[end - 2] >> 6) == 1:
+                run += 2
+                end -= 3
+                continue
+            if end >= 4 and buf[end - 4] == 0xFF and ((buf[end - 3] >> 3) & 7) == 6:
+                modrm = buf[end - 3]
+                mod = modrm >> 6
+                rm = modrm & 7
+                if mod == 2 or (mod == 0 and rm == 6):
+                    run += 2
+                    end -= 4
+                    continue
+            break
+        return run
+
+    def _fix_ret(self, ordinal):
+        uc = self.uc
+        ss = uc.reg_read(UC_X86_REG_SS)
+        sp = uc.reg_read(UC_X86_REG_SP)
+        ret_ip, ret_cs = struct.unpack("<HH", self.arena.read(ss, sp, 4))
+        site = self.sites.get((ret_cs, ret_ip))
+        pop = site[2] if site else self._pushed(ret_cs, ret_ip)
+        self.pending = site
+        # Snapshot arguments first. Sliding the return address overwrites
+        # the words it lands on, and the handlers read them after this.
+        self._args = self.arena.read(ss, (sp + 4) & 0xFFFF, 32)
+        # Unicorn translates the thunk before this hook returns, so a
+        # rewritten retf immediate stays 0. Move the return address past
+        # the Pascal arguments and let the baked-in retf 0 pop it.
+        if pop:
+            ret = self.arena.read(ss, sp, 4)
+            dest = (sp + pop) & 0xFFFF
+            self.arena.write(ss, dest, ret)
+            uc.reg_write(UC_X86_REG_SP, dest)
+
+    def _word(self, n):
+        if self._args and (n + 1) * 2 <= len(self._args):
+            return _u16(self._args, n * 2)
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        sp = self.uc.reg_read(UC_X86_REG_SP)
+        return _u16(self.arena.read(ss, sp + 4 + n * 2, 2), 0)
+
+    def _galloc(self, size, zero):
+        size = size or 1
+        if size > 0xFFFF:
+            size = 0xFFFF
+        blob = bytes(size) if zero else b""
+        sel = self.arena.alloc_selector(size, 0x92, blob)
+        self.heap[sel] = size
+        return sel
+
+    def _kernel_heap(self, ordinal):
+        """GlobalAlloc/Lock/Free. A fake 0000:0001 pointer was written through the GDT."""
+        uc = self.uc
+        if ordinal == 15:
+            size = self._word(0) | (self._word(1) << 16)
+            flags = self._word(2)
+            handle = self._galloc(size, flags & 0x40)
+            uc.reg_write(UC_X86_REG_AX, handle)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 16:
+            handle = self._word(3)
+            size = self._word(1) | (self._word(2) << 16)
+            flags = self._word(0)
+            old = self.heap.get(handle, 0)
+            new = self._galloc(size, flags & 0x40)
+            if old and handle in self.arena.segs:
+                self.arena.write(new, 0, self.arena.read(handle, 0, min(old, size or 1)))
+            uc.reg_write(UC_X86_REG_AX, new)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 17:
+            self.heap.pop(self._word(0), None)
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 18:
+            handle = self._word(0)
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, handle if handle in self.heap else 0)
+            return True
+        if ordinal == 19:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        if ordinal == 20:
+            size = self.heap.get(self._word(0), 0)
+            uc.reg_write(UC_X86_REG_AX, size & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, (size >> 16) & 0xFFFF)
+            return True
+        if ordinal == 5:
+            return self._local_alloc(self._word(1), self._word(0))
+        if ordinal == 6:
+            return self._local_realloc(self._word(2), self._word(1), self._word(0))
+        if ordinal == 7:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        if ordinal == 8:
+            uc.reg_write(UC_X86_REG_AX, self._word(0))
+            return True
+        if ordinal == 9:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        if ordinal == 10:
+            ds = uc.reg_read(UC_X86_REG_DS)
+            heap = self.local.get(ds, {})
+            uc.reg_write(UC_X86_REG_AX, heap.get("sizes", {}).get(self._word(0), 0))
+            return True
+        if ordinal in (23, 24):
+            # LockSegment / UnlockSegment. -1 means the current data segment.
+            seg = self._word(0)
+            if seg == 0xFFFF:
+                seg = uc.reg_read(UC_X86_REG_DS)
+            uc.reg_write(UC_X86_REG_AX, seg if ordinal == 23 else 0)
+            return True
+        return False
+
+    def _local_init(self, seg, start, end):
+        info = self.arena.segs.get(seg)
+        if not info:
+            return False
+        limit = info["size"]
+        if start == 0:
+            # Borland passes (ds, 0, heapSize). The heap sits after the statics.
+            heap = end or 0x100
+            start = max(0, limit - heap)
+            end = limit
+        end = min(end or limit, limit)
+        start = min(start, end)
+        self.local[seg] = {"start": start, "end": end, "next": start, "sizes": {}}
+        return True
+
+    def _local_heap(self, seg):
+        if seg not in self.local:
+            info = self.arena.segs.get(seg)
+            if not info:
+                return None
+            self._local_init(seg, 0, min(info["size"], 0x1000))
+        return self.local[seg]
+
+    def _local_alloc(self, flags, size):
+        uc = self.uc
+        ds = uc.reg_read(UC_X86_REG_DS)
+        heap = self._local_heap(ds)
+        if heap is None or size == 0:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        at = (heap["next"] + 3) & ~3
+        if at + size > heap["end"]:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        if flags & 0x40:
+            self.arena.write(ds, at, b"\x00" * size)
+        heap["sizes"][at] = size
+        heap["next"] = at + size
+        uc.reg_write(UC_X86_REG_AX, at)
+        uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
+    def _local_realloc(self, handle, size, flags):
+        uc = self.uc
+        ds = uc.reg_read(UC_X86_REG_DS)
+        heap = self._local_heap(ds)
+        old = heap["sizes"].get(handle, 0) if heap else 0
+        if not self._local_alloc(flags, size or 1):
+            return True
+        new = uc.reg_read(UC_X86_REG_AX)
+        if old and new and ds in self.arena.segs:
+            self.arena.write(ds, new, self.arena.read(ds, handle, min(old, size or 1)))
+        return True
+
+    def _kernel_file(self, ordinal):
+        uc = self.uc
+        if ordinal == 74:
+            path = self._string(self._word(4), self._word(3))
+            self.opens.append(path)
+            print(f"  open {path}", file=sys.stderr, flush=True)
+            handle = self._take_file(path)
+            uc.reg_write(UC_X86_REG_AX, handle if handle is not None else 0xFFFF)
+            return True
+        if ordinal == 85:
+            path = self._string(self._word(2), self._word(1))
+            self.opens.append(path)
+            print(f"  lopen {path}", file=sys.stderr, flush=True)
+            handle = self._take_file(path)
+            uc.reg_write(UC_X86_REG_AX, handle if handle is not None else 0xFFFF)
+            return True
+        if ordinal == 82:
+            handle = self._word(3)
+            count = self._word(0)
+            blob = self.files.get(handle, b"")
+            pos = self.pos.get(handle, 0)
+            chunk = blob[pos:pos + count]
+            self.pos[handle] = pos + len(chunk)
+            if chunk:
+                self.arena.write(self._word(2), self._word(1), chunk)
+            uc.reg_write(UC_X86_REG_AX, len(chunk))
+            return True
+        if ordinal == 84:
+            handle = self._word(3)
+            pos = self._word(1) | (self._word(2) << 16)
+            origin = self._word(0)
+            blob = self.files.get(handle, b"")
+            cur = self.pos.get(handle, 0)
+            if origin == 0:
+                new = pos
+            elif origin == 1:
+                new = cur + struct.unpack("<i", struct.pack("<I", pos))[0]
+            else:
+                new = len(blob) + struct.unpack("<i", struct.pack("<I", pos))[0]
+            self.pos[handle] = new
+            uc.reg_write(UC_X86_REG_AX, new & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, (new >> 16) & 0xFFFF)
+            return True
+        if ordinal == 81:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        return False
+
+    def _take_file(self, path):
+        low = path.lower().replace("/", "\\")
+        if not low.endswith((".tbk", ".sbk")):
+            return None
+        handle = self.next_handle
+        self.next_handle += 1
+        self.files[handle] = self.book_bytes
+        self.pos[handle] = 0
+        return handle
+
+    def _copy_to(self, seg, offset, text, limit):
+        raw = text.encode("latin1", "replace")[: max(limit - 1, 0)] + b"\x00"
+        if seg in self.arena.segs and raw:
+            self.arena.write(seg, offset, raw[:limit or len(raw)])
+        return len(raw) - 1
+
+    def _index_module(self, handle, data, name):
+        if not handle or handle in self.mods:
+            return handle
+        self.mods[handle] = {
+            "name": name,
+            "resources": self._parse_resources(data),
+        }
+        return handle
+
+    def _parse_resources(self, data):
+        ne = _u16(data, 0x3C)
+        rsrc = _u16(data, ne + 0x24)
+        if not rsrc:
+            return []
+        rt = ne + rsrc
+        align = _u16(data, rt)
+        i = rt + 2
+        items = []
+        while i + 8 <= len(data):
+            tid, count = struct.unpack_from("<HH", data, i)
+            if tid == 0:
+                break
+            i += 8
+            rtype = self._res_table_id(data, rt, tid)
+            for _ in range(count):
+                if i + 12 > len(data):
+                    return items
+                off, length, flags, ident = struct.unpack_from("<HHHH", data, i)
+                i += 12
+                blob = data[(off << align):(off << align) + (length << align)]
+                items.append({
+                    "type": rtype,
+                    "name": self._res_table_id(data, rt, ident),
+                    "bytes": blob,
+                })
+        return items
+
+    def _res_table_id(self, data, rt, ident):
+        if ident & 0x8000:
+            return ("int", ident & 0x7FFF)
+        at = rt + ident
+        if at >= len(data):
+            return ("str", "")
+        n = data[at]
+        return ("str", data[at + 1:at + 1 + n].decode("latin1", "replace").lower())
+
+    def _res_arg(self, seg, off):
+        # MAKEINTRESOURCE: a zero segment means the offset is the integer id.
+        if seg == 0:
+            return ("int", off)
+        return ("str", self._string(seg, off).lower())
+
+    def _library_bytes(self, name):
+        base = name.replace("/", "\\").split("\\")[-1]
+        low = base.lower()
+        stem = low[:-4] if low.endswith(".dll") else low
+        aliases = {
+            "tb80enu": "TB80ENU1.DLL",
+            "tb80enu1": "TB80ENU1.DLL",
+            "tb80enu2": "TB80ENU2.DLL",
+        }
+        root = "/workspace/artifacts/Toolbook/_unpacked"
+        filename = aliases.get(stem)
+        if filename is None and os.path.isdir(root):
+            wanted = {low, stem + ".dll", stem + ".exe"}
+            for entry in os.listdir(root):
+                if entry.lower() in wanted:
+                    filename = entry
+                    break
+        if not filename:
+            return None, ""
+        path = os.path.join(root, filename)
+        if not os.path.isfile(path):
+            return None, ""
+        return open(path, "rb").read(), filename
+
+    def _load_library(self, name):
+        for mod in self.mods.values():
+            if mod["name"].lower() == name.lower():
+                return next(h for h, m in self.mods.items() if m is mod)
+        data, filename = self._library_bytes(name)
+        if data is None:
+            return 2
+        handle = self.arena.alloc_selector(16, 0x92, b"\x00" * 16)
+        self._index_module(handle, data, filename or name)
+        return handle
+
+    def _kernel_res(self, ordinal):
+        """LoadLibrary plus the resource calls the language DLL is read through."""
+        uc = self.uc
+        if ordinal == 95:
+            name = self._string(self._word(1), self._word(0))
+            handle = self._load_library(name)
+            print(f"  load {name!r} -> {handle:#x}", file=sys.stderr, flush=True)
+            uc.reg_write(UC_X86_REG_AX, handle)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 60:
+            mod = self.mods.get(self._word(4) or self.exe_inst)
+            want_t = self._res_arg(self._word(1), self._word(0))
+            want_n = self._res_arg(self._word(3), self._word(2))
+            found = None
+            if mod:
+                for item in mod["resources"]:
+                    if item["type"] == want_t and item["name"] == want_n:
+                        found = item
+                        break
+            if found is None:
+                uc.reg_write(UC_X86_REG_AX, 0)
+                uc.reg_write(UC_X86_REG_DX, 0)
+                return True
+            self.hrsrc[self.next_hrsrc] = found
+            uc.reg_write(UC_X86_REG_AX, self.next_hrsrc)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            self.next_hrsrc += 1
+            return True
+        if ordinal == 64:
+            item = self.hrsrc.get(self._word(0))
+            if item is None:
+                uc.reg_write(UC_X86_REG_AX, 0xFFFF)
+                return True
+            handle = self.next_handle
+            self.next_handle += 1
+            self.files[handle] = item["bytes"]
+            self.pos[handle] = 0
+            uc.reg_write(UC_X86_REG_AX, handle)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 61:
+            item = self.hrsrc.get(self._word(0))
+            if item is None:
+                uc.reg_write(UC_X86_REG_AX, 0)
+                return True
+            sel = self._galloc(len(item["bytes"]) or 1, True)
+            if item["bytes"]:
+                self.arena.write(sel, 0, item["bytes"])
+            uc.reg_write(UC_X86_REG_AX, sel)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 62:
+            handle = self._word(0)
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, handle if handle in self.heap else 0)
+            return True
+        if ordinal == 63:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        if ordinal == 65:
+            item = self.hrsrc.get(self._word(0))
+            size = len(item["bytes"]) if item else 0
+            uc.reg_write(UC_X86_REG_AX, size & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, (size >> 16) & 0xFFFF)
+            return True
+        return False
+
+    def _kernel_proc(self, ordinal):
+        """Pointers must be null or a real thunk. AX=1 was called as 0000:0001."""
+        uc = self.uc
+        if ordinal == 50:
+            noff, nseg, hmod = self._word(0), self._word(1), self._word(2)
+            mod = self.mods.get(hmod) or (self.mods.get(self.exe_inst) if hmod == 0 else None)
+            if nseg == 0:
+                hit = (mod or {}).get("ords", {}).get(noff)
+            else:
+                hit = (mod or {}).get("procs", {}).get(self._string(nseg, noff).lower())
+            uc.reg_write(UC_X86_REG_AX, hit[0] if hit else 0)
+            uc.reg_write(UC_X86_REG_DX, hit[1] if hit else 0)
+            return True
+        if ordinal == 52:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal != 51:
+            return False
+        hinst = self._word(0)
+        off, seg = self._word(1), self._word(2)
+        ds = hinst if hinst in self.arena.segs else self.exe_inst
+        if not getattr(self, "pi_sel", 0):
+            self.pi_sel = self.arena.alloc_selector(0x1000, 0x9A, bytes(0x1000))
+            self.pi_at = 0
+        at = self.pi_at
+        if not seg or at + 10 > 0x1000:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        thunk = bytes([
+            0xB8, ds & 0xFF, (ds >> 8) & 0xFF,
+            0x8E, 0xD8,
+            0xEA, off & 0xFF, (off >> 8) & 0xFF, seg & 0xFF, (seg >> 8) & 0xFF,
+        ])
+        self.arena.write(self.pi_sel, at, thunk)
+        self.pi_at = at + 10
+        uc.reg_write(UC_X86_REG_AX, at)
+        uc.reg_write(UC_X86_REG_DX, self.pi_sel)
+        return True
+
+    def _user(self, ordinal):
+        # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
+        # door call RegisterPenApp through a null pointer.
+        if ordinal != 179:
+            return False
+        metric = self._word(0)
+        value = {
+            0: 800, 1: 600, 2: 16, 3: 16, 4: 19,
+            5: 1, 6: 1, 7: 3, 8: 3,
+            11: 32, 12: 32, 13: 32, 14: 32, 15: 18,
+            16: 800, 17: 572, 19: 1, 20: 16, 21: 16,
+            30: 18, 31: 18, 32: 4, 33: 4,
+            41: 0, 42: 0, 43: 2,
+        }.get(metric, 0)
+        self.uc.reg_write(UC_X86_REG_AX, value)
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
+    def _kernel_string(self, ordinal):
+        """Far-string helpers. A stub return of 1 was loaded as a selector."""
+        uc = self.uc
+        if ordinal == 88:
+            dst_seg, dst_off = self._word(3), self._word(2)
+            src = self._string(self._word(1), self._word(0))
+            self._copy_to(dst_seg, dst_off, src, 0xFFFF)
+            uc.reg_write(UC_X86_REG_AX, dst_off)
+            uc.reg_write(UC_X86_REG_DX, dst_seg)
+            return True
+        if ordinal == 89:
+            dst_seg, dst_off = self._word(3), self._word(2)
+            dst = self._string(dst_seg, dst_off)
+            src = self._string(self._word(1), self._word(0))
+            self._copy_to(dst_seg, dst_off, dst + src, 0xFFFF)
+            uc.reg_write(UC_X86_REG_AX, dst_off)
+            uc.reg_write(UC_X86_REG_DX, dst_seg)
+            return True
+        if ordinal == 90:
+            text = self._string(self._word(1), self._word(0))
+            uc.reg_write(UC_X86_REG_AX, len(text))
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 47:
+            uc.reg_write(UC_X86_REG_AX, self.segs[139])
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 49:
+            seg, off = self._word(2), self._word(1)
+            name = self._copy_to(seg, off, "C:\\TOOLBOOK\\TB80RTM.EXE", self._word(0) or 1)
+            uc.reg_write(UC_X86_REG_AX, name)
+            return True
+        if ordinal in (134, 135):
+            seg, off = self._word(2), self._word(1)
+            path = "C:\\WINDOWS" if ordinal == 134 else "C:\\WINDOWS\\SYSTEM"
+            n = self._copy_to(seg, off, path, self._word(0) or 1)
+            uc.reg_write(UC_X86_REG_AX, n)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 137:
+            msg = self._string(self._word(1), self._word(0))
+            print(f"  fatal {msg!r}", file=sys.stderr, flush=True)
+            self.fault = f"fatal {msg!r}"
+            uc.emu_stop()
+            return True
+        return False
+
     def _import_stub(self, fl, module, target):
+        # bits 0-1 == 3 is an OSFIXUP. Its chain can run through an import
+        # site; writing a stub there replaces the import.
+        if (fl & 3) == 3:
+            return None
         if fl & 2:
             name = self._import_name(target)
             if name and name not in self.named and len(self.named) < 12:
@@ -163,6 +737,7 @@ class Pass04:
         if port != API_PORT:
             return
         ordinal = uc.reg_read(UC_X86_REG_DX)
+        self._fix_ret(ordinal)
         self.calls.append(ordinal)
         if len(self.calls) <= 16:
             print(f"  api ordinal {ordinal}", file=sys.stderr, flush=True)
@@ -172,12 +747,39 @@ class Pass04:
             uc.reg_write(UC_X86_REG_BX, 0x80)
             uc.reg_write(UC_X86_REG_CX, 0x1000)
             uc.reg_write(UC_X86_REG_DX, 1)
-            uc.reg_write(UC_X86_REG_SI, self.segs[1])
-            uc.reg_write(UC_X86_REG_DI, 0)
+            uc.reg_write(UC_X86_REG_SI, 0)
+            uc.reg_write(UC_X86_REG_DI, self.segs[139])
             uc.reg_write(UC_X86_REG_ES, self.psp)
             return
         if ordinal == 3:
             uc.reg_write(UC_X86_REG_AX, 0x0A03)
+            return
+        if ordinal == 132:
+            # Enhanced-mode 386: PMODE|CPU386|ENHANCED|80x87|PAGING.
+            uc.reg_write(UC_X86_REG_AX, 0x0C25)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return
+        if self.pending and self.pending[0] == "KERNEL" and ordinal == 1:
+            self.fault = "FatalExit"
+            uc.emu_stop()
+            return
+        if self.pending and self.pending[0] == "KERNEL" and ordinal == 4:
+            # LocalInit(segment, start, end). start 0 means end is the size.
+            seg = self._word(2) or uc.reg_read(UC_X86_REG_DS)
+            self._local_init(seg, self._word(1), self._word(0))
+            uc.reg_write(UC_X86_REG_AX, 1)
+            return
+        if self.pending and self.pending[0] == "KERNEL" and self._kernel_heap(ordinal):
+            return
+        if self.pending and self.pending[0] == "KERNEL" and self._kernel_file(ordinal):
+            return
+        if self.pending and self.pending[0] == "KERNEL" and self._kernel_string(ordinal):
+            return
+        if self.pending and self.pending[0] == "KERNEL" and self._kernel_res(ordinal):
+            return
+        if self.pending and self.pending[0] == "KERNEL" and self._kernel_proc(ordinal):
+            return
+        if self.pending and self.pending[0] == "USER" and self._user(ordinal):
             return
         uc.reg_write(UC_X86_REG_AX, 1)
         uc.reg_write(UC_X86_REG_DX, 0)
@@ -185,6 +787,9 @@ class Pass04:
     def _on_intr(self, uc, intno, user):
         if intno == 0x21:
             self._dos()
+            return
+        if intno == 3:
+            uc.emu_stop()
             return
         cs = uc.reg_read(UC_X86_REG_CS)
         ip = uc.reg_read(UC_X86_REG_IP)
@@ -199,6 +804,7 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, 1)
             return
         print(f"  fault int {intno:#x} at {cs:#x}:{ip:#x} {raw.hex()}", file=sys.stderr, flush=True)
+        self.fault = f"int {intno:#x}"
         uc.emu_stop()
 
     def _dos(self):
@@ -208,15 +814,22 @@ class Pass04:
             path = self._string(uc.reg_read(UC_X86_REG_DS), uc.reg_read(UC_X86_REG_DX))
             self.opens.append(path)
             print(f"  open {path}", file=sys.stderr)
-            handle = self.next_handle
-            self.next_handle += 1
-            self.files[handle] = self.book_bytes if path.lower().endswith(".tbk") else b""
+            handle = self._take_file(path)
+            if handle is None:
+                uc.reg_write(UC_X86_REG_AX, 2)
+                uc.reg_write(UC_X86_REG_EFLAGS, uc.reg_read(UC_X86_REG_EFLAGS) | 1)
+                return
+            self.files[handle] = self.book_bytes
             uc.reg_write(UC_X86_REG_AX, handle)
             self._clear()
             return
         if ah == 0x30:
             uc.reg_write(UC_X86_REG_AX, 5)
             self._clear()
+            return
+        if ah == 0x4C:
+            self.fault = f"dos exit {uc.reg_read(UC_X86_REG_AX) & 0xFF:#x}"
+            uc.emu_stop()
             return
         if ah == 0x3F:
             handle = uc.reg_read(UC_X86_REG_BX)
@@ -260,27 +873,34 @@ class Pass04:
         self.psp = self.arena.alloc_selector(0x100, 0x92, bytes(psp))
         dgroup = self.segs[139]
         code = self.segs[2]
+        # The GDT lives at linear 0 and selector 0x80 is segment 14.
+        # A GDTR image at 0x80 wiped that descriptor, so every call to
+        # segment 14 faulted with #GP at the LES-era far call.
+        gdtr_at = 0xF0E0
         gdtr = struct.pack("<HI", 0xFFFF, 0)
-        self.uc.mem_write(0x80, gdtr)
+        self.uc.mem_write(gdtr_at, gdtr)
         blob = bytes([
             0xB8, dgroup & 0xFF, (dgroup >> 8) & 0xFF, 0x8E, 0xD8, 0x8E, 0xD0,
-            0xBC, 0x00, 0x40,
+            0xBC, self.stack_top & 0xFF, (self.stack_top >> 8) & 0xFF,
             0xEA, 0x5A, 0x03, code & 0xFF, (code >> 8) & 0xFF,
         ])
         self.uc.mem_write(0xF000, bytes([
-            0x0F, 0x01, 0x16, 0x80, 0x00,
+            0x0F, 0x01, 0x16, gdtr_at & 0xFF, (gdtr_at >> 8) & 0xFF,
             0x66, 0x0F, 0x20, 0xC0, 0x66, 0x83, 0xC8, 0x01, 0x66, 0x0F, 0x22, 0xC0,
             0xEA, 0x20, 0xF0, self.flat & 0xFF, (self.flat >> 8) & 0xFF,
         ]))
         self.uc.mem_write(0xF020, blob)
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
+        self.fault = ""
         try:
-            self.uc.emu_start(0xF000, 0, timeout=15_000_000, count=400_000)
+            self.uc.emu_start(0xF000, 0, timeout=20_000_000, count=2_000_000)
         except UcError as exc:
-            self.fault = str(exc)
+            if not self.fault:
+                self.fault = str(exc)
         else:
-            self.fault = "returned"
+            if not self.fault:
+                self.fault = "returned"
         return self.last
 
 

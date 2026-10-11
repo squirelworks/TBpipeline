@@ -574,8 +574,9 @@ class Host:
         # Real-mode bootstrap. CS base is zero until LGDT and a far jump
         # load the protected-mode descriptor cache; writing CS from Python
         # does not.
+        gdtr_at = 0xF0E0
         gdtr = struct.pack("<HI", 0xFFFF, 0)
-        uc.mem_write(0x80, gdtr)
+        uc.mem_write(gdtr_at, gdtr)
         stop = 0xF100
         uc.mem_write(stop, bytes([0xE6, STOP_PORT & 0xFF, 0xF4]))
         call = bytes([
@@ -591,7 +592,7 @@ class Host:
             self.loader & 0xFF, (self.loader >> 8) & 0xFF,
         ])
         uc.mem_write(0xF000, bytes([
-            0x0F, 0x01, 0x16, 0x80, 0x00,
+            0x0F, 0x01, 0x16, gdtr_at & 0xFF, (gdtr_at >> 8) & 0xFF,
             0x66, 0x0F, 0x20, 0xC0,
             0x66, 0x83, 0xC8, 0x01,
             0x66, 0x0F, 0x22, 0xC0,
