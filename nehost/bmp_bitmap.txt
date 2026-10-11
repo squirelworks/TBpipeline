@@ -1,0 +1,6 @@
+TB80BMP TBKBITMAP seg 3:0x3e0
+dll /workspace/artifacts/unpacked/TB80BMP.DLL
+stopped at far call 0x1fcd
+  bytes 9a00002c1b  lcall, selector not bound
+  stack sp 0x3f9a 23aa 2000 3fb6 3000 02a6 1fd0 0000 0000
+  pushed before the call: SS:local, DS:0x23aa, 0x02a6, 0x1fd0, DS:0x23aa
