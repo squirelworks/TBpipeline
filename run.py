@@ -63,7 +63,7 @@ def note(name, text):
     return path
 
 
-def stages(bin_dir, book_path, debug=False, theme="default"):
+def stages(bin_dir, book_path, debug=False, theme="default", render="new"):
     lines = []
 
     block = ["stage 1 startup", f"  bin {bin_dir}"]
@@ -91,7 +91,7 @@ def stages(bin_dir, book_path, debug=False, theme="default"):
     note("02_launch.txt", "\n".join(block))
     lines.extend(block)
     stage2_failed = not host.opens or bool(host.fault)
-    fallback, prompt = reader_debug.run(book_path, DEBUG, debug, stage2_failed, theme)
+    fallback, prompt = reader_debug.run(book_path, DEBUG, debug, stage2_failed, theme, render)
     lines.extend(fallback)
     print(f"\n{prompt}", file=sys.stderr)
     return lines
@@ -101,6 +101,7 @@ def resolve(argv):
     bin_dir = ROOT / "bin"
     course = None
     theme = "default"
+    render = "new"
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -116,6 +117,10 @@ def resolve(argv):
             theme = argv[i + 1]
             i += 2
             continue
+        if arg == "--render" and i + 1 < len(argv):
+            render = argv[i + 1]
+            i += 2
+            continue
         if not arg.startswith("--") and course is None:
             course = arg
         i += 1
@@ -125,11 +130,11 @@ def resolve(argv):
     book = Path(course).expanduser()
     if not book.is_file():
         book = bin_dir / "courses" / course
-    return bin_dir, book, "--debug" in argv, theme
+    return bin_dir, book, "--debug" in argv, theme, render
 
 
 def main():
-    bin_dir, book, debug, theme = resolve(sys.argv[1:])
+    bin_dir, book, debug, theme, render = resolve(sys.argv[1:])
     if not book.is_file():
         print(f"not a book: {book}", file=sys.stderr)
         print("usage: python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
@@ -138,7 +143,7 @@ def main():
     pass06.UNPACKED = str(bin_dir)
     global DEBUG
     DEBUG = new_debug_dir()
-    lines = stages(str(bin_dir), str(book), debug, theme)
+    lines = stages(str(bin_dir), str(book), debug, theme, render)
     text = "\n".join(lines) + "\n"
     note("RUN.txt", text)
     print(text, end="")
