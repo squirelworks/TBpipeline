@@ -16,8 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 os.environ.setdefault("TBK_UNPACKED", str(ROOT / "bin"))
 
-from .runtime.tbk import BOOK_MAGIC, load
-from .runtime.play import render
+from .runtime import debug as reader_debug
 from .nehost.loadseq import ORDER, FILES
 import tbpipeline.nedllhost.pass06 as pass06
 pass06.UNPACKED = os.environ.get("TBK_UNPACKED", str(ROOT / "bin"))
@@ -84,44 +83,8 @@ def stages(bin_dir, book_path, debug=False):
     note("02_launch.txt", "\n".join(block))
     lines.extend(block)
     stage2_failed = not host.opens or bool(host.fault)
-    run_reader = debug or stage2_failed
-
-    if run_reader:
-        why = "--debug" if debug and not stage2_failed else "stage 2 did not open the book"
-        block = ["stage 2a open and process", f"  on ({why})", f"  {book_path}"]
-        book = load(book_path)
-        data = Path(book_path).read_bytes()
-        magic = int.from_bytes(data[book.book_offset:book.book_offset + 4], "little")
-        block.append(f"  book at {book.book_offset:#x} magic {magic:#x} ok {magic == BOOK_MAGIC} pages {len(book.pages)}")
-        shown = 0
-        for page in book.pages:
-            text = [f.text for f in page.fields] + [p for p in page.paragraphs if p not in [f.text for f in page.fields]]
-            if not text:
-                continue
-            block.append(f"  {page.name} @{page.offset:#x} {text[0][:80]}")
-            shown += 1
-            if shown == 3:
-                break
-        note("02a_process.txt", "\n".join(block))
-        lines.extend(block)
-
-        html_path = note("render.html", render(book))
-        block = ["stage 2b render", f"  wrote {html_path} ({html_path.stat().st_size} bytes)"]
-        note("02b_render.txt", "\n".join(block))
-        lines.extend(block)
-    else:
-        block = ["stage 2a open and process", "  off (stage 2 opened the book; pass --debug to force)"]
-        note("02a_process.txt", "\n".join(block))
-        lines.extend(block)
-        block = ["stage 2b render", "  off"]
-        note("02b_render.txt", "\n".join(block))
-        lines.extend(block)
-
-    files = sorted(p.name for p in DEBUG.iterdir() if p.is_file())
-    prompt = f"Debug information is available in {DEBUG}"
-    block = ["stage 2c", f"  {prompt}", f"  {', '.join(files)}"]
-    note("02c.txt", "\n".join(block))
-    lines.extend(block)
+    fallback, prompt = reader_debug.run(book_path, DEBUG, debug, stage2_failed)
+    lines.extend(fallback)
     print(f"\n{prompt}", file=sys.stderr)
     return lines
 

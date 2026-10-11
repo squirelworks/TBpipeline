@@ -16,10 +16,11 @@ Needs Python 3. The 16-bit stage needs `unicorn` (`pip install -r requirements.t
 
 ## Modules
 
-`runtime/`, `nehost/`, and `nedllhost/` live inside this package. Each runs on its own.
+`runtime/`, `runtime/debug/`, `nehost/`, and `nedllhost/` live inside this package. Each runs on its own.
 
 ```
 python3 -m tbpipeline.runtime --b ~/TBK/bin --c 9e954d01.tbk
+python3 -m tbpipeline.runtime.debug --b ~/TBK/bin --c 9e954d01.tbk
 python3 -m tbpipeline.nehost --unpack TB80RTM.EXE -o unpacked.exe
 python3 -m tbpipeline.nedllhost --b ~/TBK/bin
 ```
