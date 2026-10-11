@@ -64,7 +64,7 @@ def note(name, text):
     return path
 
 
-def stages(bin_dir, book_path, debug=False):
+def stages(bin_dir, book_path, debug=False, theme="default"):
     lines = []
 
     block = ["stage 1 startup", f"  bin {bin_dir}"]
@@ -92,7 +92,7 @@ def stages(bin_dir, book_path, debug=False):
     note("02_launch.txt", "\n".join(block))
     lines.extend(block)
     stage2_failed = not host.opens or bool(host.fault)
-    fallback, prompt = reader_debug.run(book_path, DEBUG, debug, stage2_failed)
+    fallback, prompt = reader_debug.run(book_path, DEBUG, debug, stage2_failed, theme)
     lines.extend(fallback)
     print(f"\n{prompt}", file=sys.stderr)
     return lines
@@ -101,6 +101,7 @@ def stages(bin_dir, book_path, debug=False):
 def resolve(argv):
     bin_dir = ROOT / "bin"
     course = None
+    theme = "default"
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -112,6 +113,10 @@ def resolve(argv):
             course = argv[i + 1]
             i += 2
             continue
+        if arg == "--theme" and i + 1 < len(argv):
+            theme = argv[i + 1]
+            i += 2
+            continue
         if not arg.startswith("--") and course is None:
             course = arg
         i += 1
@@ -121,11 +126,11 @@ def resolve(argv):
     book = Path(course).expanduser()
     if not book.is_file():
         book = bin_dir / "courses" / course
-    return bin_dir, book, "--debug" in argv
+    return bin_dir, book, "--debug" in argv, theme
 
 
 def main():
-    bin_dir, book, debug = resolve(sys.argv[1:])
+    bin_dir, book, debug, theme = resolve(sys.argv[1:])
     if not book.is_file():
         print(f"not a book: {book}", file=sys.stderr)
         print("usage: python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
@@ -134,7 +139,7 @@ def main():
     pass06.UNPACKED = str(bin_dir)
     global DEBUG
     DEBUG = new_debug_dir()
-    lines = stages(str(bin_dir), str(book), debug)
+    lines = stages(str(bin_dir), str(book), debug, theme)
     text = "\n".join(lines) + "\n"
     note("RUN.txt", text)
     print(text, end="")

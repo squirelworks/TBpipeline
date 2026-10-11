@@ -11,7 +11,7 @@ from .play import render_new, render_old
 from ..tbk import BOOK_MAGIC, load
 
 
-def run(book_path, out, debug=False, stage2_failed=True):
+def run(book_path, out, debug=False, stage2_failed=True, theme="default"):
     out = Path(out)
     out.mkdir(exist_ok=True)
     lines = []
@@ -41,11 +41,12 @@ def run(book_path, out, debug=False, stage2_failed=True):
         lines.extend(block)
 
         html_path = out / "render.html"
-        html_path.write_text(render_old(book), encoding="utf-8")
+        html_path.write_text(render_old(book, theme), encoding="utf-8")
         new_path = out / "render-new.html"
-        new_path.write_text(render_new(book), encoding="utf-8")
+        new_path.write_text(render_new(book, theme), encoding="utf-8")
         block = [
             "stage 2b render",
+            f"  theme {theme}",
             f"  wrote {html_path} ({html_path.stat().st_size} bytes) render-old",
             f"  wrote {new_path} ({new_path.stat().st_size} bytes) render-new",
         ]

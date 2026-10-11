@@ -6,7 +6,11 @@ Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It
 python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk
 ```
 
-`--b` is the ToolBook directory. `--c` is the book. A bare filename is looked up in `--b/courses/`.
+`--theme` picks the reader look. `default` is a Windows 95 window. `modern` is the dark reader.
+
+```
+python3 -m tbpipeline --b ~/TBK/bin --c 9e954d01.tbk --theme modern
+```
 
 ```
 python3 -m tbpipeline 9e954d01.tbk
@@ -34,7 +38,7 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
 3. **2a. Open and process.** Debug route. Off unless stage 2 failed to open the book, or you passed `--debug`. Then it reads the book itself.
-4. **2b. Render.** Off with 2a. When 2a runs, writes `_debug/render.html`.
+4. **2b. Render.** Off with 2a. When 2a runs, writes `render.html` and `render-new.html` in the run folder. Theme is `default` unless `--theme modern`.
 5. **2c.** Prompts that debug information is available in `_debug/`.
 
 | File | Stage |
