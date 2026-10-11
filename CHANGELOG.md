@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0r4
+
+Debug improvements.
+
+- Book BMPs are extracted into `resources/`. A **Resources extracted** button shows them.
+- Curve runs are drawn. The P420 flame is one. Each curve is its own file.
+- The probe logs, `bmp_bitmap.txt`, `dll_probe.txt`, and `scaffold.txt`, are copied into each debug run.
+- Stages 2a, 2b, and 2c are not reached when stage 2 opens the book, unless `--debug` is passed.
+- Known bugs are in `known-bugs.md`.
+
 ## 1.0.0r3
 
 The debugging, visible.
