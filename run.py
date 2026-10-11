@@ -25,7 +25,7 @@ from unicorn.x86_const import UC_X86_REG_AX
 from .nedllhost.pass06 import Pass06
 
 OUT = Path(__file__).resolve().parent
-DEBUG = ROOT / ".debug"
+DEBUG = ROOT / "_debug"
 
 # Only ordinals we have pinned to USER. 1 and 5 are KERNEL at startup.
 USER = {

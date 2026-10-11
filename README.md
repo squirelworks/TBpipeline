@@ -28,22 +28,22 @@ The OPTLOADER unpacker follows moralrecordings' `optloader.py`: https://github.c
 
 ## Stages
 
-Each stage writes its file into `.debug/` as it finishes. The last stage tells you the debug information is there.
+Each stage writes its file into `_debug/` as it finishes. The last stage tells you the debug information is there.
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
 3. **Open and process.** Book magic `0x22222222`, page count, first pages with text.
-4. **Render.** Writes `.debug/render.html`.
-5. **Last.** Prompts that debug information is available in `.debug/`.
+4. **Render.** Writes `_debug/render.html`.
+5. **Last.** Prompts that debug information is available in `_debug/`.
 
 | File | Stage |
 |---|---|
-| `.debug/01_startup.txt` | Modules on disk |
-| `.debug/02_launch.txt` | Where the 16-bit entry stopped |
-| `.debug/03_process.txt` | Book magic, page count, first pages |
-| `.debug/04_render.txt` | Render note |
-| `.debug/render.html` | The pages |
-| `.debug/RUN.txt` | The whole run |
+| `_debug/01_startup.txt` | Modules on disk |
+| `_debug/02_launch.txt` | Where the 16-bit entry stopped |
+| `_debug/03_process.txt` | Book magic, page count, first pages |
+| `_debug/04_render.txt` | Render note |
+| `_debug/render.html` | The pages |
+| `_debug/RUN.txt` | The whole run |
 
 ## Scope of 1.0.0r1
 
