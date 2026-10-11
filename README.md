@@ -29,7 +29,7 @@ The OPTLOADER unpacker follows moralrecordings' `optloader.py`: https://github.c
 
 ## Stages
 
-Each stage writes its file into `_debug/` as it finishes. The last stage tells you the debug information is there.
+Each stage writes its file into `tbpipeline/_debug/`, beside the script. Not the directory you ran the command from.
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
