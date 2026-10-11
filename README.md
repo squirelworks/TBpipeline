@@ -1,20 +1,22 @@
-# Pipeline host
+# TBpipeline 1.0.0
 
-Linux or Windows. This command does not need a VM. It needs Python 3 and `unicorn` for the 16-bit stage.
+Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It is not the ToolBook window.
 
 ```
 python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk
 ```
 
-`--b` is where the ToolBook executables are. `--c` is the book. A bare filename is looked up in `--b/courses/`.
+`--b` is the ToolBook directory. `--c` is the book. A bare filename is looked up in `--b/courses/`.
 
 ```
 python3 -m tbpipeline 9e954d01.tbk
 ```
 
-That uses `bin/` under the repo root as `--b`, and opens `bin/courses/9e954d01.tbk`.
+Needs Python 3. The 16-bit stage needs `unicorn` (`pip install -r requirements.txt`). Linux or Windows.
 
-`runtime/`, `nehost/`, and `nedllhost/` live inside `tbpipeline/`. Nothing else has to sit beside it. Each one runs on its own. See its `README.md`.
+## Modules
+
+`runtime/`, `nehost/`, and `nedllhost/` live inside this package. Each runs on its own.
 
 ```
 python3 -m tbpipeline.runtime --b ~/TBK/bin --c 9e954d01.tbk
@@ -22,13 +24,17 @@ python3 -m tbpipeline.nehost --unpack TB80RTM.EXE -o unpacked.exe
 python3 -m tbpipeline.nedllhost --b ~/TBK/bin
 ```
 
-The OPTLOADER unpacker in `nehost/unpack_optloader.py` follows moralrecordings' `optloader.py`: https://github.com/moralrecordings/win16-debug
+The OPTLOADER unpacker follows moralrecordings' `optloader.py`: https://github.com/moralrecordings/win16-debug
 
-## What it writes
+## Stages
 
-All three land in `tbpipeline/`.
+Each stage writes its file into `.debug/` as it finishes. The last stage tells you the debug information is there.
 
-Each stage writes its own file into `.debug/` as it finishes. The last stage only tells you the debug information is there.
+1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
+2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
+3. **Open and process.** Book magic `0x22222222`, page count, first pages with text.
+4. **Render.** Writes `.debug/render.html`.
+5. **Last.** Prompts that debug information is available in `.debug/`.
 
 | File | Stage |
 |---|---|
@@ -39,17 +45,19 @@ Each stage writes its own file into `.debug/` as it finishes. The last stage onl
 | `.debug/render.html` | The pages |
 | `.debug/RUN.txt` | The whole run |
 
-## The five stages
+## Scope of 1.0.0
 
-1. **Startup.** SoftICE load order. A module is on disk if its file is in `unpacked/`, or in `$TBK_UNPACKED`.
-2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
-3. **Open and process.** Book magic `0x22222222`, page count, first three pages with text. On `9e954d01.tbk` the magic is at `0x9EC`.
-4. **Render.** Writes `.debug/render.html` and `.debug/04_render.txt`.
-5. **Last.** Prompts that debug information is available in `.debug/`.
+This release reads a book. It does not run ToolBook.
 
-## What it will not do
+The real window is `USER` and `GDI` inside `TB80RTM`. This host has neither, and the entry dies on an unresolved far call before it opens the book. `render.html` is the reader. It is not that window.
 
-- The engine does not open the book. After `SetMessageQueue` it skips a far call to `FFFF:0158`.
-- It does not draw widget bounds or ToolBook compressed pictures.
-- It does not execute a handler. Navigation is the quoted page id, not the bytecode.
-- WineVDM is a separate Windows program. This command does not call it.
+Using ToolBook without a VM is the next goal. It is not this release.
+
+For the program itself: WinXP is the preferred machine. Win98 is the floor, and it is the one this decompile work has to use. Both are VMs. WineVDM is a separate Windows program and this command does not call it.
+
+## What 1.0.0 will not do
+
+- Open the book from the engine.
+- Draw widget bounds or ToolBook compressed pictures.
+- Execute a handler. Navigation is the quoted page id, not the bytecode.
+- Pop the ToolBook GUI.
