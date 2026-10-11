@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0r3
+
+Not started as a release. Scaffolding is `nehost/scaffold.py`.
+
 ## 1.0.0r2
 
 The reader, split and polished.

@@ -1,0 +1,794 @@
+r3 scaffold: later ordinals, FFFF bound
+TB80BAS.DLL: 606 ordinals
+  ord 1 seg 12:0x0 unbound@0x14
+  ord 2 seg 8:0x0 returned
+  ord 3 seg 8:0x40a unbound@0x41b
+  ord 4 seg 8:0x320 unbound@0x333
+  ord 5 seg 8:0x47a unbound@0x48c
+  ord 6 seg 8:0x4c6 unbound@0x4d7
+  ord 7 seg 10:0x28 unbound@0x3a
+  ord 8 seg 10:0x17a unbound@0x18c
+  ord 11 seg 10:0x948 unbound@0x95a
+  ord 13 seg 10:0xa18 unbound@0xa2e
+  ord 14 seg 11:0xf0 unbound@0x102
+  ord 15 seg 9:0x0 unbound@0x18
+  ord 16 seg 11:0x7e unbound@0x90
+  ord 17 seg 9:0x41e unbound@0x436
+  ord 18 seg 9:0x1f2 unbound@0x204
+  ord 19 seg 14:0x0 unbound@0x8be
+  ord 20 seg 8:0x9a unbound@0xad
+  ord 21 seg 8:0x36c unbound@0x37f
+  ord 22 seg 11:0x0 unbound@0x12
+  ord 23 seg 9:0x2f8 unbound@0x30a
+  ord 24 seg 14:0x9e unbound@0x8be
+  ord 25 seg 14:0x686 unbound@0x8be
+  ord 26 seg 3:0x506 unbound@0x522
+  ord 27 seg 3:0x0 unbound@0x12
+  ord 28 seg 14:0x7ca unbound@0x8be
+  ord 29 seg 10:0xf5c unbound@0xf73
+  ord 30 seg 9:0x3b2 unbound@0x3c7
+  ord 38 seg 10:0x10a6 unbound@0x10bc
+  ord 42 seg 10:0xb90 unbound@0xbaa
+  ord 44 seg 13:0x0 unbound@0x11a2
+  ord 45 seg 13:0x19a unbound@0x11a2
+  ord 46 seg 13:0x1d6 unbound@0x11a2
+  ord 51 seg 90:0xbc unbound@0xda0
+  ord 52 seg 90:0x2c2 unbound@0xda0
+  ord 57 seg 20:0x876 unbound@0x8af
+  ord 59 seg 88:0x0 unbound@0x16
+  ord 60 seg 88:0x13da unbound@0x1025 GDI.52
+  ord 62 seg 88:0x157e unbound@0x1025 GDI.52
+  ord 63 seg 88:0x15c4 unbound@0x1025 GDI.52
+  ord 64 seg 88:0x1648 unbound@0x1025 GDI.52
+  ord 65 seg 88:0x106c unbound@0x10b0 GDI.30, GDI.3
+  ord 67 seg 88:0xf4a unbound@0xf80
+  ord 72 seg 88:0x1420 returned TB80UTL.115
+  ord 74 seg 135:0x6ec unbound@0x71a
+  ord 75 seg 135:0xb7c unbound@0xba4 KERNEL.19, KERNEL.17
+  ord 76 seg 10:0x2d16 unbound@0x2d23
+  ord 77 seg 3:0xb6c unbound@0xbad
+  ord 81 seg 3:0x1e32 unbound@0x1e78
+  ord 83 seg 5:0x1524 returned GDI.176
+  ord 86 seg 165:0x7a unbound@0x8c
+  ord 87 seg 3:0x9ce unbound@0xb61
+  ord 89 seg 8:0x4ec unbound@0x4fd
+  ord 90 seg 3:0x4502 unbound@0x455c
+  ord 95 seg 57:0x1b8 unbound@0x35d
+  ord 98 seg 57:0xc6e unbound@0xc8c
+  ord 99 seg 57:0xcbc unbound@0xcd6
+  ord 109 seg 59:0x0 unbound@0x64
+  ord 113 seg 58:0x148 unbound@0x165
+  ord 114 seg 58:0x2fe unbound@0x31d
+  ord 118 seg 58:0x5b4 unbound@0x5d1
+  ord 119 seg 108:0x0 unbound@0x1f
+  ord 120 seg 108:0x1c0 unbound@0x1df
+  ord 121 seg 108:0x606 unbound@0x627
+  ord 122 seg 108:0x37c unbound@0x39d
+  ord 123 seg 108:0xc00 unbound@0xc3a
+  ord 124 seg 108:0x938 unbound@0x964
+  ord 127 seg 109:0x0 unbound@0x1d
+  ord 128 seg 109:0x2b8 unbound@0x2d7
+  ord 129 seg 109:0x78c unbound@0x7b0
+  ord 130 seg 110:0x0 unbound@0x1e
+  ord 131 seg 110:0x738 unbound@0x767
+  ord 132 seg 110:0x444 unbound@0x45f
+  ord 133 seg 110:0x6b0 unbound@0x6cb
+  ord 134 seg 110:0x778 unbound@0x7d5
+  ord 135 seg 110:0x9a2 unbound@0x9bd
+  ord 136 seg 110:0xbe2 unbound@0xbfe
+  ord 138 seg 111:0x2ec unbound@0x30c
+  ord 139 seg 111:0xb84 unbound@0xba3
+  ord 140 seg 111:0xe3e unbound@0xec9
+  ord 141 seg 111:0x270 unbound@0xec9
+  ord 142 seg 6:0x61a returned USER.135
+  ord 145 seg 112:0x0 unbound@0x1b
+  ord 146 seg 112:0x7e unbound@0x99
+  ord 147 seg 112:0x100 returned USER.471
+  ord 148 seg 61:0x0 unbound@0x34
+  ord 149 seg 61:0xc2 unbound@0x18c
+  ord 150 seg 61:0x2d4 unbound@0x2f4
+  ord 151 seg 61:0x3f4 unbound@0x40b
+  ord 152 seg 61:0x4e0 unbound@0x1864 TB80UTL.60
+  ord 153 seg 61:0x5c2 unbound@0x8a5
+  ord 154 seg 61:0xa6e unbound@0x1e34
+  ord 155 seg 61:0xaa0 unbound@0xd5d
+  ord 156 seg 61:0xd6a unbound@0x2139
+  ord 157 seg 61:0xd90 unbound@0x34
+  ord 158 seg 61:0x12be unbound@0x18c
+  ord 159 seg 61:0x1494 unbound@0x2f4
+  ord 160 seg 61:0x1658 unbound@0x16b3
+  ord 162 seg 51:0x254 unbound@0x27c
+  ord 163 seg 51:0x296 unbound@0x2b5
+  ord 164 seg 113:0x26 unbound@0x16b
+  ord 165 seg 113:0x162 unbound@0x16b
+  ord 166 seg 63:0x0 unbound@0x19
+  ord 167 seg 63:0x1cc unbound@0x1f4
+  ord 170 seg 63:0x840 unbound@0x864
+  ord 171 seg 63:0xbe8 unbound@0xd2b
+  ord 178 seg 63:0x1d90 unbound@0x1f44
+  ord 179 seg 61:0x1792 unbound@0x1e34
+  ord 180 seg 61:0x2742 unbound@0x2766
+  ord 181 seg 33:0x96 unbound@0x879
+  ord 182 seg 62:0x0 unbound@0x181
+  ord 186 seg 57:0x0 returned TB80UTL.70
+  ord 196 seg 27:0x1ba2 unbound@0x1a8b
+  ord 203 seg 62:0x1260 unbound@0x126e
+  ord 205 seg 8:0x522 unbound@0x538
+  ord 207 seg 60:0x0 unbound@0xcf
+  ord 208 seg 60:0x5d8 unbound@0x604
+  ord 209 seg 60:0x932 unbound@0x964
+  ord 210 seg 60:0x2f2 unbound@0x316
+  ord 213 seg 44:0xae2 unbound@0x1110 KERNEL.334
+  ord 218 seg 57:0x220 unbound@0x35d
+  ord 221 seg 64:0x36 unbound@0x3f
+  ord 222 seg 60:0x3d8 unbound@0x407
+  ord 226 seg 47:0x2ba2 unbound@0x2bbc
+  ord 227 seg 47:0x177c unbound@0x17a1
+  ord 228 seg 47:0x308 unbound@0x31e
+  ord 229 seg 47:0x432 unbound@0x4ec
+  ord 230 seg 47:0x362 unbound@0x376
+  ord 233 seg 47:0x552 unbound@0x56e
+  ord 235 seg 47:0xd70 unbound@0xdb9
+  ord 241 seg 47:0xeea unbound@0xf04
+  ord 242 seg 47:0xccc unbound@0xce3
+  ord 247 seg 27:0x1e14 unbound@0x1e1d
+  ord 248 seg 61:0xefc unbound@0xf62
+  ord 250 seg 6:0xa68 unbound@0x3ae6
+  ord 251 seg 6:0x20 unbound@0x55
+  ord 252 seg 6:0x18c unbound@0x1a3
+  ord 253 seg 6:0x1ea unbound@0x20f
+  ord 254 seg 6:0x232 unbound@0x3ae6
+  ord 257 seg 6:0x20a6 unbound@0x3ae6
+  ord 258 seg 6:0x20cc unbound@0x3ae6
+  ord 259 seg 6:0x1710 returned TB80FLT.1
+  ord 260 seg 6:0x1730 returned TB80FLT.1
+  ord 261 seg 6:0x1094 unbound@0x3ae6
+  ord 262 seg 6:0x10ea unbound@0x3ae6
+  ord 265 seg 6:0x72e returned TB80FLT.1
+  ord 266 seg 6:0x51a returned TB80FLT.1
+  ord 268 seg 72:0x1e8a unbound@0x1ea1
+  ord 270 seg 18:0x13f4 unbound@0x158d
+  ord 271 seg 57:0x1d40 returned KERNEL.60, KERNEL.61, KERNEL.62
+  ord 272 seg 68:0x0 unbound@0x41
+  ord 273 seg 81:0x3efa returned TB80UTL.49
+  ord 274 seg 81:0x402a unbound@0x4049
+  ord 275 seg 72:0x21f4 unbound@0x2450
+  ord 276 seg 68:0xa8 unbound@0xee
+  ord 277 seg 68:0x2a8 unbound@0x2ca
+  ord 278 seg 10:0x20e unbound@0x221
+  ord 279 seg 70:0x0 unbound@0x3d
+  ord 280 seg 70:0xbe unbound@0xf6
+  ord 281 seg 6:0xeea returned TB80FLT.1
+  ord 283 seg 61:0x5f8 unbound@0x8a5
+  ord 284 seg 6:0x2838 unbound@0x3ae6
+  ord 285 seg 60:0x74a unbound@0x604
+  ord 287 seg 3:0x90e unbound@0x921
+  ord 288 seg 4:0x14c unbound@0x15f
+  ord 289 seg 70:0x156 unbound@0x189
+  ord 292 seg 6:0xc7e unbound@0x3ae6
+  ord 293 seg 6:0x3aac unbound@0x3ac6
+  ord 294 seg 57:0x1778 unbound@0x17bd KERNEL.15, KERNEL.18
+  ord 298 seg 81:0x950 unbound@0x12
+  ord 301 seg 78:0x82 unbound@0x94
+  ord 302 seg 100:0x0 unbound@0x16
+  ord 303 seg 100:0x5fa unbound@0x16
+  ord 305 seg 100:0x656 unbound@0x66d
+  ord 306 seg 6:0x3c3a unbound@0x3ae6
+  ord 307 seg 6:0x3c90 unbound@0x3ae6
+  ord 308 seg 6:0x3cf4 unbound@0x3ae6
+  ord 309 seg 6:0x3d6a unbound@0x3ae6
+  ord 312 seg 84:0x0 unbound@0x17
+  ord 313 seg 84:0x68 unbound@0x7f
+  ord 315 seg 109:0xa60 unbound@0xa97
+  ord 316 seg 109:0xbb2 unbound@0xbd8
+  ord 317 seg 109:0xb82 unbound@0xba8
+  ord 321 seg 84:0x3de returned KERNEL.95
+  ord 322 seg 47:0x3dd8 unbound@0x3df8
+  ord 328 seg 6:0x1068 returned TB80FLT.1
+  ord 329 seg 110:0x5c8 unbound@0x5e3
+  ord 330 seg 100:0x7fa unbound@0x811
+  ord 331 seg 100:0x738 unbound@0x74f
+  ord 332 seg 100:0x868 unbound@0x87f
+  ord 333 seg 100:0x8d8 unbound@0x8ef
+  ord 334 seg 61:0x127a unbound@0x1291
+  ord 338 seg 18:0x1bfa unbound@0x1c5b
+  ord 348 seg 18:0x1f48 unbound@0x2230
+  ord 349 seg 101:0x3da returned OLE2.36
+  ord 350 seg 16:0x2b0e unbound@0x2b2f
+  ord 351 seg 77:0x36e unbound@0x396
+  ord 354 seg 100:0x6c8 unbound@0x6df
+  ord 355 seg 90:0x0 unbound@0x30 USER.66, GDI.80
+  ord 356 seg 81:0x664 unbound@0x689
+  ord 358 seg 116:0x8f0 unbound@0x9f3
+  ord 359 seg 116:0xd68 unbound@0xd96
+  ord 360 seg 61:0x8b2 unbound@0xa61
+  ord 363 seg 10:0x2d50 unbound@0x2d5f
+  ord 365 seg 189:0x589e unbound@0x58fb TB80W16.195
+  ord 366 seg 10:0x2f22 unbound@0x2f39
+  ord 370 seg 99:0xba6 unbound@0xbd1
+  ord 385 seg 10:0x2d36 unbound@0x2d45
+  ord 389 seg 59:0xf4 unbound@0x64
+  ord 393 seg 78:0x148 unbound@0x15f
+  ord 394 seg 78:0x16a unbound@0x197
+  ord 395 seg 78:0x1b0 unbound@0x1e0
+  ord 396 seg 78:0x202 unbound@0x225
+  ord 397 seg 78:0x262 unbound@0x272
+  ord 398 seg 78:0x280 unbound@0x2a5
+  ord 399 seg 78:0x2e2 unbound@0x304
+  ord 400 seg 78:0x33c unbound@0x399
+  ord 401 seg 78:0x374 unbound@0x399
+  ord 402 seg 78:0x3e2 unbound@0x43f
+  ord 403 seg 78:0x41a unbound@0x43f
+  ord 404 seg 78:0x5b0 unbound@0x639
+  ord 405 seg 78:0x60c unbound@0x639
+  ord 406 seg 78:0x74a unbound@0x52e
+  ord 407 seg 78:0x790 unbound@0x7b5
+  ord 408 seg 78:0x920 unbound@0x94d
+  ord 409 seg 78:0xa76 unbound@0xaae
+  ord 410 seg 78:0xce0 unbound@0xd26
+  ord 411 seg 78:0xd04 unbound@0xd26
+  ord 412 seg 78:0xd94 unbound@0xdb1
+  ord 414 seg 78:0xdfe unbound@0xe2b USER.111
+  ord 417 seg 78:0xe5e unbound@0xe7c
+  ord 418 seg 78:0xe86 unbound@0xea7
+  ord 419 seg 78:0xeb2 unbound@0xed0
+  ord 422 seg 78:0x107a unbound@0x108f
+  ord 423 seg 78:0x109a unbound@0x10b7
+  ord 424 seg 78:0x10d0 unbound@0x10dc
+  ord 425 seg 78:0x10e6 unbound@0x10f8
+  ord 426 seg 78:0x1102 unbound@0x112b
+  ord 427 seg 78:0x1144 unbound@0x1150
+  ord 428 seg 78:0x115a unbound@0x1166
+  ord 429 seg 78:0x1170 unbound@0x1196
+  ord 430 seg 78:0x11b0 unbound@0x11c9
+  ord 431 seg 78:0x11d4 unbound@0x11f5
+  ord 432 seg 78:0x1200 unbound@0x1221
+  ord 433 seg 78:0x122c unbound@0x124d
+  ord 434 seg 78:0x1258 unbound@0x12bb
+  ord 435 seg 78:0x132a unbound@0x1344
+  ord 436 seg 78:0x13be unbound@0x13d6
+  ord 437 seg 78:0x13e0 unbound@0x13f9
+  ord 438 seg 78:0x1464 unbound@0x147f
+  ord 439 seg 78:0x148a unbound@0x149f
+  ord 440 seg 78:0x14aa returned TB80UTL.19
+  ord 441 seg 78:0x14c0 returned TB80UTL.18
+  ord 442 seg 78:0x14d6 returned TB80UTL.5
+  ord 443 seg 78:0x14ec returned TB80UTL.7
+  ord 444 seg 78:0x1502 returned TB80UTL.30
+  ord 445 seg 78:0x1518 returned TB80UTL.9
+  ord 446 seg 78:0x1566 returned TB80UTL.8
+  ord 448 seg 78:0x15c6 unbound@0x15db
+  ord 449 seg 78:0x15e6 unbound@0x1604
+  ord 450 seg 78:0x160e unbound@0x162c
+  ord 451 seg 78:0x1636 unbound@0x1651
+  ord 452 seg 78:0x166a unbound@0x167f
+  ord 453 seg 78:0x168a unbound@0x16d9 USER.13, USER.109, USER.113, USER.114
+  ord 454 seg 78:0x16f2 returned TB80W16.7
+  ord 455 seg 78:0x1732 unbound@0x175b
+  ord 456 seg 78:0x1774 unbound@0x1797
+  ord 457 seg 78:0x17b0 unbound@0x17c2
+  ord 458 seg 78:0x17cc unbound@0x17e9
+  ord 459 seg 78:0x1802 unbound@0x1813
+  ord 460 seg 78:0x181e unbound@0x1842
+  ord 461 seg 78:0x184c unbound@0x1867
+  ord 463 seg 78:0x1896 unbound@0x18a7
+  ord 464 seg 78:0x18d0 unbound@0x18eb
+  ord 465 seg 78:0x18f6 unbound@0x190e
+  ord 467 seg 78:0x1940 unbound@0x1955
+  ord 468 seg 78:0x1960 unbound@0x197b
+  ord 469 seg 78:0x1986 unbound@0x19a7
+  ord 470 seg 78:0x19c6 unbound@0x19e4
+  ord 471 seg 78:0x19ee unbound@0x1a09
+  ord 472 seg 78:0x1a14 unbound@0x1a35
+  ord 473 seg 78:0x1a54 unbound@0x1a72
+  ord 474 seg 78:0x1a7c unbound@0x1a91
+  ord 476 seg 78:0x1ac4 unbound@0x1ae9
+  ord 479 seg 78:0x1c70 unbound@0x1c85
+  ord 480 seg 78:0x1c90 unbound@0x1cb3
+  ord 482 seg 78:0x1cd6 unbound@0x1cfe
+  ord 483 seg 78:0x1d08 unbound@0x1d1a
+  ord 484 seg 78:0x1d24 returned TB80UTL.65
+  ord 485 seg 78:0x1e5c unbound@0x1e78
+  ord 486 seg 78:0x1e86 unbound@0x1e98
+  ord 487 seg 78:0x1ea2 unbound@0x1eb7
+  ord 488 seg 78:0x1ec2 unbound@0x1ed8
+  ord 489 seg 78:0x1ee2 unbound@0x1efb
+  ord 490 seg 78:0x1f06 unbound@0x1f27
+  ord 491 seg 78:0x1f32 unbound@0x1f4d
+  ord 492 seg 78:0x1f58 unbound@0x1f67
+  ord 493 seg 78:0x1f72 returned TB80UTL.115
+  ord 495 seg 78:0x1fb6 unbound@0x1fd0
+  ord 497 seg 78:0x2086 unbound@0x20a1
+  ord 498 seg 78:0x20ac returned TB80W16.23
+  ord 499 seg 78:0x20c8 unbound@0x20e7
+  ord 500 seg 78:0x20f2 unbound@0x20fe
+  ord 501 seg 78:0x2108 unbound@0x2125
+  ord 502 seg 78:0x2144 unbound@0xfa4
+  ord 504 seg 78:0x22c6 unbound@0x22e1
+  ord 505 seg 78:0x22ec unbound@0x2307
+  ord 506 seg 80:0x7574 unbound@0x73e8
+  ord 507 seg 80:0x782e unbound@0x368a
+  ord 508 seg 81:0xa80 unbound@0x12
+  ord 509 seg 81:0xb00 unbound@0x12
+  ord 512 seg 82:0x28a unbound@0x2ab
+  ord 513 seg 82:0x2b6 unbound@0x2d7
+  ord 514 seg 82:0x2e2 unbound@0x303
+  ord 516 seg 82:0x502 unbound@0x545
+  ord 517 seg 82:0x602 unbound@0x61a
+  ord 518 seg 84:0x158 returned KERNEL.95
+  ord 519 seg 84:0x1ac returned KERNEL.95
+  ord 520 seg 84:0x1e0 returned KERNEL.95
+  ord 521 seg 84:0x216 unbound@0x223
+  ord 522 seg 84:0x2f0 unbound@0x350
+  ord 523 seg 84:0x35e returned KERNEL.95
+  ord 526 seg 98:0xdec unbound@0xef4
+  ord 528 seg 100:0x7a4 unbound@0x7be
+  ord 532 seg 101:0x102 unbound@0x114
+  ord 535 seg 101:0x236 unbound@0x15 USER.22, USER.29
+  ord 536 seg 106:0x2e6 returned KERNEL.81
+  ord 537 seg 106:0x71c unbound@0x7b6
+  ord 538 seg 107:0x2a18 unbound@0x2e23
+  ord 539 seg 107:0x3b38 unbound@0x3b60
+  ord 540 seg 107:0x3c6a unbound@0x3c8f
+  ord 541 seg 107:0x3d3a unbound@0x3fc3
+  ord 542 seg 107:0x3f02 unbound@0x3f12
+  ord 543 seg 107:0x3f82 unbound@0x3fc3
+  ord 548 seg 110:0xcac unbound@0xcc9
+  ord 550 seg 110:0x1372 unbound@0x152b
+  ord 558 seg 116:0x288 returned TB80W16.146
+  ord 559 seg 116:0x2a0 returned TB80W16.211
+  ord 560 seg 116:0x2b8 unbound@0x2d5 TB80W16.149
+  ord 561 seg 116:0x2f6 returned TB80W16.147
+  ord 562 seg 116:0x30e returned TB80W16.212
+  ord 564 seg 116:0x35a unbound@0x382
+  ord 565 seg 116:0x3f8 unbound@0x41f
+  ord 566 seg 116:0x44c unbound@0x473
+  ord 567 seg 116:0x4a0 unbound@0x4dc
+  ord 568 seg 116:0x55a unbound@0x595
+  ord 569 seg 116:0x6f2 unbound@0x744
+  ord 570 seg 116:0x7d4 unbound@0x7f4
+  ord 571 seg 116:0xb34 unbound@0xb49
+  ord 572 seg 116:0x103a unbound@0xd96
+  ord 576 seg 116:0x1dea returned OLE2DISP.9
+  ord 578 seg 132:0x0 unbound@0x3d
+  ord 579 seg 132:0x112 unbound@0x147
+  ord 580 seg 132:0x1e0 unbound@0x215
+  ord 588 seg 180:0x5da unbound@0x62a
+  ord 590 seg 180:0x7fe unbound@0x85f
+  ord 591 seg 180:0xc06 unbound@0x62a
+  ord 592 seg 180:0xe9a unbound@0x62a
+  ord 596 seg 192:0x0 unbound@0x55
+  ord 597 seg 192:0x3f4 unbound@0x446
+  ord 598 seg 192:0x464 unbound@0x4b6
+  51 called, 225 returned, 308 unbound, 22 faulted
+TB80BMP.DLL: 93 ordinals
+  ord 1 seg 11:0x0 fault
+  ord 2 seg 23:0x126 unbound@0x18a USER.224, USER.55
+  ord 3 seg 3:0x3e0 unbound@0x1fcd
+  ord 4 seg 3:0x1c80 unbound@0x1c90
+  ord 5 seg 3:0x356 unbound@0x3be
+  ord 10 seg 18:0x33a returned GDI.176
+  ord 11 seg 5:0x0 unbound@0x51
+  ord 12 seg 5:0x24 unbound@0x1d7 USER.403
+  ord 13 seg 3:0x1fa2 unbound@0x1fcd
+  ord 16 seg 3:0x1b56 unbound@0x1b29 USER.133, USER.224
+  ord 17 seg 3:0x18ec unbound@0x190b
+  ord 18 seg 3:0x1964 unbound@0x198b
+  ord 19 seg 10:0xb0 unbound@0xbd
+  ord 20 seg 10:0x260 unbound@0x26d
+  ord 21 seg 10:0x332 unbound@0x33f
+  ord 22 seg 10:0x454 unbound@0x461
+  ord 23 seg 10:0x4aa unbound@0x4b7
+  ord 24 seg 10:0x4fc unbound@0x509
+  ord 25 seg 10:0x552 unbound@0x55f
+  ord 26 seg 10:0x5a4 unbound@0x5b1
+  ord 27 seg 10:0x618 unbound@0x625
+  ord 28 seg 10:0x67e unbound@0x68b
+  ord 29 seg 10:0x6d4 unbound@0x6e1
+  ord 30 seg 10:0x726 unbound@0x733
+  ord 31 seg 10:0x786 unbound@0x793
+  ord 32 seg 10:0x7ec unbound@0x7f9
+  ord 33 seg 10:0x852 unbound@0x85f
+  ord 34 seg 10:0x8c8 unbound@0x8d5
+  ord 35 seg 10:0x91e unbound@0x92b
+  ord 36 seg 10:0x96c unbound@0x979
+  ord 37 seg 10:0x9c2 unbound@0x9cf
+  ord 38 seg 10:0xa10 unbound@0xa1d
+  ord 39 seg 10:0xa66 unbound@0xa73
+  ord 40 seg 10:0xab4 unbound@0xac1
+  ord 41 seg 10:0xb1c unbound@0xb29
+  ord 42 seg 10:0xbc4 unbound@0xbd1
+  ord 43 seg 10:0xc12 unbound@0xc1f
+  ord 44 seg 10:0xc60 unbound@0xc6d
+  ord 45 seg 10:0xcc8 unbound@0xcd5
+  ord 46 seg 10:0xd2a unbound@0xd37
+  ord 47 seg 10:0xd8c unbound@0xd99
+  ord 48 seg 10:0xb6a unbound@0xb77
+  ord 49 seg 10:0xde2 unbound@0xdef
+  ord 50 seg 10:0x186e unbound@0x187b
+  ord 51 seg 10:0x18d0 unbound@0x18dd
+  ord 52 seg 10:0x1932 unbound@0x193f
+  ord 53 seg 10:0x1992 unbound@0x199f
+  ord 54 seg 10:0x1a0c unbound@0x1a19
+  ord 55 seg 10:0x122a unbound@0x1236
+  ord 56 seg 10:0x207e unbound@0x208b
+  ord 57 seg 10:0x1d6 unbound@0x1e3
+  ord 58 seg 10:0x1eee unbound@0x1efb
+  ord 59 seg 10:0x1f58 unbound@0x1f65
+  ord 60 seg 10:0x3d6 unbound@0x3e3
+  ord 61 seg 10:0x1e46 unbound@0x1e52
+  ord 62 seg 10:0x1e70 unbound@0x1e7c
+  ord 63 seg 10:0x1e9a unbound@0x1ea6
+  ord 64 seg 10:0x1ec4 unbound@0x1ed0
+  ord 65 seg 10:0x1d4c unbound@0x1d58
+  ord 66 seg 10:0x1d26 unbound@0x1d32
+  ord 67 seg 10:0x1d72 unbound@0x1d7e
+  ord 68 seg 10:0x1d98 unbound@0x1da4
+  ord 69 seg 10:0xe38 unbound@0xe45
+  ord 70 seg 10:0xe90 unbound@0xe9d
+  ord 71 seg 10:0x1a72 unbound@0x1a7e
+  ord 72 seg 10:0x12e6 unbound@0x12f3
+  ord 75 seg 7:0x978 unbound@0x680 USER.224
+  ord 76 seg 7:0xa68 unbound@0x680 USER.224
+  ord 78 seg 15:0xb14 returned USER.173, USER.57
+  ord 79 seg 15:0x332 unbound@0x349
+  ord 80 seg 15:0x358 unbound@0x36e
+  ord 81 seg 15:0x37c unbound@0x394
+  ord 82 seg 15:0x3a2 unbound@0x3b8
+  ord 83 seg 15:0x3c6 unbound@0x3dd
+  ord 84 seg 15:0x3ec unbound@0x402
+  ord 85 seg 15:0x410 unbound@0x427
+  ord 86 seg 15:0x436 unbound@0x44c
+  ord 87 seg 15:0x45a unbound@0x471
+  ord 88 seg 15:0x480 unbound@0x496
+  ord 89 seg 15:0x4a4 unbound@0x4bd
+  ord 90 seg 15:0x4cc unbound@0x4e3
+  ord 91 seg 15:0xdd2 unbound@0xde4
+  ord 92 seg 23:0xdc returned USER.224
+  8 called, 10 returned, 74 unbound, 1 faulted
+TB80CMP.DLL: 16 ordinals
+  ord 1 seg 3:0x8e unbound@0x1540 KERNEL.60, KERNEL.61, KERNEL.60, KERNEL.61
+  ord 2 seg 3:0x51e unbound@0x547
+  ord 3 seg 3:0x5c4 unbound@0x5e7
+  ord 8 seg 3:0x730 unbound@0x1540 KERNEL.60, KERNEL.61, KERNEL.60, KERNEL.61
+  ord 9 seg 3:0x786 unbound@0x1540 KERNEL.60, KERNEL.61, KERNEL.60, KERNEL.61
+  ord 14 seg 3:0x9f0 unbound@0xbf6
+  ord 15 seg 3:0xca2 unbound@0xcbd
+  ord 16 seg 3:0x668 unbound@0x692 KERNEL.60, KERNEL.61
+  4 called, 6 returned, 4 unbound, 2 faulted
+TB80UTL.DLL: 143 ordinals
+  ord 1 seg 4:0x278c returned
+  ord 3 seg 7:0x122 returned
+  ord 8 seg 5:0x186 unbound@0x196
+  ord 9 seg 5:0x24a unbound@0x26e
+  ord 15 seg 13:0x0 unbound@0x1d
+  ord 16 seg 13:0x62 unbound@0x7f
+  ord 18 seg 5:0x494 unbound@0x4d2
+  ord 19 seg 5:0x4ee unbound@0x514
+  ord 23 seg 5:0x2f8 unbound@0x31f
+  ord 24 seg 5:0x35a unbound@0x381
+  ord 25 seg 5:0x3bc unbound@0x405
+  ord 26 seg 5:0x428 unbound@0x471
+  ord 27 seg 5:0x54c unbound@0x573
+  ord 28 seg 5:0x5aa unbound@0x5d1
+  ord 29 seg 5:0x608 unbound@0x649
+  ord 30 seg 5:0x66c unbound@0x6ad
+  ord 33 seg 2:0x21c returned USER.60, USER.23, USER.46
+  ord 35 seg 5:0x788 unbound@0x7af
+  ord 36 seg 5:0x7e6 unbound@0x80d
+  ord 37 seg 9:0x0 returned KERNEL.15
+  ord 38 seg 9:0x84 unbound@0x99
+  ord 39 seg 9:0xbe returned KERNEL.5
+  ord 40 seg 9:0xec returned KERNEL.7
+  ord 41 seg 9:0x11c returned KERNEL.8
+  ord 42 seg 9:0x148 returned KERNEL.9
+  ord 49 seg 8:0x4b4 unbound@0x5c0 KERNEL.60, KERNEL.61
+  ord 50 seg 8:0x624 unbound@0x733 KERNEL.60, KERNEL.61
+  ord 54 seg 8:0x0 unbound@0x20 KERNEL.15
+  ord 55 seg 8:0x272 unbound@0x283
+  ord 56 seg 8:0x42 unbound@0x54
+  ord 57 seg 8:0x402 unbound@0x47b KERNEL.18
+  ord 58 seg 18:0xd0 unbound@0xfb
+  ord 59 seg 18:0x0 unbound@0x3a KERNEL.135
+  ord 65 seg 17:0x0 unbound@0x25
+  ord 71 seg 9:0x174 returned KERNEL.10
+  ord 72 seg 9:0x1a0 returned KERNEL.6
+  ord 85 seg 20:0x0 unbound@0x56
+  ord 86 seg 2:0x2d0 returned TB80RCR.28
+  ord 88 seg 2:0x3e0 unbound@0x738 KERNEL.15, KERNEL.18
+  ord 92 seg 2:0x3a6 unbound@0x738 KERNEL.15, KERNEL.18
+  ord 97 seg 2:0x4ee returned TB80RCR.25
+  ord 101 seg 17:0x432 unbound@0x49d KERNEL.15, KERNEL.18, USER.66, GDI.375
+  ord 115 seg 21:0x0 unbound@0x95 USER.420, USER.18
+  ord 122 seg 18:0x564 unbound@0x574
+  ord 123 seg 18:0x664 returned TB80W16.57, TB80W16.32
+  ord 133 seg 24:0x43e unbound@0x451
+  ord 134 seg 24:0x524 unbound@0x544
+  ord 135 seg 24:0x4ce unbound@0x4e6
+  ord 136 seg 24:0x73c unbound@0x796
+  ord 137 seg 24:0x768 unbound@0x796
+  ord 138 seg 24:0x404 unbound@0x417
+  ord 139 seg 24:0x14e unbound@0x16a
+  ord 140 seg 24:0x1c unbound@0x61
+  ord 141 seg 24:0x10c unbound@0x11f
+  ord 142 seg 25:0x0 returned KERNEL.15, KERNEL.18
+  ord 144 seg 25:0x110 unbound@0x29a
+  ord 145 seg 25:0x174 unbound@0x29a
+  ord 146 seg 25:0x212 unbound@0x29a
+  ord 147 seg 22:0x102 unbound@0x27
+  ord 148 seg 22:0x160 unbound@0x27
+  ord 149 seg 22:0x198 unbound@0x27
+  ord 150 seg 22:0x1ce unbound@0x8f
+  ord 151 seg 22:0x22c unbound@0x8f
+  ord 152 seg 22:0x264 unbound@0x8f
+  ord 153 seg 22:0x29a unbound@0x5b
+  ord 154 seg 22:0x2f8 unbound@0x5b
+  ord 155 seg 22:0x330 unbound@0x5b
+  ord 156 seg 2:0x0 unbound@0xf
+  ord 157 seg 23:0x0 unbound@0x31
+  ord 158 seg 23:0x4e unbound@0x6e
+  ord 161 seg 23:0x1fe unbound@0x9b
+  ord 165 seg 2:0x714 unbound@0x738
+  ord 166 seg 24:0x35e unbound@0x379
+  ord 167 seg 24:0x39c unbound@0x3be
+  ord 171 seg 24:0xe58 unbound@0xe68
+  ord 172 seg 24:0xa10 unbound@0xa28
+  ord 173 seg 24:0xc4a unbound@0xc71
+  ord 174 seg 24:0xc0e unbound@0xc21
+  ord 175 seg 24:0xbce unbound@0xbe9
+  ord 176 seg 24:0xb22 unbound@0xb3a
+  ord 177 seg 24:0xb7c unbound@0xb94
+  ord 178 seg 22:0x9c unbound@0x27
+  ord 179 seg 24:0x492 unbound@0xe68
+  ord 180 seg 18:0x7cc returned TB80W16.257, TB80W16.258, TB80W16.49
+  ord 181 seg 24:0x21a unbound@0x242
+  22 called, 57 returned, 61 unbound, 3 faulted
+TB80MM.DLL: 29 ordinals
+  ord 1 seg 2:0x0 returned USER.110
+  ord 2 seg 18:0x942 unbound@0x783 USER.224
+  ord 3 seg 21:0x126 unbound@0x18a USER.224, USER.55
+  ord 4 seg 13:0x60a unbound@0x88a
+  ord 5 seg 13:0x0 unbound@0x66
+  ord 6 seg 16:0x0 unbound@0x75
+  ord 7 seg 16:0x272 unbound@0x297
+  ord 8 seg 16:0x306 unbound@0x328
+  ord 10 seg 13:0x7c0 unbound@0x7e1
+  ord 11 seg 15:0x188 unbound@0x1b1
+  ord 15 seg 14:0x532 unbound@0x551
+  ord 16 seg 14:0x634 unbound@0x653
+  ord 17 seg 14:0x404 unbound@0x423
+  ord 22 seg 20:0x75a returned USER.107
+  ord 23 seg 20:0x7b2 unbound@0x158 USER.47, KERNEL.36
+  ord 24 seg 20:0xa86 unbound@0xa96
+  ord 25 seg 20:0x678 unbound@0x688
+  ord 26 seg 13:0x8d8 unbound@0x939
+  ord 27 seg 13:0x24 unbound@0x66
+  ord 28 seg 13:0x8fc unbound@0x939
+  ord 29 seg 16:0x2a unbound@0x75
+  ord 30 seg 21:0xdc returned USER.224
+  6 called, 6 returned, 16 unbound, 1 faulted
+TBWIN.DLL: 76 ordinals
+  ord 1 seg 7:0x0 returned GDI.52
+  ord 2 seg 7:0x16 returned GDI.52
+  ord 3 seg 7:0x2c returned GDI.52
+  ord 4 seg 7:0x42 returned GDI.52
+  ord 5 seg 7:0x58 returned GDI.52
+  ord 6 seg 7:0x6e returned GDI.52
+  ord 7 seg 7:0x84 returned GDI.52
+  ord 8 seg 7:0x9a returned GDI.52
+  ord 9 seg 7:0xb0 returned GDI.52
+  ord 10 seg 7:0xc6 returned GDI.52
+  ord 11 seg 7:0xdc returned GDI.52
+  ord 12 seg 8:0x0 returned KERNEL.15
+  ord 13 seg 8:0xfc returned KERNEL.15
+  ord 15 seg 9:0x22a returned USER.111
+  ord 16 seg 4:0x42 returned KERNEL.29
+  ord 17 seg 5:0x4cc unbound@0x581
+  ord 20 seg 8:0x2d8 unbound@0x352
+  ord 21 seg 6:0x0 unbound@0x10
+  ord 22 seg 6:0x9c unbound@0xac
+  ord 23 seg 6:0x138 unbound@0x943 GDI.52, GDI.80
+  ord 24 seg 6:0x2c4 unbound@0x943 GDI.52, GDI.80
+  ord 25 seg 6:0x486 unbound@0x943 GDI.52, GDI.80
+  ord 26 seg 6:0x64e unbound@0x943 GDI.52, GDI.80
+  ord 27 seg 6:0x848 unbound@0x943 GDI.52, GDI.80
+  ord 28 seg 6:0x87e unbound@0x943 GDI.52, GDI.80
+  ord 29 seg 6:0x8b4 unbound@0x943 GDI.52, GDI.80
+  ord 30 seg 6:0x8e0 unbound@0x943 GDI.52, GDI.80
+  ord 32 seg 11:0x0 returned USER.47, KERNEL.90
+  ord 36 seg 13:0x0 returned USER.291
+  ord 37 seg 13:0x64c returned USER.293
+  ord 40 seg 10:0xbe unbound@0xe3
+  ord 41 seg 4:0x5a returned USER.109, USER.114
+  ord 42 seg 12:0x2e unbound@0x142
+  ord 43 seg 12:0x0 unbound@0x142
+  ord 44 seg 12:0x81c returned USER.107
+  ord 45 seg 12:0x128 unbound@0x142
+  ord 48 seg 4:0x0 unbound@0x25
+  ord 50 seg 25:0x53a unbound@0x551 KERNEL.21
+  ord 52 seg 24:0x8fe returned USER.109, USER.90, USER.109, USER.90
+  ord 53 seg 26:0x36 unbound@0x56
+  ord 55 seg 4:0x90 unbound@0x10b KERNEL.15, KERNEL.18, USER.420, KERNEL.90
+  ord 56 seg 4:0x144 unbound@0x159
+  ord 57 seg 4:0x252 unbound@0x265
+  ord 58 seg 4:0x398 unbound@0x3ab
+  ord 59 seg 15:0x4a unbound@0x68
+  ord 60 seg 16:0x742 returned KERNEL.36
+  ord 61 seg 16:0x83e unbound@0x2db KERNEL.36
+  ord 62 seg 17:0x0 unbound@0xf
+  ord 63 seg 17:0x66 unbound@0x75
+  ord 64 seg 17:0xcc unbound@0xd6
+  ord 65 seg 17:0x162 unbound@0x171
+  ord 66 seg 17:0x1ca unbound@0x1d4
+  ord 67 seg 17:0x238 unbound@0x247
+  ord 68 seg 17:0x29e unbound@0x2a8
+  ord 69 seg 17:0x318 unbound@0x322
+  ord 70 seg 17:0x386 unbound@0x395
+  ord 71 seg 17:0x3ec unbound@0x3fb
+  ord 72 seg 17:0x45a unbound@0x469
+  ord 73 seg 17:0x4c0 unbound@0x4cf
+  ord 74 seg 17:0x52c unbound@0x53b
+  ord 75 seg 23:0xdc returned USER.224
+  ord 76 seg 23:0x126 unbound@0x18a USER.224, USER.55
+  35 called, 12 returned, 27 unbound, 2 faulted
+TB80OLE.DLL: 90 ordinals
+  ord 1 seg 3:0x0 fault
+  ord 2 seg 2:0xa66 returned
+  ord 3 seg 6:0x2ac fault
+  ord 4 seg 6:0x6e0 unbound@0x6f4
+  ord 5 seg 6:0x648 unbound@0x65b
+  ord 6 seg 11:0x3e8 unbound@0x3f7
+  ord 10 seg 14:0xfe returned OLE2.50, USER.145
+  ord 11 seg 14:0x1c4 returned OLE2.49
+  ord 14 seg 6:0x3fc unbound@0x95
+  ord 15 seg 6:0x418 unbound@0xd6
+  ord 16 seg 6:0x436 unbound@0x135
+  ord 17 seg 6:0x458 unbound@0x95
+  ord 22 seg 6:0x5d2 returned TB80UTL.144
+  ord 24 seg 8:0x2e38 returned TB80UTL.91, TB80UTL.93, KERNEL.51, TB80W16.206
+  ord 26 seg 9:0x206 unbound@0x233 TB80UTL.91, TB80UTL.89
+  ord 33 seg 16:0x0 unbound@0x1c
+  ord 34 seg 17:0x0 unbound@0x1d
+  ord 36 seg 18:0x0 unbound@0x1c
+  ord 37 seg 18:0x122 unbound@0x155
+  ord 59 seg 13:0x49e unbound@0x4ca
+  ord 60 seg 15:0x162 returned GDI.176
+  ord 64 seg 16:0x316 unbound@0x34e
+  ord 65 seg 17:0xae unbound@0xe4
+  ord 66 seg 19:0x0 returned KERNEL.60, KERNEL.61, KERNEL.62, USER.420
+  ord 67 seg 19:0x170 unbound@0x179
+  ord 68 seg 20:0x976 unbound@0x98d
+  ord 69 seg 20:0x9cc unbound@0x9e3
+  ord 70 seg 20:0xa22 unbound@0xa39
+  ord 71 seg 20:0xa78 unbound@0xa8f
+  ord 75 seg 22:0x13a unbound@0x165
+  ord 79 seg 23:0x4c2 unbound@0x63a KERNEL.15, KERNEL.18
+  ord 81 seg 25:0x10c returned USER.107
+  ord 82 seg 26:0x7c returned USER.107
+  ord 83 seg 27:0x0 unbound@0x5e
+  ord 84 seg 27:0x8bc unbound@0x5e
+  ord 85 seg 27:0x8e0 unbound@0x5e
+  ord 86 seg 27:0x906 unbound@0x5e
+  ord 87 seg 27:0x92c unbound@0x988 GDI.52, GDI.80, GDI.128
+  ord 88 seg 27:0xa1e unbound@0xa35
+  ord 89 seg 27:0xac8 unbound@0xb4c KERNEL.90
+  ord 90 seg 27:0xb92 unbound@0xba3
+  12 called, 47 returned, 26 unbound, 5 faulted
+TB80RCR.DLL: 117 ordinals
+  ord 1 seg 3:0x82 unbound@0x8e
+  ord 2 seg 3:0xcbde unbound@0xcbeb
+  ord 3 seg 2:0x40b4 unbound@0x40c1
+  ord 4 seg 2:0x82a6 unbound@0x82b3
+  ord 5 seg 2:0x9ecc unbound@0x9ed8
+  ord 6 seg 2:0x7284 unbound@0x7291
+  ord 7 seg 3:0xc88a unbound@0xc897
+  ord 8 seg 2:0x291e unbound@0x292b
+  ord 9 seg 3:0xcb1c unbound@0xcb29
+  ord 10 seg 2:0x2ace unbound@0x2adb
+  ord 11 seg 2:0x2992 unbound@0x299f
+  ord 12 seg 2:0x2a00 unbound@0x2a0d
+  ord 13 seg 2:0x2afc unbound@0x2b09
+  ord 14 seg 2:0x2d40 unbound@0x2d4d
+  ord 15 seg 2:0x6c12 unbound@0x6c1f
+  ord 16 seg 3:0xca22 unbound@0xca2e
+  ord 17 seg 3:0xc07c unbound@0xc089
+  ord 18 seg 2:0x3296 unbound@0x32a3
+  ord 19 seg 2:0x32f0 unbound@0x32fd
+  ord 20 seg 2:0x2a76 unbound@0x2a83
+  ord 21 seg 3:0xc008 unbound@0xc015
+  ord 22 seg 3:0xc060 unbound@0xc06d
+  ord 23 seg 2:0x3e4a unbound@0x3e57
+  ord 24 seg 2:0x3ec0 unbound@0x3ecd
+  ord 25 seg 3:0xbfec unbound@0xbff8
+  ord 26 seg 3:0xbf70 unbound@0xbf7d
+  ord 27 seg 3:0xbfb4 unbound@0xbfc1
+  ord 28 seg 3:0xbf4e unbound@0xbf5a
+  ord 29 seg 3:0x3112 unbound@0x311f
+  ord 30 seg 3:0x3b6c unbound@0x3b79
+  ord 31 seg 3:0x3c3e unbound@0x3c4b
+  ord 32 seg 3:0x3d60 unbound@0x3d6d
+  ord 33 seg 3:0x3db6 unbound@0x3dc3
+  ord 34 seg 3:0x3e08 unbound@0x3e15
+  ord 35 seg 3:0x3e5e unbound@0x3e6b
+  ord 36 seg 3:0x3eb0 unbound@0x3ebd
+  ord 37 seg 3:0x3f24 unbound@0x3f31
+  ord 38 seg 3:0x3f8a unbound@0x3f97
+  ord 39 seg 3:0x3fe0 unbound@0x3fed
+  ord 40 seg 3:0x4032 unbound@0x403f
+  ord 41 seg 3:0x4092 unbound@0x409f
+  ord 42 seg 3:0x40f8 unbound@0x4105
+  ord 43 seg 3:0x415e unbound@0x416b
+  ord 44 seg 3:0x41d4 unbound@0x41e1
+  ord 45 seg 3:0x422a unbound@0x4237
+  ord 46 seg 3:0x4278 unbound@0x4285
+  ord 47 seg 3:0x42ce unbound@0x42db
+  ord 48 seg 3:0x431c unbound@0x4329
+  ord 49 seg 3:0x4372 unbound@0x437f
+  ord 50 seg 3:0x43c0 unbound@0x43cd
+  ord 51 seg 3:0x4428 unbound@0x4435
+  ord 52 seg 3:0x44d0 unbound@0x44dd
+  ord 53 seg 3:0x451e unbound@0x452b
+  ord 54 seg 3:0x456c unbound@0x4579
+  ord 55 seg 3:0x45d4 unbound@0x45e1
+  ord 56 seg 3:0x4636 unbound@0x4643
+  ord 57 seg 3:0x4698 unbound@0x46a5
+  ord 58 seg 3:0x4476 unbound@0x4483
+  ord 59 seg 3:0x46ee unbound@0x46fb
+  ord 60 seg 3:0x7dde unbound@0x7deb
+  ord 61 seg 3:0x7e40 unbound@0x7e4d
+  ord 62 seg 3:0x7ea2 unbound@0x7eaf
+  ord 63 seg 3:0x7f02 unbound@0x7f0f
+  ord 64 seg 3:0x7f7c unbound@0x7f89
+  ord 65 seg 3:0x779a unbound@0x77a6
+  ord 66 seg 3:0x3688 unbound@0x3695
+  ord 67 seg 3:0x3238 unbound@0x3245
+  ord 68 seg 3:0x34f8 unbound@0x3505
+  ord 69 seg 3:0x3562 unbound@0x356f
+  ord 70 seg 3:0x3ce2 unbound@0x3cef
+  ord 71 seg 3:0x3450 unbound@0x345c
+  ord 72 seg 3:0x347a unbound@0x3486
+  ord 73 seg 3:0x34a4 unbound@0x34b0
+  ord 74 seg 3:0x34ce unbound@0x34da
+  ord 75 seg 3:0x3356 unbound@0x3362
+  ord 76 seg 3:0x3330 unbound@0x333c
+  ord 77 seg 3:0x337c unbound@0x3388
+  ord 78 seg 3:0x4744 unbound@0x4751
+  ord 79 seg 3:0x479c unbound@0x47a9
+  ord 80 seg 3:0x493a unbound@0x4946
+  ord 81 seg 3:0x4958 unbound@0x4964
+  ord 82 seg 3:0x7fe2 unbound@0x7fee
+  ord 83 seg 3:0x47f0 unbound@0x47fd
+  ord 84 seg 3:0x4846 unbound@0x4853
+  ord 85 seg 3:0x4896 unbound@0x48a3
+  ord 86 seg 3:0x48ec unbound@0x48f9
+  ord 87 seg 3:0x30a8 unbound@0x30b5
+  ord 88 seg 3:0x2e0a unbound@0x2e16
+  ord 89 seg 3:0x2ebe unbound@0x2eca
+  ord 90 seg 3:0x2f3a unbound@0x2f46
+  ord 91 seg 2:0xa4 unbound@0xb0
+  ord 92 seg 3:0x2f80 unbound@0x2f8d
+  ord 93 seg 3:0x3004 unbound@0x3011
+  ord 94 seg 3:0x3060 unbound@0x306c
+  ord 95 seg 2:0xd0 unbound@0xdd
+  ord 96 seg 3:0x27e unbound@0x28b
+  ord 97 seg 3:0x3cc unbound@0x3d9
+  ord 98 seg 3:0x4c2 unbound@0x4cf
+  ord 99 seg 3:0x620 unbound@0x62d
+  ord 100 seg 3:0x714 unbound@0x721
+  ord 101 seg 3:0xacc unbound@0xad9
+  ord 102 seg 3:0x1294 unbound@0x12a1
+  ord 103 seg 3:0x1454 unbound@0x1461
+  ord 104 seg 3:0x1758 unbound@0x1764
+  ord 105 seg 3:0x1984 unbound@0x1991
+  ord 106 seg 3:0x1f60 unbound@0x1f6d
+  ord 107 seg 3:0x25b2 unbound@0x25bf
+  ord 108 seg 3:0x2baa unbound@0x2bb7
+  ord 109 seg 3:0x158 unbound@0x165
+  ord 110 seg 3:0xaa unbound@0xb7
+  ord 111 seg 3:0x178a unbound@0x1797
+  ord 112 seg 3:0xc94 unbound@0xca1
+  ord 113 seg 3:0x1044 unbound@0x1051
+  ord 114 seg 3:0x7856 unbound@0x7863
+  ord 115 seg 2:0x2a4 unbound@0x2b0
+  ord 116 seg 2:0x2ce unbound@0x2db
+  0 called, 1 returned, 116 unbound, 0 faulted

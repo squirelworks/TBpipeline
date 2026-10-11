@@ -25,3 +25,9 @@ python3 -m tbpipeline.nehost.dll_probe
 ```
 
 Calls ordinal 1 of every unpacked 16-bit DLL and stops at the first far call. 32-bit images are skipped. The log is `nehost/dll_probe.txt`.
+
+```
+python3 -m tbpipeline.nehost.scaffold
+```
+
+The r3 scaffolding. Walks every ordinal of the working DLLs, binds `FFFF` imports, and records which ordinals do work. Ordinal 1 is startup. The log is `nehost/scaffold.txt`.
