@@ -60,9 +60,40 @@ def polygons(blob: bytes):
     return shapes
 
 
-def draw(shapes, dest: Path):
-    xs = [p[0] for pts, _ in shapes for p in pts]
-    ys = [p[1] for pts, _ in shapes for p in pts]
+def curves(blob: bytes):
+    """Long runs of twip pairs that are not kind-04 polygons.
+
+    P420's flame is one: 53 pairs at record +0x38, screen span about
+    150. A run is kept when it is long and tight on screen.
+    """
+    found = []
+    start = 0
+    while start + 8 < len(blob):
+        run = []
+        at = start
+        while at + 4 <= len(blob):
+            x = word(blob, at)
+            y = word(blob, at + 2)
+            if not (3000 <= x <= 12000 and 3000 <= y <= 12000):
+                break
+            run.append((x / 15.0, y / 15.0))
+            at += 4
+        if len(run) >= 20:
+            xs = [p[0] for p in run]
+            ys = [p[1] for p in run]
+            if max(xs) - min(xs) < 250 and max(ys) - min(ys) < 250:
+                found.append(run)
+            start = at + 4
+        else:
+            start += 1
+    return found
+
+
+def draw(shapes, lines, dest: Path):
+    xs = [p[0] for pts, _ in shapes for p in pts] + [p[0] for run in lines for p in run]
+    ys = [p[1] for pts, _ in shapes for p in pts] + [p[1] for run in lines for p in run]
+    if not xs:
+        return
     minx, maxx = min(xs), max(xs)
     miny, maxy = min(ys), max(ys)
     scale, pad = 2, 16
@@ -73,6 +104,9 @@ def draw(shapes, dest: Path):
     for points, color in shapes:
         xy = [(pad + (p[0] - minx) * scale, pad + (p[1] - miny) * scale) for p in points]
         pen.polygon(xy, outline=color, fill=color)
+    for run in lines:
+        xy = [(pad + (p[0] - minx) * scale, pad + (p[1] - miny) * scale) for p in run]
+        pen.line(xy, fill=(220, 90, 0), width=2)
     image.save(dest)
 
 
@@ -82,10 +116,11 @@ def write(book: Book, out: Path) -> dict:
     manifest = {}
     for page in book.pages:
         shapes = polygons(page.blob)
-        if not shapes:
+        lines = curves(page.blob)
+        if not shapes and not lines:
             continue
         name = f"{page.name}.png"
-        draw(shapes, folder / name)
+        draw(shapes, lines, folder / name)
         manifest[page.name] = [f"render/{name}"]
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
