@@ -35,6 +35,10 @@ EQUATES = {
 }
 
 UNPACKED = "/workspace/artifacts/unpacked"
+if not os.path.isdir(UNPACKED):
+    _alt = "/workspace/artifacts/Toolbook/_unpacked"
+    if os.path.isdir(_alt):
+        UNPACKED = _alt
 
 
 class Pass06(Pass04):

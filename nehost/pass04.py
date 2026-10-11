@@ -486,6 +486,46 @@ class Pass04:
         n = data[at]
         return ("str", data[at + 1:at + 1 + n].decode("latin1", "replace").lower())
 
+    def _string_from_mod(self, mod, sid):
+        """NE string table: block (id >> 4) + 1, sixteen counted strings."""
+        if not mod:
+            return None
+        block = (sid >> 4) + 1
+        index = sid & 0xF
+        blob = None
+        for item in mod.get("resources", []):
+            if item["type"] == ("int", 6) and item["name"] == ("int", block):
+                blob = item["bytes"]
+                break
+        if not blob:
+            return None
+        at = 0
+        for i in range(16):
+            if at >= len(blob):
+                return None
+            n = blob[at]
+            at += 1
+            raw = blob[at:at + n]
+            at += n
+            if i == index:
+                return raw.decode("latin1", "replace")
+        return None
+
+    def _string_resource(self, hinst, sid):
+        mod = self.mods.get(hinst)
+        if mod is None:
+            mod = self.mods.get(self.uc.reg_read(UC_X86_REG_DS))
+        text = self._string_from_mod(mod, sid)
+        if text:
+            return text
+        for other in self.mods.values():
+            if other is mod:
+                continue
+            text = self._string_from_mod(other, sid)
+            if text:
+                return text
+        return None
+
     def _res_arg(self, seg, off):
         # MAKEINTRESOURCE: a zero segment means the offset is the integer id.
         if seg == 0:
@@ -637,6 +677,22 @@ class Pass04:
         return True
 
     def _user(self, ordinal):
+        # LoadString(hinst, id, far buf, cch). The call sites push 10 bytes.
+        # AX=1 left the buffer empty, so the caller treated the string as missing.
+        if ordinal == 176:
+            cch = self._word(0)
+            off, seg = self._word(1), self._word(2)
+            sid = self._word(3)
+            text = self._string_resource(self._word(4), sid)
+            if not text or cch < 1 or seg not in self.arena.segs:
+                self.uc.reg_write(UC_X86_REG_AX, 0)
+                self.uc.reg_write(UC_X86_REG_DX, 0)
+                return True
+            n = self._copy_to(seg, off, text, cch)
+            print(f"  loadstring {sid:#x} {text[:48]!r}", file=sys.stderr, flush=True)
+            self.uc.reg_write(UC_X86_REG_AX, n)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
         # door call RegisterPenApp through a null pointer.
         if ordinal != 179:
