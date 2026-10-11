@@ -13,4 +13,4 @@ Off unless stage 2 failed to open the book, or you passed `--debug`.
 python3 -m tbpipeline.runtime.debug --b ~/TBK/bin --c 9e954d01.tbk
 ```
 
-Writes `tbpipeline/_debug/`, beside the package. Not the working directory.
+Writes `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`, beside the package. Not the working directory.

@@ -29,7 +29,7 @@ The OPTLOADER unpacker follows moralrecordings' `optloader.py`: https://github.c
 
 ## Stages
 
-Each stage writes its file into `tbpipeline/_debug/`, beside the script. Not the directory you ran the command from.
+Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`. Not the directory you ran the command from.
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
@@ -39,14 +39,14 @@ Each stage writes its file into `tbpipeline/_debug/`, beside the script. Not the
 
 | File | Stage |
 |---|---|
-| `_debug/01_startup.txt` | Modules on disk |
-| `_debug/02_launch.txt` | Where the 16-bit entry stopped |
-| `_debug/02a_process.txt` | Book magic, page count, first pages |
-| `_debug/02b_render.txt` | Render note |
-| `_debug/02c.txt` | The prompt |
-| `_debug/render.html` | render-old, the current reader |
-| `_debug/render-new.html` | render-new, walked by `engine.py` |
-| `_debug/RUN.txt` | The whole run |
+| `_debug/db-…/01_startup.txt` | Modules on disk |
+| `_debug/db-…/02_launch.txt` | Where the 16-bit entry stopped |
+| `_debug/db-…/02a_process.txt` | Book magic, page count, first pages |
+| `_debug/db-…/02b_render.txt` | Render note |
+| `_debug/db-…/02c.txt` | The prompt |
+| `_debug/db-…/render.html` | render-old, the current reader |
+| `_debug/db-…/render-new.html` | render-new, walked by `engine.py` |
+| `_debug/db-…/RUN.txt` | The whole run |
 
 ## Scope of 1.0.0r1
 

@@ -11,6 +11,7 @@ render then read the book the engine never reached.
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -26,6 +27,13 @@ from .nedllhost.pass06 import Pass06
 
 OUT = Path(__file__).resolve().parent
 DEBUG = HERE / "_debug"
+
+
+def new_debug_dir():
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = HERE / "_debug" / f"db-{stamp}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 # Only ordinals we have pinned to USER. 1 and 5 are KERNEL at startup.
 USER = {
@@ -124,6 +132,8 @@ def main():
         print("       python3 -m tbpipeline 9e954d01.tbk", file=sys.stderr)
         return 2
     pass06.UNPACKED = str(bin_dir)
+    global DEBUG
+    DEBUG = new_debug_dir()
     lines = stages(str(bin_dir), str(book), debug)
     text = "\n".join(lines) + "\n"
     note("RUN.txt", text)

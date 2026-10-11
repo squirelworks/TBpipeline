@@ -1,9 +1,8 @@
 """python3 -m tbpipeline.runtime.debug --b ~/TBK/bin --c book.tbk"""
 
 import sys
-from pathlib import Path
 
-from tbpipeline.run import resolve
+from tbpipeline.run import new_debug_dir, resolve
 from tbpipeline.runtime.debug import run
 
 
@@ -13,7 +12,7 @@ def main():
         print(f"not a book: {book}", file=sys.stderr)
         print("usage: python3 -m tbpipeline.runtime.debug --b ~/TBK/bin --c book.tbk", file=sys.stderr)
         return 2
-    out = Path(__file__).resolve().parents[2] / "_debug"
+    out = new_debug_dir()
     lines, prompt = run(str(book), out, debug=debug or True, stage2_failed=False)
     print("\n".join(lines))
     print(f"\n{prompt}", file=sys.stderr)
