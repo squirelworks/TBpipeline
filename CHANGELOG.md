@@ -2,7 +2,7 @@
 
 ## 1.0.0r2
 
-Prepared. Not tagged.
+The reader, split and polished.
 
 - Debug route is stage 2a, 2b, 2c, in `runtime/debug/`.
 - Each run writes `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`, beside the script.
