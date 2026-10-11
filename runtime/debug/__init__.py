@@ -7,7 +7,7 @@ to open the book, or the caller passed debug=True.
 
 from pathlib import Path
 
-from .play import render
+from .play import render_new, render_old
 from ..tbk import BOOK_MAGIC, load
 
 
@@ -41,8 +41,14 @@ def run(book_path, out, debug=False, stage2_failed=True):
         lines.extend(block)
 
         html_path = out / "render.html"
-        html_path.write_text(render(book), encoding="utf-8")
-        block = ["stage 2b render", f"  wrote {html_path} ({html_path.stat().st_size} bytes)"]
+        html_path.write_text(render_old(book), encoding="utf-8")
+        new_path = out / "render-new.html"
+        new_path.write_text(render_new(book), encoding="utf-8")
+        block = [
+            "stage 2b render",
+            f"  wrote {html_path} ({html_path.stat().st_size} bytes) render-old",
+            f"  wrote {new_path} ({new_path.stat().st_size} bytes) render-new",
+        ]
         (out / "02b_render.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
         lines.extend(block)
     else:

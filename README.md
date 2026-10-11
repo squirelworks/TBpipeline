@@ -44,7 +44,8 @@ Each stage writes its file into `_debug/` as it finishes. The last stage tells y
 | `_debug/02a_process.txt` | Book magic, page count, first pages |
 | `_debug/02b_render.txt` | Render note |
 | `_debug/02c.txt` | The prompt |
-| `_debug/render.html` | The pages, with a page menu in the top bar |
+| `_debug/render.html` | render-old, the current reader |
+| `_debug/render-new.html` | render-new, walked by `engine.py` |
 | `_debug/RUN.txt` | The whole run |
 
 ## Scope of 1.0.0r1

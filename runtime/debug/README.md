@@ -5,7 +5,7 @@ The debug route for the book reader.
 | File | Stage |
 |---|---|
 | `__init__.py` | 2a opens the book, 2b writes `render.html`, 2c says the files are there |
-| `play.py` | The HTML reader, with the page dropdown |
+| `play.py` | `render_old` is the current reader. `render_new` walks the book with `engine.py`. |
 
 Off unless stage 2 failed to open the book, or you passed `--debug`.
 
