@@ -68,7 +68,7 @@ def page_text(book: Book) -> list[dict]:
     return pages
 
 
-def document(title, payload, theme, script):
+def document(title, payload, theme, script, extra=""):
     css = theme_css(theme)
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -77,6 +77,11 @@ def document(title, payload, theme, script):
 <title>{title}</title>
 <style>
 {css}
+  .extra {{ max-width: 760px; margin: 8px auto 24px; text-align: center; }}
+  .extra button {{ font: 13px Tahoma, "MS Sans Serif", sans-serif; padding: 4px 12px; }}
+  #files {{ margin-top: 10px; }}
+  #files img {{ max-width: 100%; background: #fff; border: 1px solid #404040; }}
+  #files p {{ color: inherit; }}
 </style>
 </head>
 <body>
@@ -90,6 +95,10 @@ def document(title, payload, theme, script):
   </span>
   <span id="pid"></span>
 </footer>
+</div>
+<div class="extra">
+  <button id="show" type="button">Show rendered files for this page</button>
+  <div id="files"></div>
 </div>
 <script>
 const book = {payload};
@@ -218,6 +227,24 @@ document.getElementById("next").addEventListener("click", next);
 document.getElementById("back").addEventListener("click", back);
 menu.addEventListener("change", () => go(menu.value));
 if (book.pages.length) enter(book.pages[0].id);
+document.getElementById("show").addEventListener("click", () => {
+  const box = document.getElementById("files");
+  const page = book.pages[engine.index];
+  const files = (book.files && book.files[page.id]) || [];
+  box.replaceChildren();
+  if (!files.length) {
+    const p = document.createElement("p");
+    p.textContent = page.id + " has nothing rendered yet.";
+    box.appendChild(p);
+    return;
+  }
+  for (const src of files) {
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = src;
+    box.appendChild(img);
+  }
+});
 """
 
 
@@ -257,6 +284,10 @@ def walked(book: Book) -> list[dict]:
     return pages
 
 
-def render_new(book: Book, theme="default") -> str:
-    payload = json.dumps({"title": book.path.stem, "pages": walked(book)})
+def render_new(book: Book, theme="default", files=None) -> str:
+    payload = json.dumps({
+        "title": book.path.stem,
+        "pages": walked(book),
+        "files": files or {},
+    })
     return document(html.escape(book.path.stem), payload, theme, NEW_SCRIPT)

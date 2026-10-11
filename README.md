@@ -50,7 +50,7 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 | `02c.txt` | The prompt |
 | `render.html` | Engine reader: `go`, `next`, `back`, `buttonClick` |
 | `render-old.html` | Old index reader, only with `--render old` |
-| `RUN.txt` | The whole run |
+| `render/` | Shapes that can be drawn but are not placed in `render.html` |
 
 ## Scope
 
