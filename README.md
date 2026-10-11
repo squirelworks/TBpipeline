@@ -28,21 +28,24 @@ The OPTLOADER unpacker in `nehost/unpack_optloader.py` follows moralrecordings' 
 
 All three land in `tbpipeline/`.
 
-| File | Contents |
-|---|---|
-| `.debug/RUN.txt` | The five stages |
-| `.debug/TRACE.txt` | The same trace, written before the last line |
-| `.debug/render.html` | The pages: text and the quoted `P…` jumps |
+Each stage writes its own file into `.debug/` as it finishes. The last stage only tells you the debug information is there.
 
-Stage 5 says these files are for debugging purposes and puts them in `.debug/` at the repo root. Open `render.html` in a browser. The blue bar is the book name. A button is a page id the handler quoted.
+| File | Stage |
+|---|---|
+| `.debug/01_startup.txt` | Modules on disk |
+| `.debug/02_launch.txt` | Where the 16-bit entry stopped |
+| `.debug/03_process.txt` | Book magic, page count, first pages |
+| `.debug/04_render.txt` | Render note |
+| `.debug/render.html` | The pages |
+| `.debug/RUN.txt` | The whole run |
 
 ## The five stages
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `unpacked/`, or in `$TBK_UNPACKED`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
 3. **Open and process.** Book magic `0x22222222`, page count, first three pages with text. On `9e954d01.tbk` the magic is at `0x9EC`.
-4. **Render.** Writes `.debug/render.html`.
-5. **Debug.** Says the files are for debugging purposes and leaves `RUN.txt`, `TRACE.txt`, and `render.html` in `.debug/`.
+4. **Render.** Writes `.debug/render.html` and `.debug/04_render.txt`.
+5. **Last.** Prompts that debug information is available in `.debug/`.
 
 ## What it will not do
 

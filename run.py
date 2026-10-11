@@ -49,54 +49,69 @@ class Host(Pass06):
             uc.reg_write(UC_X86_REG_AX, 1)
 
 
+def note(name, text):
+    DEBUG.mkdir(exist_ok=True)
+    path = DEBUG / name
+    path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+    return path
+
+
 def stages(bin_dir, book_path):
     lines = []
-    lines.append("stage 1 startup")
-    lines.append(f"  bin {bin_dir}")
+
+    block = ["stage 1 startup", f"  bin {bin_dir}"]
     present, absent = [], []
     for kind, name in ORDER:
         filename = FILES.get(name)
         path = os.path.join(bin_dir, filename) if filename else ""
         (present if path and os.path.isfile(path) else absent).append(name)
-    lines.append(f"  on disk {len(present)}: {', '.join(present)}")
-    lines.append(f"  absent {len(absent)}: {', '.join(absent[:8])}")
+    block.append(f"  on disk {len(present)}: {', '.join(present)}")
+    block.append(f"  absent {len(absent)}: {', '.join(absent[:8])}")
+    note("01_startup.txt", "\n".join(block))
+    lines.extend(block)
 
-    lines.append("stage 2 launch")
-    lines.append("  TB80RUN WinExec TB80NET.EXE <book>")
-    lines.append("  TB80NET loads TB80RTM, entry segment 2:0x35A")
+    block = [
+        "stage 2 launch",
+        "  TB80RUN WinExec TB80NET.EXE <book>",
+        "  TB80NET loads TB80RTM, entry segment 2:0x35A",
+    ]
     host = Host(os.path.join(bin_dir, "TB80RTM.EXE"), book_path)
     host.user_hits = []
     cs, ip, raw = host.run()
-    lines.append(f"  stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
-    lines.append(f"  user {host.user_hits or 'none'}")
-    lines.append(f"  engine opens {host.opens or 'none'}")
+    block.append(f"  stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
+    block.append(f"  user {host.user_hits or 'none'}")
+    block.append(f"  engine opens {host.opens or 'none'}")
+    note("02_launch.txt", "\n".join(block))
+    lines.extend(block)
 
-    lines.append("stage 3 file open and process")
+    block = ["stage 3 file open and process", f"  {book_path}"]
     book = load(book_path)
     data = Path(book_path).read_bytes()
     magic = int.from_bytes(data[book.book_offset:book.book_offset + 4], "little")
-    lines.append(f"  {book_path}")
-    lines.append(f"  book at {book.book_offset:#x} magic {magic:#x} ok {magic == BOOK_MAGIC} pages {len(book.pages)}")
+    block.append(f"  book at {book.book_offset:#x} magic {magic:#x} ok {magic == BOOK_MAGIC} pages {len(book.pages)}")
     shown = 0
     for page in book.pages:
         text = [f.text for f in page.fields] + [p for p in page.paragraphs if p not in [f.text for f in page.fields]]
         if not text:
             continue
-        lines.append(f"  {page.name} @{page.offset:#x} {text[0][:80]}")
+        block.append(f"  {page.name} @{page.offset:#x} {text[0][:80]}")
         shown += 1
         if shown == 3:
             break
+    note("03_process.txt", "\n".join(block))
+    lines.extend(block)
 
-    lines.append("stage 4 file render")
-    DEBUG.mkdir(exist_ok=True)
-    html_path = DEBUG / "render.html"
-    html_path.write_text(render(book), encoding="utf-8")
-    lines.append(f"  wrote {html_path} ({html_path.stat().st_size} bytes)")
+    html_path = note("render.html", render(book))
+    block = ["stage 4 file render", f"  wrote {html_path} ({html_path.stat().st_size} bytes)"]
+    note("04_render.txt", "\n".join(block))
+    lines.extend(block)
 
-    lines.append("stage 5 debug")
-    lines.append("  these files are for debugging purposes")
-    lines.append(f"  {DEBUG}")
-    lines.append("  TRACE.txt, render.html, RUN.txt")
+    files = sorted(p.name for p in DEBUG.iterdir() if p.is_file())
+    prompt = f"Debug information is available in {DEBUG}"
+    lines.append("stage last")
+    lines.append(f"  {prompt}")
+    lines.append(f"  {', '.join(files)}")
+    print(f"\n{prompt}", file=sys.stderr)
     return lines
 
 
@@ -136,9 +151,7 @@ def main():
     pass06.UNPACKED = str(bin_dir)
     lines = stages(str(bin_dir), str(book))
     text = "\n".join(lines) + "\n"
-    DEBUG.mkdir(exist_ok=True)
-    (DEBUG / "RUN.txt").write_text(text, encoding="utf-8")
-    (DEBUG / "TRACE.txt").write_text(text, encoding="utf-8")
+    note("RUN.txt", text)
     print(text, end="")
     return 0
 
