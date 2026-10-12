@@ -58,7 +58,7 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 
 ## Scope
 
-This cut is 1.0.0r5. The reader is unchanged. The host is documented, and it still exits before a book open.
+This cut is 1.0.0r6. The reader is written only with `--dbgrender`. The host still exits before a book open.
 
 `render/` holds shapes that can be drawn and are not placed, one file per curve. `resources/` holds the BMPs the book already has. Two buttons under the reader show them. The probe logs are copied into the debug run.
 
