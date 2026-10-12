@@ -1,6 +1,7 @@
-"""python3 -m tbpipeline.runtime [--b bin] [--c book.tbk]
+"""python3 -m tbpipeline.runtime --dbgrender [--b bin] [--c book.tbk]
 
-The standalone reader is the debug route. It writes _debug/render.html.
+The standalone reader is the debug route. It writes _debug/render.html
+only when --dbgrender is passed.
 """
 
 import sys

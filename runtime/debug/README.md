@@ -1,6 +1,6 @@
 # runtime/debug
 
-The debug route for the book reader. Off unless stage 2 failed to open the book, or you passed `--debug`.
+The debug route for the book reader. Off unless you passed `--dbgrender`.
 
 | File | What it is |
 |---|---|
@@ -8,7 +8,7 @@ The debug route for the book reader. Off unless stage 2 failed to open the book,
 | `play.py` | `render.html` is the engine reader. `render-old.html` is written only with `--render old`. |
 
 ```
-python3 -m tbpipeline.runtime.debug --b ~/TBK/bin --c 9e954d01.tbk
+python3 -m tbpipeline.runtime.debug --dbgrender --b ~/TBK/bin --c 9e954d01.tbk
 ```
 
 Writes `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`, beside the package. Not the working directory.

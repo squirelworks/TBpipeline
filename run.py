@@ -4,8 +4,8 @@
   python3 -m tbpipeline --b ~/TBK/bin --c book.tbk
 
 Startup is the SoftICE load order. Launch is the TB80RUN handoff to
-TB80NET. The 16-bit side is pass 06. If that does not open the book,
-runtime/debug reads it and writes the reader. WHY.md says why.
+TB80NET. The 16-bit side is pass 06. The reader runs only with
+--dbgrender. WHY.md says why.
 """
 
 import os
@@ -61,7 +61,7 @@ def note(name, text):
     return path
 
 
-def stages(bin_dir, book_path, debug=False, theme="default", render="new"):
+def stages(bin_dir, book_path, dbgrender=False, theme="default", render="new"):
     lines = []
 
     block = ["stage 1 startup", f"  bin {bin_dir}"]
@@ -88,10 +88,10 @@ def stages(bin_dir, book_path, debug=False, theme="default", render="new"):
     block.append(f"  engine opens {host.opens or 'none'}")
     note("02_launch.txt", "\n".join(block))
     lines.extend(block)
-    stage2_failed = not host.opens or bool(host.fault)
-    fallback, prompt = reader_debug.run(book_path, DEBUG, debug, stage2_failed, theme, render)
+    fallback, prompt = reader_debug.run(book_path, DEBUG, dbgrender, theme, render)
     lines.extend(fallback)
-    print(f"\n{prompt}", file=sys.stderr)
+    if prompt:
+        print(f"\n{prompt}", file=sys.stderr)
     return lines
 
 
@@ -128,11 +128,11 @@ def resolve(argv):
     book = Path(course).expanduser()
     if not book.is_file():
         book = bin_dir / "courses" / course
-    return bin_dir, book, "--debug" in argv, theme, render
+    return bin_dir, book, "--dbgrender" in argv, theme, render
 
 
 def main():
-    bin_dir, book, debug, theme, render = resolve(sys.argv[1:])
+    bin_dir, book, dbgrender, theme, render = resolve(sys.argv[1:])
     if not book.is_file():
         print(f"not a book: {book}", file=sys.stderr)
         print("usage: python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
@@ -142,7 +142,7 @@ def main():
     pass06.UNPACKED = str(bin_dir)
     global DEBUG
     DEBUG = new_debug_dir()
-    lines = stages(str(bin_dir), str(book), debug, theme, render)
+    lines = stages(str(bin_dir), str(book), dbgrender, theme, render)
     text = "\n".join(lines) + "\n"
     note("RUN.txt", text)
     print(text, end="")

@@ -14,7 +14,7 @@ python3 -m tbpipeline --b ~/TBK/bin --c 9e954d01.tbk --theme modern
 python3 -m tbpipeline --b ~/TBK/bin --c 9e954d01.tbk --render old
 ```
 
-`--theme default` is a Windows 95 window. `--theme modern` is the dark reader. `--debug` forces the reader even if stage 2 opened the book. `--render old` also writes `render-old.html`.
+`--theme default` is a Windows 95 window. `--theme modern` is the dark reader. `--dbgrender` is the only way to write the reader. `--render old` also writes `render-old.html`.
 
 Needs Python 3. The 16-bit stage needs `unicorn` (`pip install -r requirements.txt`). Linux or Windows.
 
@@ -37,9 +37,9 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 
 1. **Startup.** SoftICE load order. A module is on disk if its file is in `--b`.
 2. **Launch.** `TB80RUN` hands off with `WinExec("TB80NET.EXE <book>")`. The 16-bit host enters `TB80RTM` at segment 2 offset `0x35A`. `USER.266` is `SetMessageQueue` and returns 1.
-3. **2a. Open and process.** Not reached if stage 2 opened the book, unless you passed `--debug`.
-4. **2b. Render.** Not reached with 2a. Writes `render.html`. `--render old` also writes `render-old.html`.
-5. **2c.** Not reached with 2a. Says the debug folder is there.
+3. **2a. Open and process.** Only with `--dbgrender`.
+4. **2b. Render.** Only with `--dbgrender`. Writes `render.html`. `--render old` also writes `render-old.html`.
+5. **2c.** Only with `--dbgrender`. Says the debug folder is there.
 
 | File | What it is |
 |---|---|

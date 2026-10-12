@@ -6,11 +6,11 @@ The reader asks: what is on the page? That is `runtime/`. The host asks: what do
 
 ## The reader does not wait for the host
 
-`python3 -m tbpipeline` always runs stage 1 and stage 2. Stage 2a, the reader, runs when stage 2 does not open the book, or when you pass `--debug`.
+`python3 -m tbpipeline` always runs stage 1 and stage 2. Stage 2a, the reader, runs only when you pass `--dbgrender`. A failed launch does not write `render.html`.
 
-Stage 2 does not open the book. The last recorded pass-06 run asked for `TB80.INI` and `TB80enu`, then took DOS exit 0. Those names land in `host.opens` because every `OpenFile` and `_lopen` is logged before the stub decides whether the file exists. Only a path ending in `.tbk` or `.sbk` gets a handle, and the bytes behind that handle are the book you passed in. An INI open returns `0xFFFF`. The fault string `dos exit 0x0` is why the reader still runs. An empty `opens` list would also run it. A clean return with a real book open would skip it.
+Stage 2 does not open the book. The last recorded pass-06 run asked for `TB80.INI` and `TB80enu`, then took DOS exit 0. Those names land in `host.opens` because every `OpenFile` and `_lopen` is logged before the stub decides whether the file exists. Only a path ending in `.tbk` or `.sbk` gets a handle, and the bytes behind that handle are the book you passed in. An INI open returns `0xFFFF`. That exit does not write a reader. `--dbgrender` does.
 
-That split is deliberate. The book format is knowable without executing the runtime. Waiting for a finished Win16 layer before a page can be shown was the thing r2 stopped doing.
+That split is deliberate. The book format is knowable without executing the runtime. The reader is opt-in. A launch that exits does not draw a page on its own.
 
 ## What a book is, on disk
 

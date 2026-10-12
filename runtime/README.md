@@ -12,4 +12,4 @@ Reads a ToolBook II 8.1 `.tbk`.
 python3 -m tbpipeline.runtime --b ~/TBK/bin --c 9e954d01.tbk
 ```
 
-That runs `runtime/debug` and writes `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`.
+That runs `runtime/debug`. It writes the reader only with `--dbgrender`, into `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`.
