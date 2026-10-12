@@ -11,6 +11,7 @@ import os
 import struct
 import sys
 
+from tbpipeline.binpath import unpacked
 from tbpipeline.nehost.pass04 import Pass04, API_PORT
 from tbpipeline.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
@@ -34,11 +35,7 @@ EQUATES = {
     },
 }
 
-UNPACKED = "/workspace/artifacts/unpacked"
-if not os.path.isdir(UNPACKED):
-    _alt = "/workspace/artifacts/Toolbook/_unpacked"
-    if os.path.isdir(_alt):
-        UNPACKED = _alt
+UNPACKED = str(unpacked())
 
 
 class Pass06(Pass04):
@@ -333,23 +330,20 @@ class Pass06(Pass04):
 
 
 def main():
-    host = Pass06(os.path.join(UNPACKED, "TB80RTM.EXE"), "/workspace/artifacts/courses/9e954d01.tbk")
+    from pathlib import Path
+    root = Path(UNPACKED)
+    book = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    image = root / "TB80RTM.EXE"
+    if book is None or not book.is_file() or not image.is_file():
+        print("usage: python3 -m tbpipeline.nedllhost.pass06 book.tbk", file=sys.stderr)
+        print("TBK_UNPACKED is the directory that holds TB80RTM.EXE", file=sys.stderr)
+        return 2
+    host = Pass06(str(image), str(book))
     cs, ip, raw = host.run()
     used = sorted(set(host.dll_calls))
     print(f"stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
     print(f"opens: {host.opens or 'none'}")
     print(f"dll entries bound {len(used)}")
-    out = os.path.join(os.path.dirname(__file__), "..", "nehost", "rtm - pass 06")
-    out = os.path.normpath(out)
-    os.makedirs(out, exist_ok=True)
-    open(os.path.join(out, "PASS06.txt"), "w").write(
-        f"book /workspace/artifacts/courses/9e954d01.tbk\n"
-        f"stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}\n"
-        f"opens {host.opens}\n"
-        f"dll entries bound {len(used)}\n"
-        f"skipped {host.skipped[:12]}\n"
-        f"calls {host.calls[:24]}\n"
-    )
     return 0
 
 

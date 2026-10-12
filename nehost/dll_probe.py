@@ -6,6 +6,7 @@ patched to a stub that returns. The log says which ordinals ran, and
 where the next unbound call is.
 """
 
+import os
 import struct
 import sys
 from pathlib import Path
@@ -16,7 +17,7 @@ from unicorn.x86_const import (
     UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
-UNPACKED = Path("/workspace/artifacts/unpacked")
+UNPACKED = Path(os.environ.get("TBK_UNPACKED") or (Path(__file__).resolve().parent.parent / "bin"))
 
 
 def ne_at(buf):

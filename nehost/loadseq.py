@@ -15,7 +15,7 @@ import os
 import struct
 import sys
 
-UNPACKED = os.environ.get("TBK_UNPACKED", "/workspace/artifacts/unpacked")
+UNPACKED = os.environ.get("TBK_UNPACKED") or os.path.join(os.path.dirname(__file__), "..", "bin")
 OUT = os.path.join(os.path.dirname(__file__), "loadseq.txt")
 
 # Oldest screenshot to newest. 32-bit rows are Load32. 16-bit rows are

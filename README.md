@@ -1,12 +1,12 @@
-# TBpipeline 1.0.0r4
+# TBpipeline 1.0.0r5
 
-Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It is not the ToolBook window.
+Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It is not the ToolBook window. Why the 16-bit host exists anyway is `WHY.md`.
 
 ```
 python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk
 ```
 
-`--b` is the ToolBook directory. `--c` is the book. A bare filename is looked up in `--b/courses/`.
+`--b` is the ToolBook directory. Default is `bin/` beside this package. `--c` is the book. A bare filename is looked up in `--b/courses/`.
 
 ```
 python3 -m tbpipeline 9e954d01.tbk
@@ -58,9 +58,10 @@ Each run writes its own folder beside the script: `tbpipeline/_debug/db-YYYYMMDD
 
 ## Scope
 
-This cut is more debugging. The reader is unchanged.
+This cut is 1.0.0r5. The reader is unchanged. The host is documented, and it still exits before a book open.
 
 `render/` holds shapes that can be drawn and are not placed, one file per curve. `resources/` holds the BMPs the book already has. Two buttons under the reader show them. The probe logs are copied into the debug run.
+
 
 Known bugs are in `known-bugs.md`. The plan is `plannedmilestones.md`. `v1.0.1` is the work that was waiting. `v2.0.0` is total functionality.
 

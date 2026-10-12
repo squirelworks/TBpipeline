@@ -127,8 +127,16 @@ def rtm_imports(data):
 
 
 def main():
-    root = sys.argv[1] if len(sys.argv) > 1 else "/workspace/artifacts/unpacked"
-    rtm = open(os.path.join(root, "TB80RTM.EXE"), "rb").read()
+    if len(sys.argv) > 1:
+        root = sys.argv[1]
+    else:
+        root = os.environ.get("TBK_UNPACKED", "")
+    image = os.path.join(root, "TB80RTM.EXE")
+    if not root or not os.path.isfile(image):
+        print("usage: python3 -m tbpipeline.nedllhost --b ~/TBK/bin", file=sys.stderr)
+        print("       TBK_UNPACKED is the directory that holds TB80RTM.EXE", file=sys.stderr)
+        return 2
+    rtm = open(image, "rb").read()
     tables = {}
     for mod, filename in DLLS.items():
         path = os.path.join(root, filename)

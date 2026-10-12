@@ -1,6 +1,6 @@
 # nehost
 
-16-bit host for the OPTLOADER images, plus the static unpacker.
+16-bit host for the OPTLOADER images, plus the static unpacker. The reason for each pass is `WHY.md`.
 
 The unpacker follows moralrecordings' `optloader.py`:
 https://github.com/moralrecordings/win16-debug

@@ -541,7 +541,7 @@ class Pass04:
             "tb80enu1": "TB80ENU1.DLL",
             "tb80enu2": "TB80ENU2.DLL",
         }
-        root = "/workspace/artifacts/Toolbook/_unpacked"
+        root = os.environ.get("TBK_UNPACKED", "")
         filename = aliases.get(stem)
         if filename is None and os.path.isdir(root):
             wanted = {low, stem + ".dll", stem + ".exe"}
@@ -1035,6 +1035,9 @@ class Pass04:
 
 
 def main():
+    if len(sys.argv) < 3:
+        print("usage: python3 -m tbpipeline.nehost.pass04 TB80RTM.EXE book.tbk", file=sys.stderr)
+        return 2
     image = sys.argv[1]
     book = sys.argv[2]
     host = Pass04(image, book)
@@ -1042,13 +1045,6 @@ def main():
     print(f"stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
     print(f"opens: {host.opens or 'none'}")
     print(f"skipped {len(host.skipped)} far calls")
-    out = os.path.join(os.path.dirname(__file__), "rtm - pass 05")
-    os.makedirs(out, exist_ok=True)
-    open(os.path.join(out, "PASS05.txt"), "w").write(
-        f"book {book}\nstopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}\n"
-        f"opens {host.opens}\nskipped {host.skipped[:20]}\n"
-        f"names {host.named}\ncalls {host.calls[:40]}\n"
-    )
     return 0
 
 

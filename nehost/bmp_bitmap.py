@@ -8,6 +8,7 @@ with two dummy far pointers, and logs the stack at the first call it
 cannot follow.
 """
 
+import os
 import struct
 import sys
 from pathlib import Path
@@ -19,9 +20,7 @@ from unicorn.x86_const import (
 )
 
 HERE = Path(__file__).resolve().parent
-DLL = HERE.parent.parent / "unpacked" / "TB80BMP.DLL"
-if not DLL.is_file():
-    DLL = Path("/workspace/artifacts/unpacked/TB80BMP.DLL")
+DLL = Path(os.environ.get("TBK_UNPACKED") or HERE.parent / "bin") / "TB80BMP.DLL"
 
 ENTRY = 0x3E0
 SEG = 3

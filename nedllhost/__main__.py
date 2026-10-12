@@ -3,6 +3,7 @@
 import os
 import sys
 
+from tbpipeline.binpath import unpacked
 from tbpipeline.nedllhost.bind import main as bind_main
 
 
@@ -19,7 +20,7 @@ def main():
             root = argv[i]
         i += 1
     if root is None:
-        root = os.environ.get("TBK_UNPACKED", "bin")
+        root = str(unpacked())
     if not os.path.isdir(root):
         print(f"not a ToolBook directory: {root}", file=sys.stderr)
         print("usage: python3 -m tbpipeline.nedllhost --b ~/TBK/bin", file=sys.stderr)

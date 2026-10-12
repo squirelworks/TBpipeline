@@ -7,6 +7,7 @@ did: returned, called a Windows ordinal, stopped on an unbound far
 call, or faulted at the entry.
 """
 
+import os
 import struct
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ from unicorn.x86_const import (
     UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
-UNPACKED = Path("/workspace/artifacts/unpacked")
+UNPACKED = Path(os.environ.get("TBK_UNPACKED") or (Path(__file__).resolve().parent.parent / "bin"))
 WORK = (
     "TB80BAS.DLL", "TB80BMP.DLL", "TB80CMP.DLL", "TB80UTL.DLL",
     "TB80MM.DLL", "TBWIN.DLL", "TB80OLE.DLL", "TB80RCR.DLL",

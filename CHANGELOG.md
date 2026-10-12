@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0r5
+
+The host, explained, and pointed at `--b`.
+
+- `WHY.md` is why the reader, the passes, the thunk, the pop sizes, and the stubs are shaped this way.
+- `TB80RTM` reaches DOS exit 0 after asking for `TB80.INI`. It still does not open the book. The reader still runs.
+- `USER.176` `LoadString` copies the resource string. `TB80UTL.3` is `GETSTRMGRSTRING`, and an empty product name was the check that exited startup.
+- OLE `CreateDispTypeInfo` returns HRESULT 0 and a dummy `IUnknown`. `AX = 1` was `S_FALSE`, and the caller then released a null pointer.
+- `KERNEL.102` with `AH = 4Ch` is `DOS3Call`. `__WINFLAGS` is the constant `0x0C25`, not a thunk offset.
+- Binaries come from `--b` or `TBK_UNPACKED`. The default is `bin/` beside the package. The sandbox paths are gone. The pass 05 and pass 06 logs are records and are not rewritten.
+
 ## 1.0.0r4
 
 Debug improvements.

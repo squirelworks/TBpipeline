@@ -4,9 +4,8 @@
   python3 -m tbpipeline --b ~/TBK/bin --c book.tbk
 
 Startup is the SoftICE load order. Launch is the TB80RUN handoff to
-TB80NET. The 16-bit side is the Unicorn host with a USER stub:
-ordinal 266 is SetMessageQueue and returns 1. If that does not open
-the book, runtime/debug reads it and writes the reader.
+TB80NET. The 16-bit side is pass 06. If that does not open the book,
+runtime/debug reads it and writes the reader. WHY.md says why.
 """
 
 import os
@@ -15,13 +14,12 @@ from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
-os.environ.setdefault("TBK_UNPACKED", str(ROOT / "bin"))
+os.environ.setdefault("TBK_UNPACKED", str(HERE / "bin"))
 
 from .runtime import debug as reader_debug
 from .nehost.loadseq import ORDER, FILES
 import tbpipeline.nedllhost.pass06 as pass06
-pass06.UNPACKED = os.environ.get("TBK_UNPACKED", str(ROOT / "bin"))
+pass06.UNPACKED = os.environ.get("TBK_UNPACKED", str(HERE / "bin"))
 from unicorn.x86_const import UC_X86_REG_AX
 from .nedllhost.pass06 import Pass06
 
@@ -98,7 +96,7 @@ def stages(bin_dir, book_path, debug=False, theme="default", render="new"):
 
 
 def resolve(argv):
-    bin_dir = ROOT / "bin"
+    bin_dir = HERE / "bin"
     course = None
     theme = "default"
     render = "new"
@@ -140,6 +138,7 @@ def main():
         print("usage: python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
         print("       python3 -m tbpipeline 9e954d01.tbk", file=sys.stderr)
         return 2
+    os.environ["TBK_UNPACKED"] = str(bin_dir)
     pass06.UNPACKED = str(bin_dir)
     global DEBUG
     DEBUG = new_debug_dir()
