@@ -133,7 +133,7 @@ def main():
         root = os.environ.get("TBK_UNPACKED", "")
     image = os.path.join(root, "TB80RTM.EXE")
     if not root or not os.path.isfile(image):
-        print("usage: python3 -m tbpipeline.nedllhost --b ~/TBK/bin", file=sys.stderr)
+        print("usage: python3 -m tbpipeline_bf.nedllhost --b ~/TBK/bin", file=sys.stderr)
         print("       TBK_UNPACKED is the directory that holds TB80RTM.EXE", file=sys.stderr)
         return 2
     rtm = open(image, "rb").read()

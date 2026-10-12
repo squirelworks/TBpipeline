@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pipeline host. Stage 1, stage 2, then the debug route.
 
-  python3 -m tbpipeline --b ~/TBK/bin --c book.tbk
+  python3 -m tbpipeline_bf --b ~/TBK/bin --c book.tbk
 
 Startup is the SoftICE load order. Launch is the TB80RUN handoff to
 TB80NET. The 16-bit side is pass 06. The reader runs only with
@@ -18,7 +18,7 @@ os.environ.setdefault("TBK_UNPACKED", str(HERE / "bin"))
 
 from .runtime import debug as reader_debug
 from .nehost.loadseq import ORDER, FILES
-import tbpipeline.nedllhost.pass06 as pass06
+import tbpipeline_bf.nedllhost.pass06 as pass06
 pass06.UNPACKED = os.environ.get("TBK_UNPACKED", str(HERE / "bin"))
 from unicorn.x86_const import UC_X86_REG_AX
 from .nedllhost.pass06 import Pass06
@@ -135,8 +135,8 @@ def main():
     bin_dir, book, dbgrender, theme, render = resolve(sys.argv[1:])
     if not book.is_file():
         print(f"not a book: {book}", file=sys.stderr)
-        print("usage: python3 -m tbpipeline --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
-        print("       python3 -m tbpipeline 9e954d01.tbk", file=sys.stderr)
+        print("usage: python3 -m tbpipeline_bf --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
+        print("       python3 -m tbpipeline_bf 9e954d01.tbk", file=sys.stderr)
         return 2
     os.environ["TBK_UNPACKED"] = str(bin_dir)
     pass06.UNPACKED = str(bin_dir)

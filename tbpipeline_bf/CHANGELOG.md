@@ -41,7 +41,7 @@ The debugging, visible.
 The reader, split and polished.
 
 - Debug route is stage 2a, 2b, 2c, in `runtime/debug/`.
-- Each run writes `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`, beside the script.
+- Each run writes `tbpipeline_bf/_debug/db-YYYYMMDD-HHMMSS/`, beside the script.
 - `render.html` is the engine reader. `render-old.html` is written only with `--render old`.
 - `--theme default` is a Windows 95 window. `--theme modern` is the dark reader.
 - `--debug` forces the reader.
@@ -58,7 +58,7 @@ Cleanup of 1.0.0. Same reader.
 
 First release. A book reader, not the ToolBook window.
 
-- `python3 -m tbpipeline --b <bin> --c <book>` runs startup, launch, open, render.
+- `python3 -m tbpipeline_bf --b <bin> --c <book>` runs startup, launch, open, render.
 - Each stage writes its file into `.debug/`. The last stage says the debug information is there.
 - `runtime`, `nehost`, and `nedllhost` each run on their own.
 - OPTLOADER unpacker credits moralrecordings' `optloader.py`.

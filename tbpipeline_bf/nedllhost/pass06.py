@@ -11,9 +11,9 @@ import os
 import struct
 import sys
 
-from tbpipeline.binpath import unpacked
-from tbpipeline.nehost.pass04 import Pass04, API_PORT
-from tbpipeline.nehost.win16stack import POP
+from tbpipeline_bf.binpath import unpacked
+from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT
+from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
 
 from unicorn import UcError
@@ -335,7 +335,7 @@ def main():
     book = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     image = root / "TB80RTM.EXE"
     if book is None or not book.is_file() or not image.is_file():
-        print("usage: python3 -m tbpipeline.nedllhost.pass06 book.tbk", file=sys.stderr)
+        print("usage: python3 -m tbpipeline_bf.nedllhost.pass06 book.tbk", file=sys.stderr)
         print("TBK_UNPACKED is the directory that holds TB80RTM.EXE", file=sys.stderr)
         return 2
     host = Pass06(str(image), str(book))

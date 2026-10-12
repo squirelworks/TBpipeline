@@ -8,7 +8,7 @@ The debug route for the book reader. Off unless you passed `--dbgrender`.
 | `play.py` | `render.html` is the engine reader. `render-old.html` is written only with `--render old`. |
 
 ```
-python3 -m tbpipeline.runtime.debug --dbgrender --b ~/TBK/bin --c 9e954d01.tbk
+python3 -m tbpipeline_bf.runtime.debug --dbgrender --b ~/TBK/bin --c 9e954d01.tbk
 ```
 
-Writes `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`, beside the package. Not the working directory.
+Writes `tbpipeline_bf/_debug/db-YYYYMMDD-HHMMSS/`, beside the package. Not the working directory.

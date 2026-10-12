@@ -6,7 +6,7 @@ The reader asks: what is on the page? That is `runtime/`. The host asks: what do
 
 ## The reader does not wait for the host
 
-`python3 -m tbpipeline` always runs stage 1 and stage 2. Stage 2a, the reader, runs only when you pass `--dbgrender`. A failed launch does not write `render.html`.
+`python3 -m tbpipeline_bf` always runs stage 1 and stage 2. Stage 2a, the reader, runs only when you pass `--dbgrender`. A failed launch does not write `render.html`.
 
 Stage 2 does not open the book. The last recorded pass-06 run asked for `TB80.INI` and `TB80enu`, then took DOS exit 0. Those names land in `host.opens` because every `OpenFile` and `_lopen` is logged before the stub decides whether the file exists. Only a path ending in `.tbk` or `.sbk` gets a handle, and the bytes behind that handle are the book you passed in. An INI open returns `0xFFFF`. That exit does not write a reader. `--dbgrender` does.
 
@@ -24,7 +24,7 @@ That split is deliberate. The book format is knowable without executing the runt
 
 `runtime/debug/resources.py` copies BMPs that are already Windows bitmaps. ToolBook's own compressed pictures stay in the book. `TB80BMP` ordinal 3 is the decoder, and it is not called from the reader. See the probe below.
 
-Stage 2b writes `render.html`. `--render old` also writes `render-old.html`. `--theme default` is a Windows 95 window. `--theme modern` is the dark reader. The debug folder is `tbpipeline/_debug/db-YYYYMMDD-HHMMSS/`, beside the package, not the directory you launched from. Each run gets its own folder so a later run does not erase the log that explained the previous one.
+Stage 2b writes `render.html`. `--render old` also writes `render-old.html`. `--theme default` is a Windows 95 window. `--theme modern` is the dark reader. The debug folder is `tbpipeline_bf/_debug/db-YYYYMMDD-HHMMSS/`, beside the package, not the directory you launched from. Each run gets its own folder so a later run does not erase the log that explained the previous one.
 
 The page-count line in stage 2c counts PNG stems. Stage 2b counts pages that had something to draw. P420 has four curves, so the two numbers disagree. Both are reported. `known-bugs.md` says so.
 

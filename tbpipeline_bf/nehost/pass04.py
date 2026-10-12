@@ -1036,7 +1036,7 @@ class Pass04:
 
 def main():
     if len(sys.argv) < 3:
-        print("usage: python3 -m tbpipeline.nehost.pass04 TB80RTM.EXE book.tbk", file=sys.stderr)
+        print("usage: python3 -m tbpipeline_bf.nehost.pass04 TB80RTM.EXE book.tbk", file=sys.stderr)
         return 2
     image = sys.argv[1]
     book = sys.argv[2]

@@ -1,10 +1,10 @@
-"""python3 -m tbpipeline.nedllhost [--b bin]"""
+"""python3 -m tbpipeline_bf.nedllhost [--b bin]"""
 
 import os
 import sys
 
-from tbpipeline.binpath import unpacked
-from tbpipeline.nedllhost.bind import main as bind_main
+from tbpipeline_bf.binpath import unpacked
+from tbpipeline_bf.nedllhost.bind import main as bind_main
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
         root = str(unpacked())
     if not os.path.isdir(root):
         print(f"not a ToolBook directory: {root}", file=sys.stderr)
-        print("usage: python3 -m tbpipeline.nedllhost --b ~/TBK/bin", file=sys.stderr)
+        print("usage: python3 -m tbpipeline_bf.nedllhost --b ~/TBK/bin", file=sys.stderr)
         return 2
     sys.argv = [sys.argv[0], root]
     return bind_main()

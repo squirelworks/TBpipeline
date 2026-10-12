@@ -1,0 +1,196 @@
+"""One address space. Fixups point at a real segment or at a Windows gate."""
+
+import struct
+from pathlib import Path
+
+from .ne import Image, Segment, import_name, parse
+from .wine import KERNEL, SYSTEM, USER, Wine
+
+
+class Sandbox:
+    def __init__(self, root):
+        self.root = Path(root)
+        self.wine = Wine(root)
+        self.images = {}
+        self.selectors = {}
+        self.gates = {}
+        self.next_index = 1
+        self.linear = 0x200000
+        self.linked = 0
+        self.equates = 0
+        self.gaps = []
+        self.exe = None
+
+    def load(self):
+        files = sorted(self.root.glob("*.EXE")) + sorted(self.root.glob("*.DLL"))
+        files += sorted(self.root.glob("*.exe")) + sorted(self.root.glob("*.dll"))
+        seen = set()
+        for path in files:
+            key = path.name.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                image = parse(path)
+            except ValueError:
+                continue
+            self.images[image.name] = image
+            if image.name == "TB80RTM":
+                self.exe = image
+        if self.exe is None:
+            exes = [img for img in self.images.values() if img.path.upper().endswith(".EXE")]
+            self.exe = exes[0] if exes else None
+        self._gates()
+        self._place()
+        self._link()
+        return self
+
+    def _selector(self):
+        sel = self.next_index * 8
+        self.next_index += 1
+        return sel
+
+    def _place_segment(self, seg):
+        sel = self._selector()
+        size = max(len(seg.data), 16)
+        seg.selector = sel
+        seg.base = self.linear
+        self.linear += (size + 0xFFF) & ~0xFFF
+        self.selectors[sel] = seg
+        return sel
+
+    def _gates(self):
+        wanted = {name: set() for name in SYSTEM}
+        for image in self.images.values():
+            for fix in image.fixups:
+                if not fix.flags & 1 or fix.flags & 2:
+                    continue
+                if (fix.flags & 3) == 3 or not 1 <= fix.target1 <= len(image.modules):
+                    continue
+                module = image.modules[fix.target1 - 1]
+                if module in wanted and self.wine.equate(module, fix.target2) is None:
+                    wanted[module].add(fix.target2)
+        for module, ordinals in wanted.items():
+            tables = {"KERNEL": KERNEL, "USER": USER}
+            for ordinal in tables.get(module, {}):
+                ordinals.add(ordinal)
+            if not ordinals:
+                continue
+            hi = max(ordinals)
+            blob = bytearray((hi + 1) * 8)
+            for ordinal in ordinals:
+                spec = self.wine.contract(module, ordinal)
+                pop = spec[1] if spec else 0
+                stub = bytearray(8)
+                stub[0:5] = bytes([0xBA, ordinal & 0xFF, (ordinal >> 8) & 0xFF, 0xE6, 0xE4])
+                if spec:
+                    stub[5:8] = bytes([0xCA, pop & 0xFF, (pop >> 8) & 0xFF])
+                blob[ordinal * 8:(ordinal + 1) * 8] = stub
+            seg = Segment(1, 0, blob)
+            image = Image(
+                path="", name=module, entry_seg=1, entry_ip=0, auto=0, heap=0, stack=0,
+                modules=[], entries={}, names={}, segments=[seg], synthetic=True,
+            )
+            self.images[module] = image
+
+    def _place(self):
+        auto = self.exe.auto if self.exe else 0
+        heap = self.exe.heap if self.exe else 0
+        stack = self.exe.stack if self.exe else 0
+        for image in self.images.values():
+            for seg in image.segments:
+                if image is self.exe and seg.index == auto:
+                    extra = heap + stack
+                    if len(seg.data) + extra < 0x10000:
+                        seg.data.extend(b"\x00" * extra)
+                self._place_segment(seg)
+            if image.synthetic and image.segments:
+                sel = image.segments[0].selector
+                for ordinal in range(len(image.segments[0].data) // 8):
+                    if image.segments[0].data[ordinal * 8] == 0xBA:
+                        self.gates[(sel, ordinal)] = image.name
+
+    def _link(self):
+        for image in list(self.images.values()):
+            if image.synthetic:
+                continue
+            for fix in image.fixups:
+                self._one(image, fix)
+
+    def _one(self, image, fix):
+        if fix.segment < 1 or fix.segment > len(image.segments):
+            return
+        seg = image.segments[fix.segment - 1]
+        if (fix.flags & 3) == 3:
+            return
+        kind, *rest = self._target(image, fix)
+        for disp in self._chain(seg, fix.disp):
+            if kind == "equate":
+                self._write(seg, disp, fix.atype, rest[0], 0)
+                self.equates += 1
+            elif kind == "code":
+                target, index, offset = rest
+                if not 1 <= index <= len(target.segments):
+                    self.gaps.append(f"{image.name} -> {target.name} segment {index}")
+                    continue
+                sel = target.segments[index - 1].selector
+                self._write(seg, disp, fix.atype, offset, sel)
+                self.linked += 1
+            elif kind == "gate":
+                module, ordinal = rest
+                gate = self.images.get(module)
+                if gate is None or not gate.segments:
+                    self.gaps.append(f"{module}.{ordinal}")
+                    continue
+                sel = gate.segments[0].selector
+                self._write(seg, disp, fix.atype, ordinal * 8, sel)
+                self.linked += 1
+            else:
+                module, ordinal = rest
+                self.gaps.append(f"{image.name} -> {module}.{ordinal}")
+
+    def _target(self, image, fix):
+        if not fix.flags & 3:
+            offset = 0 if fix.atype == 2 else fix.target2
+            return ("code", image, fix.target1, offset)
+        if fix.flags & 2:
+            module = image.modules[fix.target1 - 1] if 1 <= fix.target1 <= len(image.modules) else "?"
+            name = import_name(image.path, fix.target2).upper()
+            other = self.images.get(module)
+            if other and not other.synthetic:
+                for ordinal, text in other.names.items():
+                    if text.upper() == name:
+                        ent = other.entries.get(ordinal)
+                        if ent:
+                            return ("code", other, ent.segment, ent.offset)
+            return ("gap", module, name or fix.target2)
+        if not 1 <= fix.target1 <= len(image.modules):
+            return ("gap", "?", fix.target2)
+        module = image.modules[fix.target1 - 1]
+        equated = self.wine.equate(module, fix.target2)
+        if equated:
+            return ("equate", equated[1])
+        other = self.images.get(module)
+        if other and not other.synthetic:
+            ent = other.entries.get(fix.target2)
+            if ent:
+                return ("code", other, ent.segment, ent.offset)
+            return ("gap", module, fix.target2)
+        if other and other.synthetic:
+            return ("gate", module, fix.target2)
+        return ("gap", module, fix.target2)
+
+    def _chain(self, seg, disp):
+        seen = set()
+        while disp not in (0, 0xFFFF) and disp not in seen and disp + 2 <= len(seg.data):
+            seen.add(disp)
+            nxt = struct.unpack_from("<H", seg.data, disp)[0]
+            yield disp
+            disp = nxt
+
+    def _write(self, seg, disp, atype, offset, selector):
+        if atype == 3 and disp + 4 <= len(seg.data):
+            struct.pack_into("<HH", seg.data, disp, offset & 0xFFFF, selector & 0xFFFF)
+        elif disp + 2 <= len(seg.data):
+            value = selector if atype == 2 else offset
+            struct.pack_into("<H", seg.data, disp, value & 0xFFFF)

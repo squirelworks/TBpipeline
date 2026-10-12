@@ -3,9 +3,3 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-
-_debug/
-RUN.txt
-TRACE.txt
-render.html
-loadseq.txt
