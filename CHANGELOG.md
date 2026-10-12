@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0r6
+
+The reader is opt-in.
+
+- `render.html` is written only with `--dbgrender`. A launch that exits no longer draws a page.
+
 ## 1.0.0r5
 
 The host, explained, and pointed at `--b`.

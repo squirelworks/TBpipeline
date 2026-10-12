@@ -1,4 +1,4 @@
-# TBpipeline 1.0.0r5
+# TBpipeline 1.0.0r6
 
 Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It is not the ToolBook window. Why the 16-bit host exists anyway is `WHY.md`.
 
