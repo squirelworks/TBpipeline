@@ -100,6 +100,7 @@ def resolve(argv):
     course = None
     theme = "default"
     render = "new"
+    page = None
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -119,6 +120,10 @@ def resolve(argv):
             render = argv[i + 1]
             i += 2
             continue
+        if arg == "--page" and i + 1 < len(argv):
+            page = argv[i + 1]
+            i += 2
+            continue
         if not arg.startswith("--") and course is None:
             course = arg
         i += 1
@@ -128,16 +133,21 @@ def resolve(argv):
     book = Path(course).expanduser()
     if not book.is_file():
         book = bin_dir / "courses" / course
-    return bin_dir, book, "--dbgrender" in argv, theme, render
+    return bin_dir, book, "--dbgrender" in argv, theme, render, "--open" in argv, page
 
 
 def main():
-    bin_dir, book, dbgrender, theme, render = resolve(sys.argv[1:])
+    bin_dir, book, dbgrender, theme, render, do_open, page = resolve(sys.argv[1:])
     if not book.is_file():
         print(f"not a book: {book}", file=sys.stderr)
-        print("usage: python3 -m tbpipeline_bf --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk", file=sys.stderr)
-        print("       python3 -m tbpipeline_bf 9e954d01.tbk", file=sys.stderr)
+        print("usage: python3 -m tbpipeline_bf --open book.tbk", file=sys.stderr)
+        print("       python3 -m tbpipeline_bf --open book.tbk --page P20000", file=sys.stderr)
         return 2
+    if do_open:
+        from .runtime.openbook import open_book, report
+        text = report(open_book(book), page)
+        print(text)
+        return 0
     os.environ["TBK_UNPACKED"] = str(bin_dir)
     pass06.UNPACKED = str(bin_dir)
     global DEBUG

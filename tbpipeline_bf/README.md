@@ -9,6 +9,13 @@ python3 -m tbpipeline_bf --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk
 `--b` is the ToolBook directory. Default is `bin/` beside this package. `--c` is the book. A bare filename is looked up in `--b/courses/`.
 
 ```
+python3 -m tbpipeline_bf --open book.tbk
+python3 -m tbpipeline_bf --open book.tbk --page P20000
+```
+
+`--open` reads the book without the 16-bit host. It expands each `to handle` against the whole file and follows the first `buttonClick` jump.
+
+```
 python3 -m tbpipeline_bf 9e954d01.tbk
 python3 -m tbpipeline_bf --b ~/TBK/bin --c 9e954d01.tbk --theme modern
 python3 -m tbpipeline_bf --b ~/TBK/bin --c 9e954d01.tbk --render old
