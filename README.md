@@ -1,6 +1,6 @@
 # TBpipeline
 
-Three separate trees.
+Three separate trees. The project record is [documentation/](documentation/).
 
 | Directory | What it is |
 |---|---|
@@ -9,3 +9,4 @@ Three separate trees.
 | `tbpipeline_neww` | Wine-style Win16 sandbox |
 
 Run a module from this directory.
+

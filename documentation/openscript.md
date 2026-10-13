@@ -1,0 +1,40 @@
+# OpenScript
+
+Handlers in a `.tbk` or `.sbk` are not stored as source. `TB80CMP` compresses them. The expander is `COMPILEREXPANDTEXT`, `FUN_1040_0970`. `tbpipeline_bf/runtime/expand.py` is that function. The keyword table is resource `0x77` from `TB80CMP`, shipped as `runtime/compat/res_77.bin`.
+
+## The bytes
+
+| Range | Meaning |
+|---|---|
+| `00`–`7F` | A literal byte |
+| `80`–`BF` | A keyword. Bit 4 selects a two-byte index. Bit 5 clear means a trailing space |
+| `C0`–`CF` | A short back-reference. Length is `(byte & 0xF) + 3` |
+| `D0`–`DF` | A long back-reference. Length is `(byte & 0xF) + 4`. The next word is the distance |
+| `E0`–`EF` | A newline and 0–15 spaces |
+| `F0`–`FE` | 2–16 spaces |
+| `FF` | The next byte, repeated |
+
+A back-reference copies bytes from the compressed input, not from the output. The distance is often negative past the start of the handler. The copied bytes are a phrase that already sits in an earlier handler: `INT `, `linkDLL "`, `WORD `, a function name. The copy starts in the middle of that handler, not at `to handle`.
+
+That is text reuse. It is not a call. OpenScript calls another handler by writing the name (`ASYM_BlockSuspend()`). The compressor stores the second copy of those letters by pointing at the first. The call, when there is one, is still the text.
+
+Decoding a slice fails when the distance lands before the slice. The expander has to see the whole file. `origin` is where this handler starts. `span` is how far its own bytes go. The back-reference may read anywhere in the file.
+
+A `?` left in the expanded text is the character `?`. It shows up in sentences (`Right?`), in character lists (`.,;:?!`), and in tests (`chr = "?"`). It is not a function marker. A handler that begins with a stray `?` and a newline was scanned one byte early.
+
+## What `--open` does
+
+```
+python3 -m tbpipeline_bf --open book.tbk
+python3 -m tbpipeline_bf --open book.tbk --page P20000
+```
+
+It loads the pages, finds `to handle` as plain text, and expands each one against the whole file. It prints the page map and, with `--page`, the handler source. It does not start Unicorn.
+
+That search only finds a handler whose name is still plain text. Lesson books are like that. System books such as `tb80r.sbk` compress the name too, so `to handle` is not in the file until the stream is expanded. The scan that finds those streams is in the sibling repository `openscript_analysis`, not in `--open`. Wiring that scan in is the next step for system books. It is not done.
+
+## What still does not run
+
+`runtime/engine.py` does not interpret the source `--open` prints. A click in `render.html` follows a quoted page id copied out of the record. `go to page (nextpage)` is invisible to that walker.
+
+The sibling repository can run a small subset of the source it expands: `go to page "P"`, `send`, assignment, `if`, `step`. That runner is not connected to `render.html`. Connecting it is the "one real handler" item in [future.md](future.md). Until then, `--open` is a reader of source, not an execution of it.
