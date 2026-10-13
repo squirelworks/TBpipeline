@@ -150,6 +150,30 @@ def _forward(opened: Opened, name: str) -> str:
     return pick.goto
 
 
+def click(opened: Opened) -> list[str]:
+    """Run the first page's buttonClick, then the page it landed on."""
+    from .engine import Engine
+
+    if not opened.book.pages:
+        return []
+    engine = Engine(opened.book)
+    engine.load_scripts(opened.handlers)
+    start = engine.page.name
+    try:
+        landed = engine.button_click()
+    except (KeyError, IndexError):
+        return [f"{start} -> -"]
+    lines = [f"{start} -> {landed.name}"]
+    if landed.name == start:
+        return lines
+    try:
+        back = engine.button_click()
+    except (KeyError, IndexError):
+        return lines
+    lines.append(f"{landed.name} -> {back.name}")
+    return lines
+
+
 def trace(opened: Opened, start: str | None = None, limit: int = 12) -> list[str]:
     """Follow the forward buttonClick from each page."""
     names = [p.name for p in opened.book.pages]
@@ -207,6 +231,8 @@ def report(opened: Opened, page: str | None = None) -> str:
     lines.append("map")
     for page in book.pages:
         lines.append(f"  {page.name}  -> {_forward(opened, page.name) or '-'}")
+    lines.append("click")
+    lines.extend("  " + row for row in click(opened))
     lines.append("trace")
     lines.extend("  " + row for row in trace(opened))
     return "\n".join(lines)

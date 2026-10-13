@@ -6,7 +6,7 @@
 
 | Item | Now |
 |---|---|
-| One real handler | `--open` prints the source, including compressed names in a system book. The page walker still follows a quoted id. The source is not executed |
+| One real handler | A click runs the page's `buttonClick`. `P20000` goes to `P20001` because the handler says so, and the next click comes back through `nextpage`. The rest of OpenScript is still not executed |
 | The RTM open | Pass 06 still exits after `TB80.INI`. `newl` dies earlier, inside startup, on a scan of an empty block |
 | Widget bounds | Still unknown. Curves are decoded and not placed |
 | Polygons on the page | Still files under `render/`, not objects on the page |
@@ -17,13 +17,11 @@
 
 In this order. Each one is a fact a person can check.
 
-1. **Execute the handler `--open` already prints.** The page walker should run `go to page "P"` and `go to page (nextpage)` instead of only a quoted id copied out of the record. The subset is small and already written in the sibling repository. Done means `P20000`'s click lands on `P20001` because the handler said so. System-book names are already expanded; `--page scripts` lists them.
+1. **Place one widget.** P430's curve is decoded. The missing step is the record that says where it sits. Done means that curve is on the page, at the twips the record names, not in a file of its own.
 
-2. **Place one widget.** P430's curve is decoded. The missing step is the record that says where it sits. Done means that curve is on the page, at the twips the record names, not in a file of its own.
+2. **Stop or finish the RTM open.** Either pass 06 reaches `OpenFile` on the `.tbk` and the handle is the book, or the run stops on the call that refuses it and that call is named. Another `AX = 1` that happens to pass the INI check is not the item.
 
-3. **Stop or finish the RTM open.** Either pass 06 reaches `OpenFile` on the `.tbk` and the handle is the book, or the run stops on the call that refuses it and that call is named. Another `AX = 1` that happens to pass the INI check is not the item.
-
-4. **One bitmap.** Bind the far call at `TB80BMP` `0x1FCD` and return a DIB. Done means a compressed picture from a book becomes a bitmap the reader can show.
+3. **One bitmap.** Bind the far call at `TB80BMP` `0x1FCD` and return a DIB. Done means a compressed picture from a book becomes a bitmap the reader can show.
 
 `newl` and `neww` do not take a turn in that list until one of them opens a book or returns a fact the reader does not already have. Growing the layer by guessing the next return value is how `bf` spent r4 and r5. `neww`'s rule stands: a call with no contract stops the run.
 
@@ -37,7 +35,7 @@ In this order. Each one is a fact a person can check.
 
 ## Where the future actually is
 
-The book is already open enough to read. `nida81.tbk` has pages, field records, and handlers whose source comes back clean. The future of the reader is the five items above, in that order.
+The book is already open enough to read. `nida81.tbk` has pages, field records, and handlers whose source comes back clean. The future of the reader is the items above, in that order.
 
 The future of the host is narrower than it looks. It is `TB80BMP` ordinal 3, the record that places a widget, and a startup that either opens the book or names the call that will not. It is not a Wine-class Win16. `neww` is the place to keep that instrument honest. `bf`'s pass 06 is the place that already has the DLLs mapped, and it is also the place that returns 1 too often to trust past the INI.
 

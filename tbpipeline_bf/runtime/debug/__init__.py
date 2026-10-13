@@ -10,7 +10,8 @@ from pathlib import Path
 from .play import render_new, render_old
 from .resources import write as write_resources
 from .shapes import write as write_shapes
-from ..tbk import BOOK_MAGIC, load
+from ..openbook import open_book
+from ..tbk import BOOK_MAGIC
 
 PROBE_LOGS = ("bmp_bitmap.txt", "dll_probe.txt", "scaffold.txt")
 
@@ -24,7 +25,8 @@ def run(book_path, out, dbgrender=False, theme="default", render="new"):
         return lines, ""
 
     block = ["stage 2a open and process", "  on (--dbgrender)", f"  {book_path}"]
-    book = load(book_path)
+    opened = open_book(book_path)
+    book = opened.book
     data = Path(book_path).read_bytes()
     magic = int.from_bytes(data[book.book_offset:book.book_offset + 4], "little")
     block.append(
@@ -47,7 +49,7 @@ def run(book_path, out, dbgrender=False, theme="default", render="new"):
     manifest = write_shapes(book, out)
     resources = write_resources(book, data, out)
     html_path = out / "render.html"
-    html_path.write_text(render_new(book, theme, manifest, resources), encoding="utf-8")
+    html_path.write_text(render_new(book, theme, manifest, resources, opened.handlers), encoding="utf-8")
     wrote = [f"  wrote {html_path} ({html_path.stat().st_size} bytes) engine"]
     wrote.append(f"  render/ {len(manifest)} pages")
     wrote.append(f"  resources/ {len(resources['book'])} book, {sum(len(v) for v in resources['pages'].values())} in pages")

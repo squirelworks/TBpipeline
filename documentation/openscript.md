@@ -35,6 +35,4 @@ That search finds a handler whose name is still plain text, which is how a lesso
 
 ## What still does not run
 
-`runtime/engine.py` does not interpret the source `--open` prints. A click in `render.html` follows a quoted page id copied out of the record. `go to page (nextpage)` is invisible to that walker.
-
-The sibling repository can run a small subset of the source it expands: `go to page "P"`, `send`, assignment, `if`, `step`. That runner is not connected to `render.html`. Connecting it is the "one real handler" item in [future.md](future.md). Until then, `--open` is a reader of source, not an execution of it.
+`runtime/engine.py` runs the navigation in that source. A `buttonClick` may set `name of this book` and `name of this page`, then `go to page "P"` or `go to page (nextpage)`. On `nida81.tbk`, clicking `P20000` lands on `P20001` because the handler says so. The same steps are what the buttons in `render.html` run. Anything past that subset is still not executed.

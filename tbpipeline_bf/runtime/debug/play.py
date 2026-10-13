@@ -12,7 +12,7 @@ import html
 import json
 from pathlib import Path
 
-from ..engine import Engine
+from ..engine import Engine, compile_handler
 from ..tbk import Book
 
 THEMES = {
@@ -164,7 +164,7 @@ show(0);
 
 
 NEW_SCRIPT = """
-const engine = { index: 0, log: [] };
+const engine = { index: 0, log: [], vars: {} };
 const stage = document.getElementById("stage");
 const menu = document.getElementById("pages");
 document.getElementById("title").textContent = book.title;
@@ -191,14 +191,25 @@ function show() {
     p.textContent = line;
     stage.appendChild(p);
   }
-  if (page.jumps.length) {
+  if (page.handlers && page.handlers.length) {
+    const box = document.createElement("div");
+    box.className = "jumps";
+    page.handlers.forEach((handler, n) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = handler.label;
+      b.addEventListener("click", () => buttonClick(n));
+      box.appendChild(b);
+    });
+    stage.appendChild(box);
+  } else if (page.jumps.length) {
     const box = document.createElement("div");
     box.className = "jumps";
     for (const id of page.jumps) {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = id;
-      b.addEventListener("click", () => buttonClick(id));
+      b.addEventListener("click", () => go(id));
       box.appendChild(b);
     }
     stage.appendChild(box);
@@ -220,9 +231,26 @@ function next() {
 function back() {
   if (engine.index > 0) go(book.pages[engine.index - 1].id);
 }
-function buttonClick(id) {
-  engine.log.push(["buttonClick", id]);
-  go(id);
+function runSteps(steps) {
+  let dest = "";
+  let other = "";
+  for (const step of steps) {
+    if (step.op === "set") {
+      engine.vars[step.name] = step.from === "book" ? (book.file || "") : book.pages[engine.index].id;
+    } else if (step.op === "goto") {
+      dest = step.page || engine.vars[step.pageVar] || "";
+      other = step.book || (step.bookVar ? (engine.vars[step.bookVar] || "") : "");
+    }
+  }
+  const own = (book.file || "").toLowerCase();
+  if (other && own && other.toLowerCase() !== own) return;
+  if (dest) go(dest);
+}
+function buttonClick(n) {
+  const page = book.pages[engine.index];
+  const handler = page.handlers && page.handlers[n];
+  engine.log.push(["buttonClick", handler ? handler.label : n]);
+  if (handler) runSteps(handler.steps);
 }
 document.getElementById("next").addEventListener("click", next);
 document.getElementById("back").addEventListener("click", back);
@@ -283,7 +311,20 @@ def write(book: Book, dest: str | Path, theme="default") -> Path:
     return dest
 
 
-def walked(book: Book) -> list[dict]:
+def _clicks(handlers) -> list[dict]:
+    clicks = []
+    for handler in handlers or []:
+        if handler.name.lower() != "buttonclick":
+            continue
+        steps = compile_handler(handler.source)
+        label = next((s.get("page") for s in steps if s.get("page")), "")
+        if not label:
+            label = next((s.get("pageVar") for s in steps if s.get("pageVar")), "buttonClick")
+        clicks.append({"label": label, "steps": steps})
+    return clicks
+
+
+def walked(book: Book, handlers: dict | None = None) -> list[dict]:
     """Pages in the order engine.py walks them. Works for a .tbk or a .sbk."""
     engine = Engine(book)
     pages = []
@@ -299,6 +340,7 @@ def walked(book: Book) -> list[dict]:
             "id": page.name,
             "text": prose[:12],
             "jumps": page.quoted_jumps[:16],
+            "handlers": _clicks((handlers or {}).get(page.name)),
         })
         try:
             engine.next()
@@ -307,10 +349,11 @@ def walked(book: Book) -> list[dict]:
     return pages
 
 
-def render_new(book: Book, theme="default", files=None, resources=None) -> str:
+def render_new(book: Book, theme="default", files=None, resources=None, handlers=None) -> str:
     payload = json.dumps({
         "title": book.path.stem,
-        "pages": walked(book),
+        "file": Path(book.path).name,
+        "pages": walked(book, handlers),
         "files": files or {},
         "resources": resources or {"book": [], "pages": {}},
     })
