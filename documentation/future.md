@@ -6,7 +6,7 @@
 
 | Item | Now |
 |---|---|
-| One real handler | `--open` prints the source. The page walker still follows a quoted id. The source is not executed |
+| One real handler | `--open` prints the source, including compressed names in a system book. The page walker still follows a quoted id. The source is not executed |
 | The RTM open | Pass 06 still exits after `TB80.INI`. `newl` dies earlier, inside startup, on a scan of an empty block |
 | Widget bounds | Still unknown. Curves are decoded and not placed |
 | Polygons on the page | Still files under `render/`, not objects on the page |
@@ -17,15 +17,13 @@
 
 In this order. Each one is a fact a person can check.
 
-1. **System books in `--open`.** Lesson handlers are plain text. `tb80r.sbk` compresses the name as well. The stream scan already exists in `openscript_analysis`. It belongs in `runtime/openbook.py`, reading the whole file, the same way the lesson path does. Done means `tb80r.sbk` prints handlers, not a question mark where a back-reference used to miss.
+1. **Execute the handler `--open` already prints.** The page walker should run `go to page "P"` and `go to page (nextpage)` instead of only a quoted id copied out of the record. The subset is small and already written in the sibling repository. Done means `P20000`'s click lands on `P20001` because the handler said so. System-book names are already expanded; `--page scripts` lists them.
 
-2. **Execute the handler `--open` already prints.** The page walker should run `go to page "P"` and `go to page (nextpage)` instead of only a quoted id copied out of the record. The subset is small and already written in the sibling repository. Done means `P20000`'s click lands on `P20001` because the handler said so.
+2. **Place one widget.** P430's curve is decoded. The missing step is the record that says where it sits. Done means that curve is on the page, at the twips the record names, not in a file of its own.
 
-3. **Place one widget.** P430's curve is decoded. The missing step is the record that says where it sits. Done means that curve is on the page, at the twips the record names, not in a file of its own.
+3. **Stop or finish the RTM open.** Either pass 06 reaches `OpenFile` on the `.tbk` and the handle is the book, or the run stops on the call that refuses it and that call is named. Another `AX = 1` that happens to pass the INI check is not the item.
 
-4. **Stop or finish the RTM open.** Either pass 06 reaches `OpenFile` on the `.tbk` and the handle is the book, or the run stops on the call that refuses it and that call is named. Another `AX = 1` that happens to pass the INI check is not the item.
-
-5. **One bitmap.** Bind the far call at `TB80BMP` `0x1FCD` and return a DIB. Done means a compressed picture from a book becomes a bitmap the reader can show.
+4. **One bitmap.** Bind the far call at `TB80BMP` `0x1FCD` and return a DIB. Done means a compressed picture from a book becomes a bitmap the reader can show.
 
 `newl` and `neww` do not take a turn in that list until one of them opens a book or returns a fact the reader does not already have. Growing the layer by guessing the next return value is how `bf` spent r4 and r5. `neww`'s rule stands: a call with no contract stops the run.
 

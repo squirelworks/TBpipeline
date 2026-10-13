@@ -31,7 +31,7 @@ python3 -m tbpipeline_bf --open book.tbk --page P20000
 
 It loads the pages, finds `to handle` as plain text, and expands each one against the whole file. It prints the page map and, with `--page`, the handler source. It does not start Unicorn.
 
-That search only finds a handler whose name is still plain text. Lesson books are like that. System books such as `tb80r.sbk` compress the name too, so `to handle` is not in the file until the stream is expanded. The scan that finds those streams is in the sibling repository `openscript_analysis`, not in `--open`. Wiring that scan in is the next step for system books. It is not done.
+That search finds a handler whose name is still plain text, which is how a lesson is stored. A system book compresses the name too. Those streams start with the keyword opcodes for `to handle` (`80 81`) or `to get` (`80 90 AD`). `--open` expands those as well and lists them under `scripts` when they do not sit inside a page record. `--page scripts` prints the name and the offset, not the whole body.
 
 ## What still does not run
 

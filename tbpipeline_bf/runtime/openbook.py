@@ -18,6 +18,10 @@ _GOTO = re.compile(
     re.IGNORECASE,
 )
 _HANDLE = re.compile(rb"(?i)to handle [A-Za-z][A-Za-z0-9_]*")
+# Keyword opcodes from resource 0x77: "to" is 0, "handle" is 1, "get" is 173.
+# A trailing space leaves bit 5 clear. "get" is a two-byte index.
+_TO_HANDLE = bytes((0x80, 0x81))
+_TO_GET = bytes((0x80, 0x90, 0xAD))
 
 
 @dataclass
@@ -54,22 +58,69 @@ def _body(source: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _kind(source: str) -> str:
+    parts = source.lstrip().split()
+    if len(parts) >= 3 and parts[0].lower() == "to" and parts[1].lower() in ("handle", "get"):
+        return parts[2].strip("(),")
+    return (parts[0] if parts else "")[:40]
+
+
+def _page_name(book: Book, offset: int) -> str:
+    for page in book.pages:
+        if page.offset <= offset < page.offset + len(page.blob):
+            return page.name
+    return "scripts"
+
+
+def _compressed(data: bytes, words, taken: set[int]) -> list[Handler]:
+    """Handlers whose names are keywords, not plain text. System books store them this way."""
+    found = []
+    for pattern in (_TO_HANDLE, _TO_GET):
+        start = 0
+        while True:
+            origin = data.find(pattern, start)
+            if origin < 0:
+                break
+            start = origin + 1
+            if origin in taken:
+                continue
+            try:
+                source = _body(decompress(data, words, origin=origin, span=8000, max_out=8000))
+            except Exception:
+                continue
+            low = source.lstrip().lower()
+            if not (low.startswith("to handle ") or low.startswith("to get ")):
+                continue
+            taken.add(origin)
+            goto = _GOTO.search(source)
+            found.append(Handler(
+                name=_kind(source),
+                source=source,
+                offset=origin,
+                goto=goto.group(1) if goto else "",
+                book=goto.group(2) or "" if goto else "",
+            ))
+    found.sort(key=lambda h: h.offset)
+    return found
+
+
 def open_book(path: str | Path) -> Opened:
     path = Path(path)
     book = load(path)
     data = path.read_bytes()
     words = keywords()
     opened = Opened(book, data)
+    taken: set[int] = set()
     for page in book.pages:
         found = []
         for match in _HANDLE.finditer(page.blob):
             origin = page.offset + match.start()
             span = max(1, len(page.blob) - match.start())
             source = _body(decompress(data, words, origin=origin, span=span, max_out=8000))
-            name = match.group().split()[-1].decode("latin-1")
+            taken.add(origin)
             goto = _GOTO.search(source)
             found.append(Handler(
-                name=name,
+                name=match.group().split()[-1].decode("latin-1"),
                 source=source,
                 offset=origin,
                 goto=goto.group(1) if goto else "",
@@ -77,6 +128,12 @@ def open_book(path: str | Path) -> Opened:
             ))
         if found:
             opened.handlers[page.name] = found
+    for handler in _compressed(data, words, taken):
+        name = _page_name(book, handler.offset)
+        bucket = opened.handlers.setdefault(name, [])
+        if any(have.source == handler.source for have in bucket):
+            continue
+        bucket.append(handler)
     return opened
 
 
@@ -128,17 +185,24 @@ def report(opened: Opened, page: str | None = None) -> str:
         f"pages {len(book.pages)}",
         f"handlers {sum(len(v) for v in opened.handlers.values())}",
     ]
+    if "scripts" in opened.handlers:
+        lines.append(f"scripts {len(opened.handlers['scripts'])}")
     if page:
         got = opened.book.page(page)
-        if got is None:
+        extra = opened.page_handlers(page)
+        if got is None and not extra:
             lines.append(f"no page {page}")
             return "\n".join(lines)
-        lines.append(f"page {got.name}")
-        for field in got.fields[:6]:
-            lines.append(f"  text {field.text.replace(chr(10), ' ')[:120]}")
-        for handler in opened.page_handlers(page):
+        lines.append(f"page {page if got is None else got.name}")
+        if got is not None:
+            for field in got.fields[:6]:
+                lines.append(f"  text {field.text.replace(chr(10), ' ')[:120]}")
+        for handler in extra:
             lines.append(f"--- {handler.name} {handler.offset:#x}")
-            lines.append(handler.source)
+            if got is None:
+                lines.append(handler.source.split("\n", 1)[0])
+            else:
+                lines.append(handler.source)
         return "\n".join(lines)
     lines.append("map")
     for page in book.pages:
