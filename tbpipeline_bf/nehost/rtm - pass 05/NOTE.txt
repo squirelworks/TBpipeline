@@ -1,0 +1,7 @@
+Pass 05, unpacked TB80RTM.EXE, command tail " 9e954d01.tbk".
+
+Pass 04's binder now also writes the 45 records it used to skip: type 2 flag 1 (imported selector, 38), type 3 flag 2 (far pointer by name, 5), type 5 flag 2 or 6 (offset by name, 2). Name imports land on the ordinal-1 stub.
+
+The entry still binds InitTask at thunk:0x2D8. Ordinals that ran: 91, 3, 1, 5, 1, 1, 1, 23, 5, 24, 49, 131, 23, 5. That is further than pass 04, which died after ordinal 5.
+
+The next transfer is still thunk:0x102D. No bound instruction contains that pointer, and 0x102D is not an ordinal stub. No DOS open. The run then takes int 0x8 at selector 0x78.

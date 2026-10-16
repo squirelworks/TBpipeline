@@ -1,0 +1,7 @@
+Pass 04, unpacked TB80RTM.EXE, command tail " 9e954d01.tbk".
+
+The entry binds correctly: segment 2:0x35A is xor bp,bp / push bp / call thunk:0x2D8, and 0x2D8 is KERNEL ordinal 91, InitTask. Pass 03 never had that binding. Ordinals 91, 3, 1 and 5 were called.
+
+The next far call enters the thunk at 0x102D, which is not an ordinal stub and has no reloc record. Filling that hole with a return does not reach an open. No DOS open of the book. The run then hits int 0x8 in segment selector 0x78.
+
+Unpacking removes the bad LoadAppSeg fixup. It does not supply the import targets the entry calls after InitTask.

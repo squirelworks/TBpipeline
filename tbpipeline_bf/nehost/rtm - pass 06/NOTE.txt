@@ -1,0 +1,5 @@
+Pass 06, unpacked TB80RTM.EXE plus the six ToolBook DLLs, command tail " 9e954d01.tbk".
+
+nedllhost/pass06.py plants a return stub in every thunk slot, so USER.266 no longer falls through zeros. 461 ordinals from TB80BAS, TB80RCR, TB80LNL, TB80OLE, TB80UTL and TB80W16 are bound to the real segment:offset.
+
+InitTask still runs. The thunk-padding fault from pass 05 is gone. The run then skips a far call to FFFF:0158 from selector 0x590, and a far call to 0080:0098 from selector 0xC0. No DOS open. Instruction cap reached after those skips.

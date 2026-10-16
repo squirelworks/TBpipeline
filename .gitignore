@@ -3,3 +3,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+# Unicorn segment dumps. The pass notes stay.
+tbpipeline_bf/nehost/**/*.bin
+

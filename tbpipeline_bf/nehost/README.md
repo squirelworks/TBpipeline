@@ -12,7 +12,8 @@ python3 -m tbpipeline_bf.nehost TB80RTM.EXE -o rtm_out
 
 `--unpack` runs the static unpacker. Without it, the module runs `BootApp` and dumps the segments the stub expands. `--book` puts a TBK name on the command tail.
 
-Needs `unicorn` for the live host. The unpacker does not.
+The pass directories `rtm - pass 01` through `rtm - pass 07` are the runs. `PASS05.txt` and `PASS06.txt` are the machine logs. `NOTE.txt` beside them is the writeup that used to sit in TBdecompile. Segment `.bin` files are local dumps. They are not a second copy of this host, and they do not belong in TBdecompile.
+
 
 ```
 python3 -m tbpipeline_bf.nehost.bmp_bitmap
