@@ -12,6 +12,7 @@ from pathlib import Path
 from .local import LocalHeap, Stop as LocalStop
 from .resource import NE_SEGFLAGS_MOVEABLE, Resources, Stop as ResourceStop, res_name
 from .spec_rows import SPEC_ROWS
+from .spec_variables import SPEC_VARIABLES
 from .handlers import HANDLERS
 from .kstate import KernelState
 from .guest import Call, GuestCalls
@@ -272,6 +273,30 @@ EQUATES = {
     "KERNEL": {113: ("__AHSHIFT", 3), 114: ("__AHINCR", 8), 178: ("__WINFLAGS", 0x0C25)},
 }
 
+# Data exports: a spec `variable` row is a run of 32-bit values in the builtin module's data,
+# and a fixup to its ordinal points at them (winebuild puts them in the module's data
+# segment). Wine fills KERNEL's THHOOK at run time (kernel.c TASK_InstallTHHook), so its spec
+# zeros are not its value; neww does not make that block, and leaves KERNEL's variables
+# unlinked. __GP is beside it and is left out with it.
+VARIABLES_FILLED_AT_RUN = {"KERNEL": "Wine fills THHOOK at run time (TASK_InstallTHHook)"}
+
+
+def _variables():
+    out = {}
+    for module, lines in SPEC_VARIABLES.items():
+        if module in VARIABLES_FILLED_AT_RUN:
+            continue
+        for line in lines:
+            ordinal, _kind, rest = line.split(" ", 2)
+            name, _, values = rest.partition("(")
+            words = [int(v, 0) & 0xFFFFFFFF for v in values.rstrip(")").split()]
+            out.setdefault(module, {})[int(ordinal)] = (name.strip(), struct.pack(f"<{len(words)}I", *words))
+    return out
+
+
+VARIABLES = _variables()
+
+
 # Every pascal entry of every Win16 spec file, from spec_rows.py (specgen.py wrote it from the
 # Wine checkout at WINE_COMMIT). A hand row above, with its handler, wins over the loaded row.
 SPEC_PATHS = {
@@ -462,6 +487,11 @@ class Wine(KernelState):
 
     def equate(self, module, ordinal):
         return EQUATES.get(module.upper(), {}).get(ordinal)
+
+    @staticmethod
+    def variable(module, ordinal):
+        """(name, bytes) of a spec variable export, or None."""
+        return VARIABLES.get(module.upper(), {}).get(ordinal)
 
     @staticmethod
     def missing(module, ordinal):
