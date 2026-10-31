@@ -217,6 +217,9 @@ MMSYSTEM = _table("MMSYSTEM", MMSYSTEM_SPEC, [
     # a MIDI driver only with an audio driver, and neww has none, so mmdevapi's DriverProc
     # answers DRV_LOAD with 0, OpenDriverA fails, and MMDRV_Install installs no mmdevapi.
     ("201 pascal midiOutGetNumDevs() midiOutGetNumDevs16", (0, 0)),
+    # auxGetNumDevs is MMDRV_GetNum(MMDRV_AUX). mmdevapi is not installed, as above, and the
+    # two mappers, midimap.dll and msacm32.drv, export no auxMessage. So the count is 0.
+    ("350 pascal auxGetNumDevs() auxGetNumDevs16", (0, 0)),
     # winmm waveform.c waveOutGetNumDevs is g_outmmdevices_count, mmdevapi's render endpoints.
     # neww has no audio driver. With none of pulse, alsa, oss or coreaudio loaded, mmdevapi
     # init_driver loads no devices, so the count is 0.
