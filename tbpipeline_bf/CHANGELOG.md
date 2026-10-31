@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-Still `1.0.0r6`. These lines are not a release.
+Not a release. `1.0.0r6` stays the version.
 
+- Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files, drawn and not placed`. The known bug that they disagreed without saying why is gone.
 - Every far call that falls through to `AX = 1` is a line in the debug folder's `02_launch.txt`: module, ordinal, call site, and the first four argument words. It is written on every launch, not only when the run dies.
 - `TBK_INI` names a directory the host may answer an `.ini` open from. `TB80.INI` there gets a handle whose bytes are that file. Unset, an INI open is still `0xFFFF`. No INI is committed.
 
