@@ -8,6 +8,8 @@ An ordinal with no contract stops the run. It does not invent a pop size.
 import struct
 from pathlib import Path
 
+from .local import LocalHeap, Stop as LocalStop
+
 # Wine Win16 spec files, read at this commit. A row cites file and ordinal.
 WINE_COMMIT = "2528aff26208257fdbf980666a4f0e66d47563ce"
 KERNEL_SPEC = "dlls/krnl386.exe16/krnl386.exe16.spec"
@@ -93,6 +95,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     # Windows 3.10 in AX, DX 0. newl returns the same pair.
     ("3   pascal GetVersion() GetVersion16", (0x0A03, 0)),
     "4   pascal -ret16 LocalInit(word word word) LocalInit16",
+    "5   pascal -ret16 LocalAlloc(word word) LocalAlloc16",
     "15  pascal -ret16 GlobalAlloc(word long) GlobalAlloc16",
     "17  pascal -ret16 GlobalFree(word) GlobalFree16",
     "18  pascal GlobalLock(word) WIN16_GlobalLock16",
@@ -226,6 +229,15 @@ class Wine:
             ok = self.local_init(arg(2), arg(1), arg(0), arg.regs("ds"))
             self.registers = {"cx": ok}
             return ok, 0, None
+        if ordinal == 5:
+            # LocalAlloc(word flags, word size) in CURRENT_DS. Wine also returns the handle in CX.
+            heap = LocalHeap(arg.regs("ds"), arg.word, self.write)
+            try:
+                handle = heap.alloc(arg(1), arg(0))
+            except LocalStop as why:
+                return 0, 0, f"KERNEL.5 LocalAlloc(flags={arg(1):#x}, size={arg(0):#x}): {why}"
+            self.registers = {"cx": handle}
+            return handle, 0, None
         if ordinal == 23:
             # Wine global.c LockSegment16: -1 is CURRENT_DS. An invalid handle returns 0.
             handle = arg(0)
