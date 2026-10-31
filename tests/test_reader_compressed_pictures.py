@@ -14,7 +14,7 @@ from tbpipeline_bf.runtime.tbk import BOOK_MAGIC, MARK, STUB
 
 SENTENCE = (
     "Compressed ToolBook pictures are not drawn: the decoder is TB80BMP ordinal 3, "
-    "and the host stops at its far call 0x1FCD. Only Windows bitmaps are shown."
+    "and the host probe stops at its first import, KERNEL.36. Only Windows bitmaps are shown."
 )
 
 
