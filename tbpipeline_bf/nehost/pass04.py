@@ -1107,6 +1107,16 @@ class Pass04:
         return True
 
     def _gdi(self, ordinal):
+        # GetStockObject(index). Wine's GetStockObject16 is the low word of
+        # GetStockObject: index + FIRST_GDI_HANDLE (32) at 96 DPI, for 0 to
+        # STOCK_LAST + 1 (20) except 9, and 0 for any other index. AX = 1
+        # handed every stock pen, brush and font back as one handle.
+        if ordinal == 87:
+            index = self._word(0)
+            valid = index <= 20 and index != 9
+            self.uc.reg_write(UC_X86_REG_AX, index + 32 if valid else 0)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetDeviceCaps(hdc, index). The only device is the screen. Wine's
         # GetDeviceCaps16 returns nulldrv_GetDeviceCaps cast to INT16, with
         # NUMCOLORS -1 turned into 2048: 32 bits per pixel when no display
