@@ -821,6 +821,14 @@ class Pass04:
         return True
 
     def _user(self, ordinal):
+        # lstrcmpi(lpsz1, lpsz2), Pascal, pop 8. AX = 1 said "greater" for
+        # every pair: TB80NET never matched its command line "ToolBook".
+        if ordinal == 471:
+            one = self._cstring(self._word(3), self._word(2)).lower()
+            two = self._cstring(self._word(1), self._word(0)).lower()
+            self.uc.reg_write(UC_X86_REG_AX, (one > two) - (one < two) & 0xFFFF)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # LoadString(hinst, id, far buf, cch). The call sites push 10 bytes.
         # AX=1 left the buffer empty, so the caller treated the string as missing.
         if ordinal == 176:
@@ -1199,6 +1207,16 @@ class Pass04:
         self.calls.append(f"dos{ah:02x}")
         uc.reg_write(UC_X86_REG_AX, 0)
         self._clear()
+
+    def _cstring(self, sel, offset):
+        """The whole NUL-terminated string, to the end of the segment."""
+        if sel not in self.arena.segs:
+            return ""
+        size = self.arena.segs[sel]["size"]
+        if offset >= size:
+            return ""
+        raw = self.arena.read(sel, offset, size - offset)
+        return raw.split(b"\x00", 1)[0].decode("cp1252", "replace")
 
     def _string(self, sel, offset):
         if sel not in self.arena.segs:
