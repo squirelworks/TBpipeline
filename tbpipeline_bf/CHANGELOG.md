@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `USER.266` `SetMessageQueue` returns TRUE, as Wine's `SetMessageQueue` does for any size.
 - `KERNEL.515` `GetProcAddress32W` returns the address of a loaded 32-bit DLL's export, by name or by ordinal, or 0, as Wine's `GetProcAddress32W16` returns `GetProcAddress`. For a Win32 system DLL it returns an import stub that is answered by name. It used to fall through to `AX = 1`.
 - `KERNEL.57` `GetProfileInt` reads a number from `WIN.INI`, the way Wine's `GetProfileInt16` calls `GetPrivateProfileInt16` on `"win.ini"`, or returns the default. It used to fall through to `AX = 1`.
 - `KERNEL.58` `GetProfileString` copies a value from `WIN.INI`, the way Wine's `GetProfileString16` calls `GetPrivateProfileString16` on `"win.ini"`, or the default. It used to fall through to `AX = 1`.

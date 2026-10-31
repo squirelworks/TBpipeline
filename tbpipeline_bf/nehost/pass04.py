@@ -1004,6 +1004,11 @@ class Pass04:
             self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
             self.uc.emu_stop()
             return True
+        # SetMessageQueue(size). Wine's SetMessageQueue16 is SetMessageQueue,
+        # which returns TRUE for any size: the queue grows as it needs to.
+        if ordinal == 266:
+            self.uc.reg_write(UC_X86_REG_AX, 1)
+            return True
         # GetSysColor(index). Wine's GetSysColor16 reads system_colors in
         # win32u/sysparams.c, COLOR_SCROLLBAR to COLOR_MENUBAR, and gives 0
         # out of range. AX = 1 was a near-black red for every element.
