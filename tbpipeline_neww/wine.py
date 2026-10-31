@@ -214,9 +214,16 @@ METRICS.update({
     68: 4, 69: 4, 70: 0, 76: 0, 77: 0, 78: 1024, 79: 768, 80: 1,
 })
 
-# The rest need a font's metrics (SM_CXMIN, SM_CXMINTRACK, SM_CXMENUCHECK, SM_CYMENUCHECK)
-# or MINIMIZEDMETRICS (SM_CXMINSPACING and the minimized sizes), which neww does not have.
-METRICS_FROM_HOST = frozenset([28, 34, 47, 48, 56, 57, 58, 71, 72])
+# SM_CXMIN, and SM_CXMINTRACK which is SM_CXMIN, is 3 * iCaptionWidth + iCaptionHeight +
+# 4 * the caption font's get_char_dimensions + 2 * SM_CXFRAME + 4. get_char_dimensions is
+# (extent of a-zA-Z / 26 + 1) / 2. The caption font is Tahoma Bold at -11 pixels: with Wine's
+# fonts/tahomabd.ttf and FreeType the 52 letters are 374 pixels wide, so it is 7 (any extent
+# from 338 to 389 gives 7). 54 + 18 + 28 + 8 + 4 = 112.
+METRICS[28] = METRICS[34] = 3 * 18 + 18 + 4 * 7 + 2 * 4 + 4
+
+# The rest need the menu check bitmaps (SM_CXMENUCHECK, SM_CYMENUCHECK) or MINIMIZEDMETRICS
+# (SM_CXMINSPACING and the minimized sizes), which neww does not have.
+METRICS_FROM_HOST = frozenset([47, 48, 56, 57, 58, 71, 72])
 
 GDI = _table("GDI", GDI_SPEC, [
     "80  pascal -ret16 GetDeviceCaps(word s_word) GetDeviceCaps16",
@@ -450,6 +457,9 @@ class Wine(KernelState):
         self.images = lambda: {}
         # Module handle -> GetModuleUsage16's count, where it is not 1.
         self.usage = {}
+        # Set by the machine: count a load, or a free, of a module by name.
+        self.reference_module = None
+        self.release_module = None
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
         self.messages = {}
         # Original name -> atom, references per atom, and the next number to give.
@@ -996,7 +1006,12 @@ class Wine(KernelState):
             struct.pack_into("<H", ofs, 2, 2)
             self._put(ofs_sel, ofs_off, ofs)
             return HFILE_ERROR, 0, None
-        if mode & ~(OF_SHARE_MASK | 0x0003 | OF_EXIST | OF_REOPEN) or (mode & 0x0003) == 0x0003:
+        OF_VERIFY = 0x0400
+        if mode & OF_VERIFY and mode & OF_REOPEN:
+            return 0, 0, (f"KERNEL.74 OpenFile {path!r} OF_VERIFY | OF_REOPEN: Wine compares the file's DOS "
+                          "date and time with the OFSTRUCT's, which neww does not keep yet")
+        # OF_VERIFY without OF_REOPEN changes nothing in OpenFile16.
+        if mode & ~(OF_SHARE_MASK | 0x0003 | OF_EXIST | OF_REOPEN | OF_VERIFY) or (mode & 0x0003) == 0x0003:
             return 0, 0, f"KERNEL.74 OpenFile {path!r} mode {mode:#06x}: neww has no {mode:#06x} yet"
         # OF_WRITE and OF_READWRITE open the file as OF_READ does. A file this run created takes
         # writes, in memory. A write to a file from --b or to the book stops (write_file): neww
@@ -1178,12 +1193,16 @@ class Wine(KernelState):
             self.trace[-1] += f" {name!r} -> gate module {handle:#x}"
             return handle, 0, None
         module = self.modules.get(stem)
+        mod_name = stem if module is not None else None
         if module is None:
             for mname, handle in self.modules.items():
                 if Path(self.owner(handle)).name.upper() == base.upper():
-                    module = handle
+                    module, mod_name = handle, mname
                     break
         calls = []
+        if module is not None and self.reference_module is not None:
+            # NE_LoadModule of a loaded module: its count goes up by 1.
+            self.reference_module(mod_name)
         if module is None and self.load_module is not None:
             # A file in --b that nothing imported: Wine's NE_LoadModule loads it now, and
             # NE_InitializeDLLs runs its LibMain and those of DLLs it loads first.
@@ -1632,13 +1651,15 @@ class Wine(KernelState):
         return 0, 0, None
 
     def _device_caps(self, hdc, cap):
-        """Wine gdi.exe16/gdi.c GetDeviceCaps16 of a screen DC. Returns (ax, dx, stop)."""
+        """Wine gdi.exe16/gdi.c GetDeviceCaps16 of a screen or memory DC. Returns (ax, dx, stop)."""
         gdi = getattr(self, "gdi", None)
         dc = gdi.objects.get(hdc) if gdi is not None else None
         if hdc not in self.dcs and (dc is None or dc.kind != 3):
             return 0, 0, f"GDI.80 GetDeviceCaps({hdc:#x}, {cap}): not a DC neww made"
-        if dc is not None and dc.memory:
-            return 0, 0, f"GDI.80 GetDeviceCaps({hdc:#x}, {cap}) of a memory DC: Wine's dib driver answers for the selected bitmap"
+        # A memory DC answers the same: NtGdiCreateCompatibleDC pushes the dib driver, which
+        # has no pGetDeviceCaps, over the display driver's DC, so GET_DC_PHYSDEV reaches
+        # nulldrv_GetDeviceCaps. Its display name is empty, which is the primary source, and
+        # the selected bitmap changes nothing (BITSPIXEL stays the display's depth).
         value = SCREEN_CAPS.get(cap, 0)
         if cap == 24 and value == -1:
             # NUMCOLORS: "some apps don't expect -1 and think it's a B&W screen".
@@ -1682,4 +1703,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, tasks, win32, kernel32  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, tasks, win32, kernel32  # noqa: E402,F401

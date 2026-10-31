@@ -168,3 +168,22 @@ def reg_enum_key(wine, arg):
         return ERROR_MORE_DATA, 0, None
     wine.write(arg(3), arg(2), raw + b"\x00")
     return ERROR_SUCCESS, 0, None
+
+
+WS_EX_ACCEPTFILES = 0x10
+
+
+@handles("SHELL", 9)
+def drag_accept_files(wine, arg):
+    """shell.c DragAcceptFiles16 -> shell32 DragAcceptFiles: WS_EX_ACCEPTFILES on or off in the
+    window's extended style, through SetWindowLongA(GWL_EXSTYLE). Not a window: nothing. Void."""
+    from .user_wnd import wm, _set_style, GWL_EXSTYLE
+    hwnd, accept = arg(1), arg(0)
+    w = wm(wine).get(hwnd)
+    if w is None:
+        return arg.regs("ax"), 0, None
+    ex = w.exstyle | WS_EX_ACCEPTFILES if accept else w.exstyle & ~WS_EX_ACCEPTFILES
+    _old, why = _set_style(wine, w, GWL_EXSTYLE, ex)
+    if why:
+        return 0, 0, f"SHELL.9 DragAcceptFiles: {why}"
+    return arg.regs("ax"), 0, None

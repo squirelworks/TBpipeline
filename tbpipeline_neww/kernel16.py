@@ -475,8 +475,17 @@ def get_exe_ptr(wine, arg):
 
 @handles("KERNEL", 96)
 def free_library(wine, arg):
-    """ne_module.c FreeLibrary16 -> NE_FreeModule. neww never unloads a module, so the count
-    goes nowhere. Void."""
+    """ne_module.c FreeLibrary16 -> NE_FreeModule: the module's count goes down by 1. At 0 Wine
+    calls the DLL's WEP and unloads it and what it imported; neww stops there, as it never
+    unloads. A gate module, or a handle that is no module, changes nothing. Void."""
+    module = wine._exe_ptr(arg(0))
+    name = next((n for n, h in wine.modules.items() if h == module), None) if module else None
+    if name is None or wine.release_module is None:
+        return arg.regs("ax"), 0, None
+    if wine.usage.get(module, 1) <= 1:
+        return 0, 0, (f"KERNEL.96 FreeLibrary({arg(0):#x}): the last use of {name}, so Wine calls its WEP "
+                      "and unloads it, and neww does not unload modules")
+    wine.release_module(name)
     return arg.regs("ax"), 0, None
 
 

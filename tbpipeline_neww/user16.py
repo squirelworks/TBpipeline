@@ -378,3 +378,183 @@ def get_clipboard_format_name(wine, arg):
     text = text[:size - 1]
     wine.write(arg(2), arg(1), text + b"\x00")
     return len(text), 0, None
+
+
+# ---------------------------------------------------------------- rectangles, user.c
+
+def _rect(wine, ptr):
+    return list(struct.unpack("<4h", bytes(wine.read(ptr >> 16, ptr & 0xFFFF, 8))))
+
+
+def _put_rect(wine, ptr, r):
+    """A RECT16: each field kept to 16 bits, as INT16 arithmetic leaves it."""
+    wine.write(ptr >> 16, ptr & 0xFFFF, struct.pack("<4H", *(v & 0xFFFF for v in r)))
+
+
+def _empty(r):
+    return r[0] >= r[2] or r[1] >= r[3]
+
+
+def _wrap(r):
+    return [signed(v & 0xFFFF) for v in r]
+
+
+@handles("USER", 72)
+def set_rect(wine, arg):
+    """SetRect16(rect, left, top, right, bottom), void: AX is left."""
+    _put_rect(wine, segptr(arg(4), arg(5)), [arg(3), arg(2), arg(1), arg(0)])
+    return arg.regs("ax"), 0, None
+
+
+@handles("USER", 73)
+def set_rect_empty(wine, arg):
+    """SetRectEmpty16(rect), void."""
+    _put_rect(wine, segptr(arg(0), arg(1)), [0, 0, 0, 0])
+    return arg.regs("ax"), 0, None
+
+
+@handles("USER", 74)
+def copy_rect(wine, arg):
+    """CopyRect16(dest, src): TRUE."""
+    _put_rect(wine, segptr(arg(2), arg(3)), _rect(wine, segptr(arg(0), arg(1))))
+    return 1, 0, None
+
+
+@handles("USER", 75)
+def is_rect_empty(wine, arg):
+    return int(_empty(_rect(wine, segptr(arg(0), arg(1))))), 0, None
+
+
+@handles("USER", 76)
+def pt_in_rect(wine, arg):
+    """PtInRect16(rect, POINT16 pt): the point is the long, x in its low word."""
+    r = _rect(wine, segptr(arg(2), arg(3)))
+    x, y = signed(arg(0)), signed(arg(1))
+    return int(r[0] <= x < r[2] and r[1] <= y < r[3]), 0, None
+
+
+@handles("USER", 77)
+def offset_rect(wine, arg):
+    """OffsetRect16(rect, x, y), void."""
+    ptr = segptr(arg(2), arg(3))
+    r = _rect(wine, ptr)
+    x, y = signed(arg(1)), signed(arg(0))
+    _put_rect(wine, ptr, [r[0] + x, r[1] + y, r[2] + x, r[3] + y])
+    return arg.regs("ax"), 0, None
+
+
+@handles("USER", 78)
+def inflate_rect(wine, arg):
+    """InflateRect16(rect, x, y), void."""
+    ptr = segptr(arg(2), arg(3))
+    r = _rect(wine, ptr)
+    x, y = signed(arg(1)), signed(arg(0))
+    _put_rect(wine, ptr, [r[0] - x, r[1] - y, r[2] + x, r[3] + y])
+    return arg.regs("ax"), 0, None
+
+
+def _intersect(a, b):
+    if _empty(a) or _empty(b) or a[0] >= b[2] or b[0] >= a[2] or a[1] >= b[3] or b[1] >= a[3]:
+        return None
+    return [max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])]
+
+
+@handles("USER", 79)
+def intersect_rect(wine, arg):
+    """IntersectRect16(dest, src1, src2)."""
+    got = _intersect(_rect(wine, segptr(arg(2), arg(3))), _rect(wine, segptr(arg(0), arg(1))))
+    _put_rect(wine, segptr(arg(4), arg(5)), got or [0, 0, 0, 0])
+    return int(got is not None), 0, None
+
+
+@handles("USER", 80)
+def union_rect(wine, arg):
+    """UnionRect16(dest, src1, src2)."""
+    a, b = _rect(wine, segptr(arg(2), arg(3))), _rect(wine, segptr(arg(0), arg(1)))
+    dest = segptr(arg(4), arg(5))
+    if _empty(a):
+        if _empty(b):
+            _put_rect(wine, dest, [0, 0, 0, 0])
+            return 0, 0, None
+        _put_rect(wine, dest, b)
+    elif _empty(b):
+        _put_rect(wine, dest, a)
+    else:
+        _put_rect(wine, dest, [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])])
+    return 1, 0, None
+
+
+@handles("USER", 244)
+def equal_rect(wine, arg):
+    return int(_rect(wine, segptr(arg(2), arg(3))) == _rect(wine, segptr(arg(0), arg(1)))), 0, None
+
+
+@handles("USER", 373)
+def subtract_rect(wine, arg):
+    """SubtractRect16(dest, src1, src2)."""
+    a, b = _rect(wine, segptr(arg(2), arg(3))), _rect(wine, segptr(arg(0), arg(1)))
+    dest_ptr = segptr(arg(4), arg(5))
+    if _empty(a):
+        _put_rect(wine, dest_ptr, [0, 0, 0, 0])
+        return 0, 0, None
+    dest = list(a)
+    tmp = _intersect(a, b)
+    if tmp is not None:
+        if tmp == dest:
+            _put_rect(wine, dest_ptr, [0, 0, 0, 0])
+            return 0, 0, None
+        if tmp[1] == dest[1] and tmp[3] == dest[3]:
+            if tmp[0] == dest[0]:
+                dest[0] = tmp[2]
+            elif tmp[2] == dest[2]:
+                dest[2] = tmp[0]
+        elif tmp[0] == dest[0] and tmp[2] == dest[2]:
+            if tmp[1] == dest[1]:
+                dest[1] = tmp[3]
+            elif tmp[3] == dest[3]:
+                dest[3] = tmp[1]
+    _put_rect(wine, dest_ptr, dest)
+    return 1, 0, None
+
+
+# ---------------------------------------------------------------- GetFreeSystemResources, user.c
+
+GFSR_SYSTEMRESOURCES, GFSR_GDIRESOURCES, GFSR_USERRESOURCES = 0, 1, 2
+# winebuild --heap 65520 for user.exe16 and gdi.exe16 (their Makefile.in).
+BUILTIN_HEAP = 65520
+SIZEOF_LOCALARENA, SIZEOF_LOCALHEAPINFO, SIZEOF_INSTANCEDATA = 10, 0x2A, 16
+
+
+def fresh_heap_percent(minsize, heap=BUILTIN_HEAP):
+    """LocalCountFree16 * 100 / LocalHeapSize16 of a heap just made by LocalInit16(sel,
+    minsize, minsize + heap), as NE_DoLoadBuiltinModule makes a builtin's DGROUP heap: the
+    free list holds the one large block, lastArena - freeArena, of lastArena - start."""
+    end = min(minsize + heap, 0xFFFE)
+    align = lambda w: (w + 3) & ~3  # noqa: E731
+    start = align(max(minsize, SIZEOF_INSTANCEDATA))
+    info_arena = align(start + SIZEOF_LOCALARENA)
+    free_arena = align(info_arena + 4 + SIZEOF_LOCALHEAPINFO)
+    last_arena = (end - SIZEOF_LOCALARENA) & ~3
+    return (last_arena - free_arena) * 100 // (last_arena - start)
+
+
+@handles("USER", 284)
+def get_free_system_resources(wine, arg):
+    """GetFreeSystemResources16: the lower of the free percentages of USER's and GDI's local
+    heaps, 100 for one not asked about, 0 for an unknown type. Wine allocates nothing in either
+    heap unless a program asks (UserSeeUserDo), so each is as LocalInit16 made it: 99% for any
+    data segment under 32K. neww answers that, and stops if a program has used UserSeeUserDo."""
+    kind = arg(0)
+    if getattr(wine, "user_heap_used", False):
+        return 0, 0, "USER.284 GetFreeSystemResources after UserSeeUserDo: neww keeps no USER heap"
+    if kind not in (GFSR_SYSTEMRESOURCES, GFSR_GDIRESOURCES, GFSR_USERRESOURCES):
+        return 0, 0, None
+    return fresh_heap_percent(0x100), 0, None
+
+
+@handles("USER", 283)
+def realize_palette(wine, arg):
+    """user.c RealizePalette16 -> UserRealizePalette -> NtUserRealizePalette: the display has no
+    palette, so nulldrv_RealizePalette and nulldrv_RealizeDefaultPalette realize 0 colors, and
+    with 0 no WM_PALETTECHANGED is sent. An unknown DC is 0 as well."""
+    return 0, 0, None

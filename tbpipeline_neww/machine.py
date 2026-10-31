@@ -167,6 +167,8 @@ class Machine:
         self.box.wine.entry_point = self._entry_point
         self.box.wine.gate_address = self._gate_address
         self.box.wine.load_module = self._load_module
+        self.box.wine.reference_module = lambda name: self._reference(self.box.images[name])
+        self.box.wine.release_module = lambda name: self._release(self.box.images[name])
         self.box.wine.alloc_code = self._alloc_code
         self.box.wine.exe_name = exe.name
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
@@ -208,6 +210,8 @@ class Machine:
         data = exe.segments[exe.auto - 1]
         psp = self._psp(self.box.wine.book.name if self.box.wine.book else "")
         self._modules()
+        self.referenced = set()
+        self._reference(self.box.exe)
         self._task()
         # Wine ne_module.c NE_StartTask: a moveable DGROUP's instance is its handle.
         instance = moveable_handle(data.selector) if data.flags & 0x0010 else data.selector
@@ -375,7 +379,7 @@ class Machine:
             "fpcw": self.uc.reg_read(UC_X86_REG_FPCW),
         }
         wine.tasks.append(child)
-        wine.usage[module] = 1
+        self._reference(image)
         # TASK_LinkTask: the new task goes in before the tasks of its priority, so it is first.
         wine.first_task = htask
         return child
@@ -497,6 +501,11 @@ class Machine:
         wine.exit = code
         cur.alive = False
         m.queues.pop(cur.htask, None)
+        # TASK_ExitTask frees the task's module: NE_FreeModule, which frees what it imported.
+        exe_image = next((img for img in self.box.images.values() if img.name == cur.exe_name), None)
+        if exe_image is not None:
+            wine.usage[cur.module] = 1
+            self._release(exe_image)
         wine.usage[cur.module] = 0
         wine.modules.pop(cur.exe_name, None)
         if wine.first_module == cur.module:
@@ -517,10 +526,13 @@ class Machine:
         self._resume(uc, nxt, retf)
 
     def _is_code(self, sel):
-        seg = self.box.selectors.get(sel)
-        if seg is None:
+        """selector.c IsBadCodePtr16's test, (ldt_get_bits(sel).type & 0x18) == 0x18: the
+        descriptor is a code segment. That covers a module's code segments, and the blocks
+        neww allocates as code (MakeProcInstance thunks, procedure thunks), as Wine's are."""
+        if self.box.selectors.get(sel) is None:
             return False
-        return any(seg in image.segments and not seg.flags & 1 for image in self.box.images.values() if not image.synthetic)
+        access = self.uc.mem_read((sel & ~7) + 5, 1)[0]
+        return access & 0x18 == 0x18
 
     def _alloc_code(self, size):
         """A code block: one segment, readable and executable, in the selector table."""
@@ -546,8 +558,14 @@ class Machine:
         if image is None or image.synthetic:
             return None, []
         calls = []
+        seen = set()
 
         def visit(img):
+            # NE_InitializeDLLs clears dlls_to_init before it walks them, so a cycle of
+            # imports (A imports B, B imports A) visits each module once.
+            if img.name in seen:
+                return
+            seen.add(img.name)
             for dep in img.modules:
                 other = self.box.images.get(dep)
                 if other is None or other.synthetic or other is self.box.exe:
@@ -572,6 +590,7 @@ class Machine:
                 calls.append(call)
 
         visit(image)
+        self._reference(image)
         return self.box.wine.modules[image.name], calls
 
     def _gate_address(self, module, ordinal):
@@ -717,6 +736,43 @@ class Machine:
                 self.box.wine.system_modules[image.name] = self._allocate(0x60)
         # NE_RegisterModule puts each new module at the head of the list.
         self.box.wine.first_module = self.box.wine.modules[order[-1].name]
+
+    def _reference(self, image):
+        """A module's count, as Wine keeps it: NE_LoadModule gives a newly loaded module 1, and
+        NE_LoadDLLs adds 1 to each module it imports that is already loaded, or loads it (1),
+        and so on down. LoadLibrary16 of a loaded module adds 1 as well (NE_LoadModule's
+        "second instance"). GetModuleUsage16 answers the count."""
+        wine = self.box.wine
+        handle = wine.modules.get(image.name)
+        if image.name in self.referenced:
+            if handle is not None:
+                wine.usage[handle] = wine.usage.get(handle, 1) + 1
+            return
+        self.referenced.add(image.name)
+        if handle is not None:
+            wine.usage[handle] = 1
+        for name in image.modules:
+            dll = self.box.images.get(name)
+            if dll is None or dll.synthetic:
+                continue
+            self._reference(dll)
+
+    def _release(self, image):
+        """NE_FreeModule: 1 less; at 0 Wine unloads the module and frees what it imported.
+        Returns the count left."""
+        wine = self.box.wine
+        handle = wine.modules.get(image.name)
+        if handle is None:
+            return 1
+        left = wine.usage.get(handle, 1) - 1
+        wine.usage[handle] = max(left, 0)
+        if left <= 0:
+            self.referenced.discard(image.name)
+            for name in image.modules:
+                dll = self.box.images.get(name)
+                if dll is not None and not dll.synthetic and dll.name in self.referenced:
+                    self._release(dll)
+        return left
 
     def _task(self):
         """The first task's handle. The exe's task is linked after the main task at the same
