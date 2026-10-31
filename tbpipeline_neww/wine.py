@@ -122,11 +122,8 @@ EQUATES = {
     "KERNEL": {113: ("__AHSHIFT", 3), 114: ("__AHINCR", 8), 178: ("__WINFLAGS", 0x0C25)},
 }
 
-INITTASK_STOP = (
-    "KERNEL.91 InitTask has no contract neww can fill: Wine task.c InitTask16 returns "
-    "AX=1, CX=stack top, DX=nCmdShow, SI=previous instance, DI=hInstance, ES:BX=command line "
-    "in the PSP, and pushes one zero word. neww has no PSP. Pop size 0 from the spec, nothing guessed"
-)
+# Wine task.c TASK_Create: cmdShow is 1, SW_SHOWNORMAL, unless the startup info sets one.
+SW_SHOWNORMAL = 1
 
 GMEM_MOVEABLE = 0x0002
 HFILE_ERROR = 0xFFFF
@@ -155,6 +152,10 @@ class Wine:
         # Wine ne_module.c NE_CreateThread posts one event before the task runs.
         # The startup WaitEvent(0) consumes it.
         self.events = 1
+        # Set by the machine at entry: psp, instance, dlls (the ToolBook DLLs with init code).
+        self.task = None
+        # A register contract leaves its extra registers here, and "push" for a word under the return.
+        self.registers = None
 
     def contract(self, module, ordinal):
         module = module.upper()
@@ -197,9 +198,7 @@ class Wine:
 
     def _kernel(self, ordinal, arg):
         if ordinal == 91:
-            # A register contract. AX = 1 alone is not it. Wine krnl386.exe16/task.c InitTask16
-            # also sets CX, DX, SI, DI, ES:BX and pushes a zero word.
-            return 0, 0, INITTASK_STOP
+            return self._init_task(arg)
         if ordinal == 30:
             # Wine task.c WaitEvent16: hTask 0 is the current task. An event is taken and FALSE
             # returned. With no event the task blocks, and one task cannot be woken.
@@ -315,6 +314,44 @@ class Wine:
     def _put(self, sel, off, data):
         if self.write is not None and data:
             self.write(sel, off, bytes(data))
+
+    def _init_task(self, arg):
+        """Wine krnl386.exe16/task.c InitTask16, a register contract.
+
+        Wine calls LocalInit16 and the DLL entry points before it answers.
+        neww has neither, so either one is a stop, and a stop writes nothing.
+        """
+        task = self.task
+        if task is None:
+            return 0, 0, "KERNEL.91 InitTask with no task: the machine did not start one"
+        heap = arg.regs("cx")
+        if heap:
+            return 0, 0, (
+                f"KERNEL.91 InitTask calls LocalInit16(DS={arg.regs('ds'):#x}, 0, CX={heap:#x}) first "
+                "(Wine task.c InitTask16). neww has no local heap, KERNEL.4 LocalInit has no contract"
+            )
+        if task["dlls"]:
+            return 0, 0, (
+                f"KERNEL.91 InitTask runs the DLL entry points next (Wine ne_segment.c NE_InitializeDLLs): "
+                f"{', '.join(task['dlls'])}. neww does not call a DLL's LibMain"
+            )
+        ds = arg.regs("ds")
+        # Wine's CURRENT_SP + sizeof(STACK16FRAME) is the caller's SP past the far return address.
+        stackmin = (arg.regs("sp") + 4) & 0xFFFF
+        stack = arg.regs("bx")
+        stacktop = ((stackmin - stack) if stackmin > stack else 0) + 150
+        # INSTANCEDATA at DS:0: stacktop 0x0A, stackmin 0x0C, stackbottom 0x0E.
+        self.write(ds, 0x0A, struct.pack("<HHH", stacktop, stackmin, stackmin))
+        psp = task["psp"]
+        line = arg.word(psp, 0x80) & 0xFF
+        bx = 0x80
+        if line:
+            p = 0x81
+            while arg.word(psp, p) & 0xFF in (0x20, 0x09):
+                p += 1
+            bx = p
+        self.registers = {"bx": bx, "cx": stacktop, "si": 0, "di": task["instance"], "es": psp, "push": 0}
+        return 1, SW_SHOWNORMAL, None
 
     def _global_alloc(self, flags, size):
         """Wine global.c GlobalAlloc16 / GLOBAL_Alloc. size is the whole dword."""
