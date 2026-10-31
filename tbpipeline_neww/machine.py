@@ -144,15 +144,25 @@ class Args:
 
 
 class Machine:
-    def __init__(self, root, book=None):
+    def __init__(self, root, book=None, input_script=None):
         self.box = Sandbox(root).load()
         self.box.wine.book = Path(book) if book else None
+        if input_script:
+            self.input(input_script)
         self.uc = None
         self.stop = ""
         self.calls = 0
         self.pending = None
         # Gate calls before the run stops on "call limit". A cap, like the instruction cap.
         self.call_limit = 400
+        # Wall-clock cap on the whole run, in microseconds.
+        self.timeout_us = TIMEOUT_US
+
+    def input(self, script):
+        """Queue mouse and keyboard input (input16's script): 'click 400,300; key ctrl+right'."""
+        from .input16 import queue_script
+        queue_script(self.box.wine, script)
+        return self
 
     def _read(self, seg, offset, size):
         # Once the CPU runs, the guest's memory is the truth, not the loaded image.
@@ -321,7 +331,7 @@ class Machine:
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
         started = time.monotonic()
         try:
-            self.uc.emu_start(0xF000, 0, timeout=TIMEOUT_US, count=limit)
+            self.uc.emu_start(0xF000, 0, timeout=self.timeout_us, count=limit)
         except UcError as exc:
             if not self.stop:
                 self.stop = f"{exc} {self.where()}"
@@ -330,8 +340,8 @@ class Machine:
                 # There is no address to return to, so a quiet end is a cap.
                 cs = self.uc.reg_read(UC_X86_REG_CS)
                 ip = self.uc.reg_read(UC_X86_REG_IP)
-                if time.monotonic() - started >= TIMEOUT_US / 1e6:
-                    cap = f"{TIMEOUT_US // 1_000_000} second cap"
+                if time.monotonic() - started >= self.timeout_us / 1e6:
+                    cap = f"{self.timeout_us // 1_000_000} second cap"
                 else:
                     cap = f"instruction cap {limit:,}"
                 self.stop = f"{cap} {self.where()} with no gate call pending, after {self.calls} calls"

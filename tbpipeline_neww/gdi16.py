@@ -413,21 +413,47 @@ def current_brush_blit(wine, dc, drect, rop):
     blit(wine, dc, drect, rop, pattern=color if color is not None else (0, 0, 0))
 
 
+def rop2_rop3(rop2):
+    """The ternary raster op that does a binary one (R2_*) with the pattern as the pen: R2 - 1
+    is the truth table, bit (P << 1 | D); the source plays no part."""
+    table = (rop2 - 1) & 0xF
+    index = 0
+    for bit in range(8):
+        p, d = bit >> 2 & 1, bit & 1
+        if table >> (p << 1 | d) & 1:
+            index |= 1 << bit
+    return index << 16
+
+
+def rop2_mix(rop2, pen, dest):
+    """Binary raster op on arrays of RGB bytes: R2 - 1 is the truth table, bit (P << 1 | D)."""
+    np = _np()
+    table = (rop2 - 1) & 0xF
+    pen = np.broadcast_to(np.asarray(pen, dtype=np.uint8), dest.shape)
+    out = np.zeros_like(dest)
+    for p in (0, 1):
+        for d in (0, 1):
+            if table >> (p << 1 | d) & 1:
+                out |= (pen if p else ~pen) & (dest if d else ~dest)
+    return out
+
+
 def pen_line(wine, dc, points):
-    """A polyline with the DC's pen, R2_COPYPEN only. A null pen draws nothing."""
+    """A polyline with the DC's pen, mixed by the DC's ROP2. A null pen draws nothing."""
     pen = gdi(wine).get(dc.pen, OBJ_PEN)
     if pen is None or pen.style == PS_NULL:
         return None
-    if dc.rop2 != 13:
-        return f"line with ROP2 {dc.rop2}: neww draws R2_COPYPEN only"
-    from PIL import ImageDraw
+    from PIL import Image, ImageDraw
     img, (ox, oy) = surface(wine, dc)
     box = clip_box(wine, dc)
     pts = [(x + ox, y + oy) for x, y in (lp_to_dp(dc, *p) for p in points)]
     layer = img.crop(box)
+    mixed = dc.rop2 != 13
+    if mixed:
+        target, layer = layer, Image.new("L", layer.size, 0)
     draw = ImageDraw.Draw(layer)
     shifted = [(x - box[0], y - box[1]) for x, y in pts]
-    color = rgb(pen.color)
+    color = 255 if mixed else rgb(pen.color)
     width = max(1, pen.width)
     if len(shifted) >= 2:
         # Wine leaves out a line's last pixel.
@@ -438,6 +464,12 @@ def pen_line(wine, dc, points):
                 continue
             end = (x0 + dx * (n - 1) / n, y0 + dy * (n - 1) / n)
             draw.line([(x0, y0), end], fill=color, width=width)
+    if mixed:
+        np = _np()
+        dest = np.asarray(target.convert("RGB")).copy()
+        mask = np.asarray(layer) > 0
+        dest[mask] = rop2_mix(dc.rop2, rgb(pen.color), dest[mask])
+        layer = Image.fromarray(dest, "RGB").convert(target.mode)
     img.paste(layer, box[:2])
     return None
 
@@ -1095,7 +1127,7 @@ def rectangle(wine, arg, hdc, l, t, r, b):
         dl, dt, dr, db = device_rect(dc, l + inset, t + inset, r - inset, b - inset)
         if inset == 0:
             dl, dt, dr, db = device_rect(dc, l, t, r - 1, b - 1)
-        blit(wine, dc, (dl, dt, dr, db), 0xF00021, pattern=color)
+        blit(wine, dc, (dl, dt, dr, db), rop2_rop3(dc.rop2), pattern=color)
     if inset:
         why = pen_line(wine, dc, [(l, t), (r - 1, t), (r - 1, b - 1), (l, b - 1), (l, t - 1)])
         if why:
