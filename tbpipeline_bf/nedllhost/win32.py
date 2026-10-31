@@ -11,8 +11,8 @@ with DLL_PROCESS_ATTACH, as Wine's LoadLibraryEx32W16
 Its imports from KERNEL32, USER32 and the rest bind to 8-byte stubs,
 `mov edx, id; out 0xE1, al; ret`. The OUT is answered by name from
 WIN32. A name with no answer stops the run and is quoted; it never
-returns a made-up value. WIN32 is empty here: each answer is its own
-change.
+returns a made-up value. Each answer is its own change and cites the
+Wine function it follows.
 
 Entering 32-bit code needs segment loads, and the host cannot load a
 segment register in protected mode, so the switch is made in the guest.
@@ -61,6 +61,27 @@ WIN32 = {}
 
 class Unanswered(Exception):
     pass
+
+
+# The Windows version the 32-bit side reports: Wine's for an application
+# with no manifest (Wine commit 2528aff2). ntdll starts from WIN10
+# (dlls/ntdll/version.c:483), and kernelbase's init_current_version
+# (dlls/kernelbase/version.c:197) reports windows8_version_info,
+# { 6, 2, 9200 } (version.c:130), unless a manifest or a PE header of
+# 6.3 or later says otherwise. TB80W32 has neither.
+WIN_MAJOR, WIN_MINOR, WIN_BUILD, VER_PLATFORM_WIN32_NT = 6, 2, 9200, 2
+
+
+def _get_version(host, args):
+    # GetVersion(void), stdcall, pops 0. Wine's kernelbase GetVersion
+    # (dlls/kernelbase/version.c:1462):
+    #   result = MAKELONG( MAKEWORD( major, minor ), (platform ^ 2) << 14 );
+    #   if (platform == VER_PLATFORM_WIN32_NT) result |= LOWORD(build) << 16;
+    result = (WIN_MAJOR | (WIN_MINOR << 8)) | (((VER_PLATFORM_WIN32_NT ^ 2) << 14) << 16)
+    return result | ((WIN_BUILD & 0xFFFF) << 16)
+
+
+WIN32[("KERNEL32", "GetVersion")] = (0, _get_version)
 
 
 def _u32(buf, off):
