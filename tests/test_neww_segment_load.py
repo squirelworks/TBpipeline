@@ -41,10 +41,10 @@ class SegmentLoad(unittest.TestCase):
             host = Machine(d)
         gate = host.box.images["KERNEL"].segments[0].data
         stub = gate[91 * 8:92 * 8]
-        self.assertEqual(stub[:6], bytes([0xBA, 91, 0, 0xE6, 0xE4, 0xE9]))
+        self.assertEqual(stub[:3], bytes([0xE6, 0xE7, 0xE9]))
         slot = host.box.slots[("KERNEL", 91)]
         tail = slot - 13
-        self.assertEqual(91 * 8 + 8 + int.from_bytes(stub[6:8], "little"), tail)
+        self.assertEqual(91 * 8 + 5 + int.from_bytes(stub[3:5], "little"), tail)
         self.assertEqual(gate[tail:tail + 13], bytes([
             0x2E, 0x8E, 0x06, slot & 0xFF, slot >> 8, 0x2E, 0x8E, 0x1E, (slot + 2) & 0xFF, (slot + 2) >> 8,
             0xCA, 0, 0,
