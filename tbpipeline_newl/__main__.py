@@ -1,4 +1,4 @@
-"""python3 -m tbpipeline_newl --b ~/TBK/bin
+"""python3 -m tbpipeline_newl --b ~/TBK/bin [--list]
 
 Runs TB80RTM. Windows calls go to the layer. --list prints the import
 report and does not start the CPU.
@@ -48,6 +48,9 @@ def _report(root):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--help" in argv or "-h" in argv:
+        print(__doc__.strip())
+        return 0
     root = _bin(argv)
     if root is None or not root.is_dir():
         print("usage: python3 -m tbpipeline_newl --b ~/TBK/bin", file=sys.stderr)
