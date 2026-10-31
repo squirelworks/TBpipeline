@@ -330,6 +330,26 @@ def _get_environment_strings_w(host, args):
 WIN32[("KERNEL32", "GetEnvironmentStringsW")] = (0, _get_environment_strings_w)
 
 
+def _get_environment_strings_a(host, args):
+    # GetEnvironmentStrings(void), stdcall, pops 0. kernelbase.spec:530
+    # exports it as GetEnvironmentStringsA, and kernel32 forwards both
+    # names there (kernel32.spec:676-677). Wine's GetEnvironmentStringsA (dlls/kernelbase/process.c:1535)
+    # converts the same get_env_length(Environment) WCHARs with
+    # WideCharToMultiByte(CP_ACP) into a new block from the process heap,
+    # or returns NULL. The ANSI code page is 1252 here (Wine's default for
+    # an English locale); a character it lacks becomes '?', the default
+    # character. An empty environment is one NUL byte.
+    block = _environment_block_w().decode("utf-16-le").encode("cp1252", "replace")
+    at = _reserve32(host, len(block))
+    if at:
+        host.uc.mem_write(at, block)
+    return at
+
+
+WIN32[("KERNEL32", "GetEnvironmentStrings")] = (0, _get_environment_strings_a)
+WIN32[("KERNEL32", "GetEnvironmentStringsA")] = (0, _get_environment_strings_a)
+
+
 def _u32(buf, off):
     return struct.unpack_from("<I", buf, off)[0]
 
