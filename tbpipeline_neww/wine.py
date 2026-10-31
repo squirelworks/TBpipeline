@@ -104,6 +104,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "84  pascal   _llseek(word long word) _llseek16",
     "85  pascal -ret16 _lopen(str word) _lopen16",
     "91  pascal -register InitTask() InitTask16",
+    "131 pascal GetDOSEnvironment() GetDOSEnvironment16",
     "95  pascal -ret16 LoadLibrary(str) LoadLibrary16",
     "102 pascal -register DOS3Call() DOS3Call",
     "128 pascal -ret16 GetPrivateProfileString(str str str ptr word str) GetPrivateProfileString16",
@@ -165,6 +166,8 @@ class Wine:
         self.registers = None
         # Set by the machine: selector -> size of its block in bytes, or None.
         self.size = None
+        # Selector of the DOS environment block, set by the machine with the PSP.
+        self.environment = None
         # Wine win87em.c statics. Installed is TRUE: an x87 is present.
         self.ctrl_word_1 = 0
         self.status_word_2 = 0
@@ -220,6 +223,11 @@ class Wine:
             ok = self.local_init(arg(2), arg(1), arg(0), arg.regs("ds"))
             self.registers = {"cx": ok}
             return ok, 0, None
+        if ordinal == 131:
+            # Wine task.c GetDOSEnvironment16: WOWGlobalLock16 of the block, a SEGPTR in DX:AX.
+            if self.environment is None:
+                return 0, 0, "KERNEL.131 GetDOSEnvironment with no environment block: the machine made none"
+            return 0, self.environment, None
         if ordinal == 30:
             # Wine task.c WaitEvent16: hTask 0 is the current task. An event is taken and FALSE
             # returned. With no event the task blocks, and one task cannot be woken.
