@@ -763,3 +763,5 @@ def _get_startup_info_a(host, args):
         raise Unanswered(f"info {args[0]:#x} not writable")
     return 0
 WIN32[("KERNEL32", "GetStartupInfoA")] = (4, _get_startup_info_a)
+
+from . import win32api  # noqa: E402,F401  registers answers this module does not already have

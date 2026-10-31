@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `KERNEL32` and `WOW32` calls `TB80W32` makes that were not already answered now are: code page and locale, the ANSI string functions, `HeapAlloc` / `HeapSize` from a side arena, the temp and system directories, mutex and process ids, and `WOWGetVDMPointerFix`. Answers already taken from Wine (`GetVersion`, `HeapCreate`, `VirtualAlloc`, the environment block, `GetProcAddress`, `GetModuleHandleA`, `GetCommandLineA`, `GetStartupInfoA`) are unchanged.
 - `KERNEL.166` `WinExec` of an EXE found in the unpacked directory loads it as a second Win16 task in the same CPU and returns its instance once that task yields (`GetMessage`, `PeekMessage`, `WaitMessage`, or `Yield`). A missing EXE is still the wall: the run stops and the command line is quoted.
 - `USER.266` `SetMessageQueue` returns TRUE, as Wine's `SetMessageQueue` does for any size.
 - `KERNEL.30` `WaitEvent` takes the start event Wine posts and returns FALSE. A wait with nothing pending stops the run.
