@@ -381,6 +381,13 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, size & 0xFFFF)
             uc.reg_write(UC_X86_REG_DX, (size >> 16) & 0xFFFF)
             return True
+        # GlobalUnWire(handle). Wine's GlobalUnWire16 is !GlobalUnlock16:
+        # TRUE once the lock count is 0, and TRUE for a handle that is not a
+        # block, since GlobalUnlock16 gives FALSE there. This host keeps no
+        # lock counts (GlobalUnlock above answers 0), so it is always TRUE.
+        if ordinal == 112:
+            uc.reg_write(UC_X86_REG_AX, 1)
+            return True
         if ordinal == 5:
             return self._local_alloc(self._word(1), self._word(0))
         if ordinal == 6:
