@@ -137,9 +137,14 @@ METRICS = {
     63: 3, 67: 0, 73: 0, 74: 0, 75: 1, 81: 1, 82: 0, 83: 1, 84: 1, 86: 0, 87: 0, 90: 90,
 }
 
+# SM_CXSCREEN and SM_CYSCREEN are the primary monitor. neww has no display driver, and with a
+# driver that does not implement UpdateDisplayDevices Wine's default_update_display_devices
+# exposes one monitor in modes[2], 1024x768, when no current mode is saved in the registry.
+METRICS[0], METRICS[1] = 1024, 768
+
 # The other cases of that switch. Any index that is not a case returns 0.
 METRICS_FROM_HOST = frozenset([
-    0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 32, 33, 34, 35,
+    2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 32, 33, 34, 35,
     36, 37, 38, 39, 40, 42, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
     68, 69, 70, 71, 72, 76, 77, 78, 79, 80,
 ])
