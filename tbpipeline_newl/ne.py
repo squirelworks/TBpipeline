@@ -13,7 +13,8 @@ class Import:
 
 
 def load(path):
-    data = open(path, "rb").read()
+    with open(path, "rb") as fh:
+        data = fh.read()
     if data[:2] != b"MZ":
         raise ValueError(f"not an NE file: {path}")
     ne = struct.unpack_from("<I", data, 0x3C)[0]
@@ -82,3 +83,27 @@ def imports(path):
             key = (mods[t1 - 1].upper(), ordinal, name.upper())
             found[key] = Import(mods[t1 - 1], ordinal, name, kind.get(atype, f"type{atype}"))
     return sorted(found.values(), key=lambda item: (item.module.upper(), item.ordinal, item.name.upper()))
+
+
+def exported_names(path):
+    """{ordinal: name} from the resident and nonresident name tables."""
+    data, ne = load(path)
+    names = {}
+
+    def walk(at, first):
+        while 0 <= at < len(data):
+            n = data[at]
+            if n == 0:
+                break
+            text = data[at + 1:at + 1 + n].decode("latin1", "replace")
+            ordinal = struct.unpack_from("<H", data, at + 1 + n)[0]
+            if not first and ordinal:
+                names.setdefault(ordinal, text)
+            first = False
+            at += 1 + n + 2
+
+    walk(ne + struct.unpack_from("<H", data, ne + 0x26)[0], True)
+    nonres = struct.unpack_from("<I", data, ne + 0x2C)[0]
+    if 0 < nonres < len(data):
+        walk(nonres, True)
+    return names
