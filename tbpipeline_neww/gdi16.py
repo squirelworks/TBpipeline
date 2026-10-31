@@ -171,8 +171,12 @@ class Gdi:
         path = next((str(Path(d) / name) for d in FONT_DIRS if (Path(d) / name).exists()), None)
 
         def load(size):
-            # No DejaVu (a Windows host, a bare CI runner): Pillow's own scalable face stands in.
-            return ImageFont.truetype(path, size) if path else ImageFont.load_default(size)
+            # No DejaVu (a Windows host): Pillow's own scalable face stands in.
+            # BASIC layout: one glyph per character, the same on every host. Raqm, where Pillow has
+            # it, refuses to lay out a lone control character, which GetCharWidth(0, 255) asks for.
+            if path:
+                return ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)
+            return ImageFont.load_default(size)
         if height < 0:
             size = -height
             probe = load(size)
