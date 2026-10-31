@@ -325,6 +325,15 @@ class Pass04:
         if ordinal == 19:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
+        if ordinal == 21:
+            # GlobalHandle: AX is the handle, DX the selector, and here they
+            # are one value. TB80UTL keeps DX as a heap's selector; DX = 0
+            # left TB80BAS allocating with DS = 0.
+            sel = self._word(0)
+            known = sel if sel in self.arena.segs else 0
+            uc.reg_write(UC_X86_REG_AX, known)
+            uc.reg_write(UC_X86_REG_DX, known)
+            return True
         if ordinal == 20:
             size = self.heap.get(self._word(0), 0)
             uc.reg_write(UC_X86_REG_AX, size & 0xFFFF)

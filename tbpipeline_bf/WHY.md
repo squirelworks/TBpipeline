@@ -146,6 +146,8 @@ The default is still `AX = 1`. These are the calls that could not stay that way.
 
 **Resources and LoadLibrary.** `FindResource`, `LoadResource`, `LockResource`, `FreeResource`, `SizeofResource`, `AccessResource` read the NE resource table of a module the host indexed. `LoadLibrary` looks in `TBK_UNPACKED` for the file. `TB80ENU` is an alias of `TB80ENU1.DLL`. The handle is that module's DGROUP selector, which is also how a Win16 DLL's `HINSTANCE` works. `USER.176` `LoadString` walks the string table: block `(id >> 4) + 1`, sixteen counted strings, copy into the caller's buffer, return the character count. The ids at the call sites that motivated it are `0xBB8` = `EXTENSIONS` in `TB80OLE`, and `0x69` / `0x6A` = `TB80CVT.DLL` and ` -TB300%s,%u,%u,%u` in `TB80BAS`. If the instance handle does not match, the search tries `DS`, then every loaded module. A missing string returns 0. It does not return 1.
 
+**KERNEL.21** `GlobalHandle` is answered. TB80UTL segment 9 `0x0000` makes a private local heap: `GlobalAlloc(0x2002, size + 0x10)`, then `GlobalHandle`, keeping DX as the selector, then `LocalInit` on it. TB80BAS segment 54 keeps three of these in its DS (`0x3AA`, `0x3B0`, and the kind-1 heap); its allocator at `0x3F8` switches DS to the one asked for. With DX = 0, TB80BAS's book open asked TB80UTL to allocate `0x16D` bytes with DS = 0, got 0, and the runtime said "Not enough local memory." A selector the arena knows is its own handle; anything else is 0.
+
 **USER.179** `GetSystemMetrics` returns a small table. Metric `0x29` is `SM_PENWINDOWS`. A non-zero value makes startup call `RegisterPenApp` through a null pointer. It stays 0.
 
 **USER.266** `SetMessageQueue` is the ordinal `run.py` prints by name. The return is 1. There is no queue.
