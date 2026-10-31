@@ -1,8 +1,8 @@
 """KERNEL.55 Catch is Wine thunk.c Catch16, a register contract.
 
 Spec: `55 pascal -register Catch(ptr) Catch16`, pop 4. Catch16 writes
-the caller's state after the return into the 9-word CATCHBUF: IP, CS,
-SP less 4 words, BP, SI, DI, DS, 0, SS. AX is 0. No binary needed.
+the caller's state into the 9-word CATCHBUF: IP, CS, the SP at the far
+return (Esp in winebuild's register relay) less 4 words, BP, SI, DI, DS, 0, SS. AX is 0. No binary needed.
 """
 
 import tempfile
@@ -48,7 +48,8 @@ class Catch(unittest.TestCase):
         buf = tuple(host.word(ds, 0x80 + 2 * i) for i in range(9))
         sp_after = host.word(ds, 0x42)
         self.assertEqual(host.word(ds, 0x40), 0)
-        self.assertEqual(buf, (here, cs, sp_after - 8, 0x1111, 0x2222, 0x3333, ds, 0, ss))
+        # Esp is the SP at the far return, 8 below SP after the retf 4. Catch saves it 4 words lower.
+        self.assertEqual(buf, (here, cs, sp_after - 8 - 8, 0x1111, 0x2222, 0x3333, ds, 0, ss))
 
     def test_buffer_outside_any_block_stops(self):
         host, _here = run(seg=0x7770)

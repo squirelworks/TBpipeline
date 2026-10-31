@@ -751,17 +751,16 @@ class Wine:
     def _catch(self, arg):
         """Wine thunk.c Catch16: the caller's registers into the 9-word CATCHBUF, and AX 0.
 
-        The context is the caller's state after the return: CS:IP the return address, SP above
-        the far return and the 4-byte pointer. Windows saves SP 4 words lower. Word 7 is 0.
+        winebuild's __wine_call_from_16_regs gives a register function the caller's CS:IP and,
+        in Esp, the SP at the far return address: the stub's retf pops the arguments after.
+        Windows saves SP 4 words lower. Word 7 is 0.
         """
         off, sel = arg(0), arg(1)
         size = self.size(sel)
         if size is None or off + 18 > size:
             return 0, 0, f"KERNEL.55 Catch({sel:#x}:{off:#x}): the CATCHBUF is not in a block neww has"
-        sp = arg.regs("sp")
-        ip, cs = arg.word(arg.regs("ss"), sp), arg.word(arg.regs("ss"), sp + 2)
-        # SP after the retf 4 is sp + 8. "Windows pushes 4 more words before saving sp".
-        esp = sp + 8
+        esp = arg.regs("sp")
+        ip, cs = arg.word(arg.regs("ss"), esp), arg.word(arg.regs("ss"), esp + 2)
         words = (
             ip, cs, (esp - 8) & 0xFFFF, arg.regs("bp"), arg.regs("si"), arg.regs("di"),
             arg.regs("ds"), 0, arg.regs("ss"),
