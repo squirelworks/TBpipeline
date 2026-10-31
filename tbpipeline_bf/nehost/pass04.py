@@ -388,6 +388,12 @@ class Pass04:
             heap = self.local.get(ds, {})
             uc.reg_write(UC_X86_REG_AX, heap.get("sizes", {}).get(self._word(0), 0))
             return True
+        if ordinal == 198:
+            # GlobalUnfix(handle). Wine's GlobalUnfix16 is void: it lowers
+            # the block's lock count and returns nothing. This host keeps no
+            # lock counts, as GlobalUnlock shows, so nothing changes and no
+            # register is set. AX = 1 logged it as unanswered.
+            return True
         if ordinal in (23, 24):
             # LockSegment / UnlockSegment. -1 means the current data segment.
             seg = self._word(0)
