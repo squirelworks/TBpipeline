@@ -22,7 +22,7 @@ The instruction cap is there because an uncapped run does not fail. It sits. Do 
 
 The CPU got through the early startup and died on bad data, not on a missing name.
 
-`GetCurrentTask` used to return the DGROUP selector. Startup walked a table and treated that selector as a hit, then copied from a far pointer whose segment was the letters of a string (`uct.` from `product`). Returning a selector that is not DGROUP, and not a word that already sits in the static string table at `0x1B00`, gets past that copy.
+`GetCurrentTask` used to return the DGROUP selector. Startup walked a table and treated that selector as a hit, then copied from a far pointer whose segment was the letters of a string (`uct.` from `product`). Returning a selector that is not DGROUP, and not a word that already sits in the static string table at `0x1B00`, gets past that copy. `newl` now picks the task selector that way on purpose. It reads every word, at every byte offset, from `0x1B00` to `0x1C00` of the data segment as loaded, and skips any selector that matches one of them or DGROUP.
 
 The next fault was `GlobalAlloc`. The size is a dword. Using only the low word handed back a 4K block. A later `lodsw` scanned for `0x0012` from offset `0x1276` and walked off the end. Capping the size at `0x10000` made the block big enough to contain the scan. The block is still zeros. The scan runs to the segment limit and faults, because nothing wrote the record the runtime expected to find.
 
