@@ -8,13 +8,14 @@ from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DS,
-    UC_X86_REG_BP, UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
+    UC_X86_REG_BP, UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_FPCW, UC_X86_REG_FPSW, UC_X86_REG_FPTAG, UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
 REGISTERS = {
     "ax": UC_X86_REG_AX, "bx": UC_X86_REG_BX, "cx": UC_X86_REG_CX, "dx": UC_X86_REG_DX,
     "si": UC_X86_REG_SI, "di": UC_X86_REG_DI, "sp": UC_X86_REG_SP,
     "ds": UC_X86_REG_DS, "es": UC_X86_REG_ES, "ss": UC_X86_REG_SS,
+    "fpcw": UC_X86_REG_FPCW, "fpsw": UC_X86_REG_FPSW, "fptag": UC_X86_REG_FPTAG,
 }
 
 from .image import Sandbox
