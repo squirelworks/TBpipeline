@@ -10,7 +10,7 @@ from unicorn import (
     UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE,
 )
 from unicorn.x86_const import (
-    UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS,
+    UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_DS,
     UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DX, UC_X86_REG_ES,
     UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
@@ -378,7 +378,7 @@ class Cpu:
             self.uc.emu_start(0xF000, 0, timeout=TIMEOUT_US, count=limit)
         except UcError as exc:
             if not self.stop:
-                self.stop = str(exc)
+                self.stop = self._fault(exc)
         else:
             if not self.stop:
                 self.stop = self._ended(limit, time.monotonic() - began)
@@ -388,6 +388,29 @@ class Cpu:
         cs = uc.reg_read(UC_X86_REG_CS)
         seg = self.selectors.get(cs)
         self.recent.append((cs, address - seg["base"] if seg else address))
+
+    def _where(self, sel):
+        for image in self.images.values():
+            for seg in image["segments"]:
+                if seg["selector"] == sel:
+                    return f"{image['name']} segment {seg['index']}"
+        return ""
+
+    def _fault(self, exc):
+        """A CPU exception, named: where, the bytes there, and any null data selector."""
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        ip = self.uc.reg_read(UC_X86_REG_IP)
+        out = f"fault at {cs:#x}:{ip:#x}"
+        where = self._where(cs)
+        if where:
+            out += f" ({where})"
+        raw = self._code(cs, ip, 4)
+        if raw:
+            out += " bytes " + " ".join(f"{b:02x}" for b in raw)
+        nulls = [name for name, reg in (("DS", UC_X86_REG_DS), ("ES", UC_X86_REG_ES)) if self.uc.reg_read(reg) == 0]
+        if nulls:
+            out += ", null " + " and ".join(nulls)
+        return out + f": {exc}"
 
     def _ended(self, limit, elapsed):
         """emu_start came back on its own: a hlt, or one of the two caps."""
@@ -587,7 +610,10 @@ class Cpu:
         return None
 
     def _unmapped(self, uc, access, address, size, value, user):
-        self.stop = f"unmapped {address:#x}"
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        where = self._where(cs)
+        self.stop = f"unmapped {address:#x} at {cs:#x}:{ip:#x}" + (f" ({where})" if where else "")
         return False
 
     def _task_selector(self, data):
