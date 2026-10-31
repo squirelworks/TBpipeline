@@ -169,18 +169,20 @@ class Gdi:
             return self.fonts[key]
         name = TEXT_STANDIN[(kind, bold)]
         path = next((str(Path(d) / name) for d in FONT_DIRS if (Path(d) / name).exists()), None)
-        if path is None:
-            raise FileNotFoundError(name)
+
+        def load(size):
+            # No DejaVu (a Windows host, a bare CI runner): Pillow's own scalable face stands in.
+            return ImageFont.truetype(path, size) if path else ImageFont.load_default(size)
         if height < 0:
             size = -height
-            probe = ImageFont.truetype(path, size)
+            probe = load(size)
             a, d = probe.getmetrics()
             font = probe
         else:
-            probe = ImageFont.truetype(path, 100)
+            probe = load(100)
             a0, d0 = probe.getmetrics()
             size = max(1, round(height * 100 / (a0 + d0)))
-            font = ImageFont.truetype(path, size)
+            font = load(size)
             a, d = font.getmetrics()
         self.fonts[key] = (font, a + d, a, d, size)
         return self.fonts[key]
