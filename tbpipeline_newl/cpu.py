@@ -54,6 +54,7 @@ class Cpu:
         self.stop = ""
         self.exe = None
         self.glock = {}
+        self.packed = []  # self-loading files in --b whose segments are still packed
         self.ignored = []  # system-module files found in --b and not loaded
         self.recent = deque(maxlen=20)  # (cs, ip) of the last basic blocks
         self.blocks = {}  # linear base -> {"handle", "selector", "size", "written"}
@@ -84,6 +85,9 @@ class Cpu:
             exes = [img for img in images.values() if img["path"].upper().endswith(".EXE")]
             self.exe = exes[0] if exes else None
         self.images = by_name
+        # A self-loading image (NE flag 0x0800) keeps its segments packed until
+        # its own loader runs. newl does not run it, so those bytes are not code.
+        self.packed = sorted(Path(img["path"]).name for img in by_name.values() if img["ne_flags"] & 0x0800)
         self._gates()
         self._place()
         self._link()
@@ -123,7 +127,7 @@ class Cpu:
         return {
             "path": str(path), "name": name or path.stem.upper(), "data": data, "ne": ne,
             "entry_seg": (csip >> 16) & 0xFFFF, "entry_ip": csip & 0xFFFF,
-            "auto": _u16(data, ne + 0x0E), "heap": _u16(data, ne + 0x10), "stack": _u16(data, ne + 0x12),
+            "ne_flags": _u16(data, ne + 0x0C), "auto": _u16(data, ne + 0x0E), "heap": _u16(data, ne + 0x10), "stack": _u16(data, ne + 0x12),
             "modules": [m.upper() for m in imported_modules(data, ne)],
             "entries": entries, "names": names, "segments": segments, "fixups": fixups,
         }
@@ -311,6 +315,10 @@ class Cpu:
         exe = self.exe
         if exe is None:
             self.stop = "no executable"
+            return self
+        if self.packed:
+            self.stop = (f"packed {', '.join(self.packed)}: self-loading (NE flag 0x0800), and newl does not "
+                         f"unpack. Unpack first: python3 -m tbpipeline_bf.nehost --unpack FILE -o FILE")
             return self
         self.uc = Uc(UC_ARCH_X86, UC_MODE_16)
         self.uc.mem_map(0, 0x100000)
