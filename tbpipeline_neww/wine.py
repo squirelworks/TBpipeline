@@ -100,6 +100,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "15  pascal -ret16 GlobalAlloc(word long) GlobalAlloc16",
     "17  pascal -ret16 GlobalFree(word) GlobalFree16",
     "18  pascal GlobalLock(word) WIN16_GlobalLock16",
+    "20  pascal GlobalSize(word) GlobalSize16",
     "23  pascal -ret16 LockSegment(word) LockSegment16",
     "24  pascal -ret16 UnlockSegment(word) UnlockSegment16",
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
@@ -394,6 +395,9 @@ class Wine:
             return self._global_alloc(arg(2), arg(0) | (arg(1) << 16))
         if ordinal == 18:
             return self._global_lock(arg(0), arg.regs("ds"))
+        if ordinal == 20:
+            size = self._global_size(arg(0))
+            return size & 0xFFFF, size >> 16, None
         if ordinal == 17:
             self.heap.pop(arg(0), None)
             return 0, 0, None
@@ -714,6 +718,23 @@ class Wine:
                 self.locks[sel] = self.locks.get(sel, 0) + 1
         self.registers = {"cx": sel}
         return 0, sel, None
+
+    def _global_size(self, handle):
+        """Wine global.c GlobalSize16: the arena's size, 0 for handle 0 or an invalid handle.
+
+        GET_ARENA_PTR takes the arena from the selector, so the handle or the selector of a
+        moveable block finds it. A GlobalAlloc block is its rounded size, which over 64K is
+        more than its first selector's segment.
+        """
+        if not handle:
+            return 0
+        sel = self.selector_of(handle)
+        if sel is None:
+            return 0
+        for block_sel, size, _flags in self.heap.values():
+            if block_sel == sel:
+                return size
+        return self.size(sel)
 
     def selector_of(self, handle):
         """GlobalHandleToSel16 in neww's numbering: a moveable handle is selector - 1. None if no block."""
