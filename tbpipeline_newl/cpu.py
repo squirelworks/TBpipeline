@@ -343,7 +343,7 @@ class Cpu:
         self.uc.mem_write(0x101000, b"\x00\x00")
         self.env = self._map_selector(0x101000, 0xFF, 0x92)
         self.uc.mem_map(0x102000, 0x1000)
-        self.task = self._map_selector(0x102000, 0x1FF, 0x92)
+        self.task = self._task_selector(data)
         self.dgroup = data["selector"]
         self.layer.dgroup = self.dgroup
         self.layer.task = self.task
@@ -524,6 +524,17 @@ class Cpu:
     def _unmapped(self, uc, access, address, size, value, user):
         self.stop = f"unmapped {address:#x}"
         return False
+
+    def _task_selector(self, data):
+        """GetCurrentTask's answer. Not DGROUP, and not a word that already
+        sits in the static string table at 0x1B00. Startup matched both
+        once and copied from a far pointer whose segment was `uct.`."""
+        table = bytes(data["data"][0x1B00:0x1C00])
+        taken = {data["selector"]} | {_u16(table, i) for i in range(len(table) - 1)}
+        while True:
+            sel = self._map_selector(0x102000, 0x1FF, 0x92)
+            if sel not in taken:
+                return sel
 
     def _map_selector(self, base, limit, access):
         sel = self._selector()
