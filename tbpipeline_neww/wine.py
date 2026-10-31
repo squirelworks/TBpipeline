@@ -147,9 +147,17 @@ METRICS[0], METRICS[1] = 1024, 768
 # pixels. A Win16 task is DPI unaware, so get_system_dpi is USER_DEFAULT_SCREEN_DPI 96: 1 pixel.
 METRICS[32], METRICS[33] = 3 + 1, 3 + 1
 
+# SM_CYCAPTION is SPI_GETNONCLIENTMETRICS iCaptionHeight + 1. iCaptionHeight is
+# TWIPS_ENTRY( CAPTIONHEIGHT, -270, ... ), muldiv(270, 96, 1440) = 18 pixels, and
+# normalize_nonclientmetrics raises it to 2 + tmHeight of the caption font if that is more.
+# The caption font defaults to DEFAULT_GUI_FONT at -11 pixels, bold. Wine's Tahoma Bold
+# (fonts/tahomabd.sfd, OS2WinAscent 2049 + OS2WinDescent 423 over 2048 units) is
+# 11 * 2472 / 2048 = 13 pixels tall, so 18 stands.
+METRICS[4] = 18 + 1
+
 # The other cases of that switch. Any index that is not a case returns 0.
 METRICS_FROM_HOST = frozenset([
-    2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 34, 35,
+    2, 3, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 34, 35,
     36, 37, 38, 39, 40, 42, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
     68, 69, 70, 71, 72, 76, 77, 78, 79, 80,
 ])
