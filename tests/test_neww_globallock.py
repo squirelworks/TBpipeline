@@ -51,9 +51,9 @@ class GlobalLock(unittest.TestCase):
     def test_moveable_block_is_its_selector(self):
         host, (ax, dx, cx, handle) = run(flags=0x0002)
         self.assertEqual(host.stop, "dos exit 0x0")
-        self.assertEqual(handle & 7, 7)
-        self.assertEqual((ax, dx, cx), (0, handle + 1, handle + 1))
-        self.assertEqual(host.box.wine.locks[handle + 1], 1)
+        self.assertEqual(handle & 7, 4)
+        self.assertEqual((ax, dx, cx), (0, handle & ~7, handle & ~7))
+        self.assertEqual(host.box.wine.locks[handle & ~7], 1)
 
     def test_fixed_block_is_its_selector(self):
         _host, (ax, dx, cx, handle) = run(flags=0x0000)
