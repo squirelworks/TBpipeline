@@ -21,8 +21,21 @@ def mov_ax(value):
     return bytes([0xB8, value & 0xFF, (value >> 8) & 0xFF])
 
 
-def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, stack=0, exe=True):
-    """entries: (ordinal, segment, offset, export name) rows, fixed bundles."""
+def name_offset(modules, imports, want):
+    """Offset of an imported function name in the table build() writes."""
+    off = 1 + sum(1 + len(m) for m in modules)
+    for item in imports:
+        if item == want:
+            return off
+        off += 1 + len(item)
+    raise KeyError(want)
+
+
+def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, stack=0, exe=True, imports=()):
+    """entries: (ordinal, segment, offset, export name) rows, fixed bundles.
+
+    imports are function names for by-name fixups; see name_offset().
+    """
     ne = 0x40
     header = bytearray(0x40)
     # Tables follow the header in this order.
@@ -38,6 +51,8 @@ def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, 
     for module in modules:
         modtab += struct.pack("<H", len(imptab))
         imptab += bytes([len(module)]) + module.encode("ascii")
+    for item in imports:
+        imptab += bytes([len(item)]) + item.encode("ascii")
     enttab = bytearray()
     last = 0
     for ordinal, seg, off, _export in sorted(entries):
@@ -108,7 +123,7 @@ def exit_program(directory, before=b"", modules=("KERNEL",), dos3call=102, data=
     return exit_program_with(directory, before, [], modules=modules, dos3call=dos3call, data=data)
 
 
-def exit_program_with(directory, before, fixups, modules=("KERNEL",), dos3call=102, data=256):
+def exit_program_with(directory, before, fixups, modules=("KERNEL",), dos3call=102, data=256, imports=()):
     """data is a size in bytes, or the bytes of DGROUP."""
     code = bytearray(before)
     code += mov_ax(0x4C00)
@@ -120,6 +135,6 @@ def exit_program_with(directory, before, fixups, modules=("KERNEL",), dos3call=1
     blob = build(
         "TB80RTM",
         [(0x0000, bytes(code), fixups), (0x0001, data, [])],
-        modules=modules, entry=(1, 0), auto=2,
+        modules=modules, entry=(1, 0), auto=2, imports=imports,
     )
     return write(directory, "TB80RTM.EXE", blob)
