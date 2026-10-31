@@ -13,7 +13,7 @@ from unicorn.x86_const import (
     UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
-from .layer import EQUATES, TABLES, Gap, Layer
+from .layer import EQUATES, TABLES, Gap, Layer, Refused
 from .ne import load as ne_load
 from .ne import imported_modules
 
@@ -38,9 +38,9 @@ def _descriptor(base, limit, access):
 
 
 class Cpu:
-    def __init__(self, root):
+    def __init__(self, root, book=None):
         self.root = Path(root)
-        self.layer = Layer()
+        self.layer = Layer(book)
         self.selectors = {}
         self.gates = {}
         self.next_index = 1
@@ -390,9 +390,14 @@ class Cpu:
             sp = uc.reg_read(UC_X86_REG_SP)
             ss = uc.reg_read(UC_X86_REG_SS)
             args = [self._word(ss, sp + 4 + n * 2) for n in range(8)]
+        path = None
+        if module == "KERNEL" and ordinal == 74:
+            path = self._asciiz(args[4], args[3])
+        elif module == "KERNEL" and ordinal == 85:
+            path = self._asciiz(args[2], args[1])
         try:
-            ax = self.layer.call(module, ordinal, args, at=self._site(uc))
-        except Gap as exc:
+            ax = self.layer.call(module, ordinal, args, at=self._site(uc), path=path)
+        except (Gap, Refused) as exc:
             self.stop = str(exc)
             uc.emu_stop()
             return
@@ -440,12 +445,28 @@ class Cpu:
         if module == "KERNEL" and ordinal == 131:
             uc.reg_write(UC_X86_REG_DX, self.env)
             ax = 0
+        if module == "KERNEL" and ordinal == 82 and self.layer.last_read:
+            seg = self.selectors.get(args[2])
+            if seg is not None:
+                uc.mem_write(seg["base"] + args[1], self.layer.last_read)
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
-        if not (module == "KERNEL" and ordinal in (18, 91, 131)):
+        if module == "KERNEL" and ordinal == 84:
+            uc.reg_write(UC_X86_REG_DX, (ax >> 16) & 0xFFFF)
+        elif not (module == "KERNEL" and ordinal in (18, 91, 131)):
             uc.reg_write(UC_X86_REG_DX, 0)
         if self.layer.exit is not None:
             self.stop = f"dos exit {self.layer.exit:#x}"
             uc.emu_stop()
+
+    def _asciiz(self, sel, offset, limit=260):
+        seg = self.selectors.get(sel)
+        if seg is None:
+            return ""
+        try:
+            raw = bytes(self.uc.mem_read(seg["base"] + offset, limit))
+        except UcError:
+            return ""
+        return raw.split(b"\x00", 1)[0].decode("latin1")
 
     def _site(self, uc):
         """The far call that reached the gate. SS:SP is still the return address."""

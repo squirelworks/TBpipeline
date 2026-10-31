@@ -1,4 +1,4 @@
-"""python3 -m tbpipeline_newl --b ~/TBK/bin [--list]
+"""python3 -m tbpipeline_newl --b ~/TBK/bin [--c book.tbk] [--list]
 
 Runs TB80RTM. Windows calls go to the layer. --list prints the import
 report and does not start the CPU.
@@ -12,11 +12,15 @@ from .layer import EQUATES, Layer
 from .ne import exported_names, imports
 
 
-def _bin(argv):
+def _arg(argv, *flags):
     for i, arg in enumerate(argv):
-        if arg in ("--b", "--bin") and i + 1 < len(argv):
+        if arg in flags and i + 1 < len(argv):
             return Path(argv[i + 1]).expanduser()
     return None
+
+
+def _bin(argv):
+    return _arg(argv, "--b", "--bin")
 
 
 def _report(root):
@@ -61,7 +65,7 @@ def main(argv=None):
 
     from .cpu import Cpu
 
-    host = Cpu(root)
+    host = Cpu(root, book=_arg(argv, "--c"))
     if host.exe is None:
         print(f"no NE executable in {root}", file=sys.stderr)
         return 2
