@@ -1219,6 +1219,13 @@ class Pass04:
                 return self._reg_result(0)
             self._store(ret_seg, ret_off, struct.pack("<I", 0))
             return self._reg_result(2 if hkey in self.REG_ROOTS else 6)
+        # RegCloseKey(hkey). Wine's RegCloseKey16 fixes the Win16 root and
+        # calls RegCloseKey: a predefined root (0x80000000 and up) is
+        # ERROR_SUCCESS without a close, and any other key goes to NtClose.
+        # This host hands out no other key, so that is ERROR_INVALID_HANDLE.
+        if ordinal == 3:
+            hkey = self._hkey(self._word(0), self._word(1))
+            return self._reg_result(0 if hkey >= 0x80000000 else 6)
         return False
 
     def _gdi(self, ordinal):
