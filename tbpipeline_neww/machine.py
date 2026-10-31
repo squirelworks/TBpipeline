@@ -136,7 +136,16 @@ class Machine:
             0x66, 0x0F, 0x20, 0xC0, 0x66, 0x83, 0xC8, 0x01, 0x66, 0x0F, 0x22, 0xC0,
             0xEA, 0x20, 0xF0, flat & 0xFF, (flat >> 8) & 0xFF,
         ]))
-        sp = len(data.data) - 2
+        # Wine ne_module.c NE_StartTask: SP is the header's, or the stack segment's
+        # minsize plus the NE stack size, made even. The stack sits below the local heap.
+        sp = exe.sssp & 0xFFFF
+        if not sp:
+            ss_seg = exe.segments[(exe.sssp >> 16) - 1] if exe.sssp >> 16 else data
+            sp = ss_seg.minsize + exe.stack
+        sp &= ~1
+        if not 0 < sp <= len(data.data):
+            self.stop = f"stack top {sp:#x} is outside DGROUP ({len(data.data):#x} bytes)"
+            return self
 
         def word(value):
             return [value & 0xFF, (value >> 8) & 0xFF]

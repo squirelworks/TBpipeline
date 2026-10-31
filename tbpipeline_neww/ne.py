@@ -28,6 +28,8 @@ class Segment:
     data: bytearray
     selector: int = 0
     base: int = 0
+    # The segment table's minimum allocation, before DGROUP gains the stack and heap.
+    minsize: int = 0
 
 
 @dataclass
@@ -47,6 +49,8 @@ class Image:
     synthetic: bool = False
     # Segments with the iterated flag (bit 3). neww does not expand them, so they hold no bytes.
     packed: list = field(default_factory=list)
+    # NE header SS:SP, segment number in the high word.
+    sssp: int = 0
 
 
 def _u16(buf, off):
@@ -64,6 +68,7 @@ def parse(path):
     nseg = _u16(data, ne + 0x1C)
     segtab = ne + _u16(data, ne + 0x22)
     csip = struct.unpack_from("<I", data, ne + 0x14)[0]
+    sssp = struct.unpack_from("<I", data, ne + 0x18)[0]
     segments = []
     fixups = []
     packed = []
@@ -78,7 +83,7 @@ def parse(path):
             start = sector << shift
             chunk = data[start:start + raw_size]
             blob[:len(chunk)] = chunk[:len(blob)]
-        segments.append(Segment(i + 1, flags, blob))
+        segments.append(Segment(i + 1, flags, blob, minsize=alloc))
         if flags & 0x0100 and raw_size and (sector << shift) + raw_size + 2 <= len(data):
             base = sector << shift
             count = _u16(data, base + raw_size)
@@ -115,6 +120,7 @@ def parse(path):
         segments=segments,
         fixups=fixups,
         packed=packed,
+        sssp=sssp,
     )
 
 
