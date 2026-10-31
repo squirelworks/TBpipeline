@@ -292,11 +292,6 @@ class Pass04:
         ss = uc.reg_read(UC_X86_REG_SS)
         sp = uc.reg_read(UC_X86_REG_SP)
         ret_ip, ret_cs = struct.unpack("<HH", self.arena.read(ss, sp, 4))
-        stub = getattr(self, "stub_module", {}).get(uc.reg_read(UC_X86_REG_CS))
-        if stub:
-            # A call through a GetProcAddress pointer: the stub names the module.
-            self.callers[(ret_cs, ret_ip)] = (stub, ordinal)
-            self.sites[(ret_cs, ret_ip)] = (stub, ordinal, POP[stub][ordinal])
         site = self.sites.get((ret_cs, ret_ip))
         pop = site[2] if site else self._pushed(ret_cs, ret_ip)
         self.pending = site
@@ -1005,9 +1000,7 @@ class Pass04:
         if ordinal == 50:
             noff, nseg, hmod = self._word(0), self._word(1), self._word(2)
             mod = self.mods.get(hmod) or (self.mods.get(self.exe_inst) if hmod == 0 else None)
-            if nseg == 0 and (mod or {}).get("system"):
-                hit = self._module_stub(mod["name"], noff)
-            elif nseg == 0:
+            if nseg == 0:
                 hit = (mod or {}).get("ords", {}).get(noff)
             else:
                 hit = (mod or {}).get("procs", {}).get(self._string(nseg, noff).lower())
@@ -1017,23 +1010,6 @@ class Pass04:
         if ordinal == 52:
             uc.reg_write(UC_X86_REG_AX, 0)
             uc.reg_write(UC_X86_REG_DX, 0)
-            return True
-        # WinExec(cmdline, show). TB80BAS starts the book file manager,
-        # TB80NET.EXE, a second Win16 task that calls back into TB80BAS with
-        # its window. Pass 06 runs an EXE it can find as a second task; here
-        # the call is the wall.
-        if ordinal == 166:
-            cmd = self._string(self._word(2), self._word(1))
-            self.fault = f"winexec {cmd!r} show {self._word(0)}"
-            uc.emu_stop()
-            return True
-        # LoadLibraryEx32W(lpszLibFile, hFile, dwFlags), the first generic
-        # thunk call. TB80W16 loads TB80W32.DLL, 32-bit code, through it.
-        # This host runs no 32-bit DLL, so the call is the wall.
-        if ordinal == 513:
-            name = self._string(self._word(5), self._word(4))
-            self.fault = f"LoadLibraryEx32W {name!r}"
-            uc.emu_stop()
             return True
         if ordinal != 51:
             return False
