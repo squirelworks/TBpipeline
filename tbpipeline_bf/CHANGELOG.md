@@ -12,6 +12,7 @@ Not a release. `1.0.0r6` stays the version.
 - `--open`'s `click` lines name the handler that ran and its offset, then the page it landed on: `P20000 buttonClick 0x… -> P20001`. A page whose click ran nothing says `no buttonClick`.
 - `--open` lists `unread` handlers: ones whose expansion copied bytes from outside the book. Each line gives the page, the handler, its offset, and how many bytes were written as `?` for that reason. A real `?` in the source is not counted.
 - `next` and `back` run the page's `to handle next` or `to handle previous` / `back` when it has a jump the engine can compile, in `engine.py` and in `render.html`. Without one they use the page list, as before.
+- `python3 -m tbpipeline_bf.runtime` and `python3 -m tbpipeline_bf.runtime.debug` run again. They died unpacking `resolve()`, which had grown to seven values. Without `--dbgrender` they still write no `render.html`.
 
 ## 1.0.0r6
 
