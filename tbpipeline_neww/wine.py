@@ -91,6 +91,7 @@ def _table(module, path, lines):
 KERNEL = _table("KERNEL", KERNEL_SPEC, [
     # Windows 3.10 in AX, DX 0. newl returns the same pair.
     ("3   pascal GetVersion() GetVersion16", (0x0A03, 0)),
+    "4   pascal -ret16 LocalInit(word word word) LocalInit16",
     "15  pascal -ret16 GlobalAlloc(word long) GlobalAlloc16",
     "17  pascal -ret16 GlobalFree(word) GlobalFree16",
     "18  pascal GlobalLock(word) WIN16_GlobalLock16",
@@ -126,6 +127,7 @@ EQUATES = {
 SW_SHOWNORMAL = 1
 
 GMEM_MOVEABLE = 0x0002
+LOCAL_HEAP_MAGIC = 0x484C
 HFILE_ERROR = 0xFFFF
 OF_SHARE_MASK = 0x0070
 
@@ -156,6 +158,8 @@ class Wine:
         self.task = None
         # A register contract leaves its extra registers here, and "push" for a word under the return.
         self.registers = None
+        # Set by the machine: selector -> size of its block in bytes, or None.
+        self.size = None
 
     def contract(self, module, ordinal):
         module = module.upper()
@@ -199,6 +203,11 @@ class Wine:
     def _kernel(self, ordinal, arg):
         if ordinal == 91:
             return self._init_task(arg)
+        if ordinal == 4:
+            # LocalInit(word selector, word start, word end). Wine also returns the result in CX.
+            ok = self.local_init(arg(2), arg(1), arg(0), arg.regs("ds"))
+            self.registers = {"cx": ok}
+            return ok, 0, None
         if ordinal == 30:
             # Wine task.c WaitEvent16: hTask 0 is the current task. An event is taken and FALSE
             # returned. With no event the task blocks, and one task cannot be woken.
@@ -318,23 +327,15 @@ class Wine:
     def _init_task(self, arg):
         """Wine krnl386.exe16/task.c InitTask16, a register contract.
 
-        Wine calls LocalInit16 and the DLL entry points before it answers.
-        neww has neither, so either one is a stop, and a stop writes nothing.
+        Wine fills INSTANCEDATA, calls LocalInit16 when CX is not 0, runs the
+        DLL entry points, then answers in registers. The entry points are
+        guest code, so the machine runs them and calls init_task_answer().
         """
         task = self.task
         if task is None:
             return 0, 0, "KERNEL.91 InitTask with no task: the machine did not start one"
-        heap = arg.regs("cx")
-        if heap:
-            return 0, 0, (
-                f"KERNEL.91 InitTask calls LocalInit16(DS={arg.regs('ds'):#x}, 0, CX={heap:#x}) first "
-                "(Wine task.c InitTask16). neww has no local heap, KERNEL.4 LocalInit has no contract"
-            )
-        if task["dlls"]:
-            return 0, 0, (
-                f"KERNEL.91 InitTask runs the DLL entry points next (Wine ne_segment.c NE_InitializeDLLs): "
-                f"{', '.join(task['dlls'])}. neww does not call a DLL's LibMain"
-            )
+        if task.get("dll_stop"):
+            return 0, 0, task["dll_stop"]
         ds = arg.regs("ds")
         # Wine's CURRENT_SP + sizeof(STACK16FRAME) is the caller's SP past the far return address.
         stackmin = (arg.regs("sp") + 4) & 0xFFFF
@@ -342,16 +343,69 @@ class Wine:
         stacktop = ((stackmin - stack) if stackmin > stack else 0) + 150
         # INSTANCEDATA at DS:0: stacktop 0x0A, stackmin 0x0C, stackbottom 0x0E.
         self.write(ds, 0x0A, struct.pack("<HHH", stacktop, stackmin, stackmin))
+        heap = arg.regs("cx")
+        if heap:
+            # Wine: LocalInit16(GlobalHandleToSel16(hInstance), 0, CX). The instance's selector is DGROUP.
+            self.local_init(task["dgroup"], 0, heap, ds)
+        task["stacktop"] = stacktop
+        if task["dll_init"]:
+            # Wine ne_segment.c NE_InitializeDLLs. The machine calls each LibMain, then the answer.
+            self.registers = {"init_dlls": task["dll_init"]}
+            return 0, 0, None
+        return self.init_task_answer(arg.word)
+
+    def init_task_answer(self, word):
+        """The registers InitTask16 returns, once the DLLs are initialized."""
+        task = self.task
         psp = task["psp"]
-        line = arg.word(psp, 0x80) & 0xFF
+        line = word(psp, 0x80) & 0xFF
         bx = 0x80
         if line:
             p = 0x81
-            while arg.word(psp, p) & 0xFF in (0x20, 0x09):
+            while word(psp, p) & 0xFF in (0x20, 0x09):
                 p += 1
             bx = p
-        self.registers = {"bx": bx, "cx": stacktop, "si": 0, "di": task["instance"], "es": psp, "push": 0}
+        self.registers = {"bx": bx, "cx": task["stacktop"], "si": 0, "di": task["instance"], "es": psp, "push": 0}
         return 1, SW_SHOWNORMAL, None
+
+    def local_init(self, selector, start, end, ds):
+        """Wine local.c LocalInit16. Writes the heap into the guest and returns TRUE or FALSE."""
+        if not selector:
+            selector = ds
+        if start == 0:
+            # Put the heap at the end of the segment, sized by GlobalSize16.
+            size = self.size(selector) or 0
+            start = ((0xFFFF if size > 0xFFFF else size) - 1) & 0xFFFF
+            if end > 0xFFFE:
+                end = 0xFFFE
+            start = (start - end) & 0xFFFF
+            end = (end + start) & 0xFFFF
+        lalign = lambda w: (w + 3) & ~3
+        # sizeof(INSTANCEDATA) 16, sizeof(LOCALARENA) 10, ARENA_HEADER_SIZE 4, sizeof(LOCALHEAPINFO) 0x2A.
+        start = lalign(max(start, 16))
+        info_arena = lalign(start + 10)
+        free_arena = lalign(info_arena + 4 + 0x2A)
+        last_arena = (end - 10) & ~3
+        if free_arena + 10 >= last_arena:
+            return 0
+        arena = lambda at, *words: self.write(selector, at, struct.pack(f"<{len(words)}H", *words))
+        # First arena (FIXED), then the heap info arena, the large free block, the last arena.
+        arena(start, start | 1, info_arena, lalign(10), start, free_arena)
+        arena(info_arena, start | 1, free_arena)
+        info = bytearray(0x2A)
+        struct.pack_into("<H", info, 0x04, 4)
+        struct.pack_into("<H", info, 0x06, start)
+        struct.pack_into("<H", info, 0x0A, last_arena)
+        struct.pack_into("<H", info, 0x18, 0x20)
+        struct.pack_into("<H", info, 0x24, 0x200)
+        struct.pack_into("<H", info, 0x26, last_arena - free_arena)
+        struct.pack_into("<H", info, 0x28, LOCAL_HEAP_MAGIC)
+        self.write(selector, info_arena + 4, bytes(info))
+        arena(free_arena, info_arena, last_arena, last_arena - free_arena, start, last_arena)
+        arena(last_arena, free_arena, last_arena, lalign(10), free_arena, last_arena)
+        # INSTANCEDATA.heap
+        self.write(selector, 0x06, struct.pack("<H", info_arena + 4))
+        return 1
 
     def _global_alloc(self, flags, size):
         """Wine global.c GlobalAlloc16 / GLOBAL_Alloc. size is the whole dword."""
