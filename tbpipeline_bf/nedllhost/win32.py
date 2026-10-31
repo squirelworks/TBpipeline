@@ -214,6 +214,54 @@ def _heap_create(host, args):
 WIN32[("KERNEL32", "HeapCreate")] = (12, _heap_create)
 
 
+MEM_COMMIT, MEM_RESERVE, MEM_RESET = 0x1000, 0x2000, 0x80000
+ERROR_INVALID_PARAMETER = 87
+ERROR_INVALID_ADDRESS = 487
+
+
+def _virtual_alloc(host, args):
+    # VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect), stdcall,
+    # pops 16. Wine's kernelbase VirtualAlloc (dlls/kernelbase/memory.c:421)
+    # is NtAllocateVirtualMemory on the current process, NULL on failure.
+    # NtAllocateVirtualMemory (dlls/ntdll/unix/virtual.c:4850) refuses a
+    # size of 0 (STATUS_INVALID_PARAMETER); allocate_virtual_memory
+    # (virtual.c:4712) refuses a type with none of MEM_COMMIT, MEM_RESERVE
+    # or MEM_RESET the same way. With no address it reserves the size
+    # rounded to a page, at 64K granularity, committing it too when
+    # MEM_COMMIT is set. MEM_COMMIT alone on an address rounds it down to
+    # a page and commits inside the view that holds it, or fails with
+    # STATUS_NOT_MAPPED_VIEW (ERROR_INVALID_ADDRESS).
+    # Here every reserved page is already mapped read/write, so a commit
+    # only checks the range lies in a reservation and the protection is
+    # not applied. Reserving at a given address and MEM_RESET are not
+    # answered yet.
+    addr, size, kind = args[0], args[1], args[2]
+    error = 0
+    if not size or not kind & (MEM_COMMIT | MEM_RESERVE | MEM_RESET):
+        error = ERROR_INVALID_PARAMETER
+    elif kind & MEM_RESET:
+        raise Unanswered("MEM_RESET")
+    elif addr and kind & MEM_RESERVE:
+        raise Unanswered(f"MEM_RESERVE at {addr:#x}")
+    elif not addr:
+        base = _reserve32(host, (size + 0xFFF) & ~0xFFF)
+        if base:
+            return base
+        error = ERROR_NOT_ENOUGH_MEMORY
+    else:
+        base = addr & ~0xFFF
+        end = (addr + size + 0xFFF) & ~0xFFF
+        for start, length in getattr(host, "regions32", {}).items():
+            if start <= base and end <= start + length:
+                return base
+        error = ERROR_INVALID_ADDRESS
+    host.uc.mem_write(TEB + TEB_LAST_ERROR, struct.pack("<I", error))
+    return 0
+
+
+WIN32[("KERNEL32", "VirtualAlloc")] = (16, _virtual_alloc)
+
+
 def _u32(buf, off):
     return struct.unpack_from("<I", buf, off)[0]
 
