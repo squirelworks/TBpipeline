@@ -18,6 +18,7 @@ Not a release. `1.0.0r6` stays the version.
 - Each run keeps its last Windows call with the registers it returned. `02_launch.txt` and `pass06` print it as `last call ...`.
 - `--open` lists `unread` handlers: ones whose expansion copied bytes from outside the book. Each line gives the page, the handler, its offset, and how many bytes were written as `?` for that reason. A real `?` in the source is not counted.
 - `next` and `back` run the page's `to handle next` or `to handle previous` / `back` when it has a jump the engine can compile, in `engine.py` and in `render.html`. Without one they use the page list, as before.
+- `bmp_bitmap.py` applies `TB80BMP`'s relocs, so the far call at `0x1FCD` is bound. An internal target runs; an import stops and is named. It prints instead of rewriting `bmp_bitmap.txt`.
 
 ## 1.0.0r6
 

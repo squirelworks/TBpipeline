@@ -162,7 +162,7 @@ Three small hosts call one ordinal and stop. They exist because booting `TB80RTM
 
 `scaffold.py` walks every later ordinal of the working DLLs, binds `FFFF` imports to a return stub, and records whether the ordinal returned, called Windows, stopped on a far call, or faulted. The log is `scaffold.txt`. Ordinal 1 being startup is why this file exists: the painters and the file functions are later ordinals.
 
-`bmp_bitmap.py` calls `TB80BMP` ordinal 3, `TBKBITMAP`, at segment 3 offset `0x3E0`. The first far call it cannot follow is `0x1FCD`. The selector there is a reloc. The log is `bmp_bitmap.txt`. The reader does not call this. The probe is the contract for the bitmap work in `v1.0.1`.
+`bmp_bitmap.py` calls `TB80BMP` ordinal 3, `TBKBITMAP`, at segment 3 offset `0x3E0`. The first version stopped at the far call at `0x1FCD` because the selector there is a reloc it did not apply. The probe now applies `TB80BMP`'s own relocations: a far call into another `TB80BMP` segment is followed, and a call to an imported ordinal or name is a gate that stops the run and names the module, the ordinal, and the stack. It does not answer the import. A return to the probe prints `AX:DX` and the object it was handed. The count stays 2000. `bmp_bitmap.txt` is the log of the first run and the probe no longer rewrites it; a new run prints to stdout. The reader does not call this. The probe is the contract for the bitmap work in `v1.0.1`.
 
 Stage 2a copies those three logs into the debug folder so a run you can open still contains the probe that explained the pictures.
 
