@@ -824,6 +824,11 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, handle)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # FreeLibrary(hinst). Wine's FreeLibrary16 is void and only drops a
+        # usage count while other users remain. This host keeps no counts and
+        # unloads nothing, so the module stays as it was.
+        if ordinal == 96:
+            return True
         if ordinal == 60:
             mod = self.mods.get(self._word(4) or self.exe_inst)
             want_t = self._res_arg(self._word(1), self._word(0))
