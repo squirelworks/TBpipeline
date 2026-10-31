@@ -3,8 +3,8 @@
 Spec: `201 pascal midiOutGetNumDevs() midiOutGetNumDevs16`, pop 0, a
 long. winmm.c midiOutGetNumDevs is lolvldrv.c MMDRV_GetNum(MMDRV_MIDIOUT),
 the devices of the installed drivers. The midimapper is a mapper and adds
-none. mmdevapi's modMessage calls the MIDI driver, which init_driver
-loads only with an audio driver. No binary needed.
+none. With no audio driver there is no MIDI driver, mmdevapi's DriverProc
+answers DRV_LOAD with 0, and MMDRV_Install installs no mmdevapi. No binary needed.
 """
 
 import tempfile
