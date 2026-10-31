@@ -1,4 +1,4 @@
-"""KERNEL.23 LockSegment is Wine global.c LockSegment16.
+"""KERNEL.23 LockSegment and KERNEL.24 UnlockSegment are Wine global.c.
 
 Spec: `23 pascal -ret16 LockSegment(word)`, pop 2. Handle -1 is the
 current DS. A handle with no block returns 0. Otherwise the block's
@@ -40,6 +40,26 @@ class LockSegment(unittest.TestCase):
         self.assertEqual(host.stop, "dos exit 0x0")
         self.assertEqual(ax, 0)
         self.assertEqual(host.box.wine.locks, {})
+
+
+class UnlockSegment(unittest.TestCase):
+    def test_row_is_the_spec(self):
+        from tbpipeline_neww.wine import KERNEL
+        row = KERNEL[24]
+        self.assertEqual((row.name, row.args, row.pop, row.ret), ("UnlockSegment", (2,), 2, "word"))
+
+    def test_lock_then_unlock_leaves_ax(self):
+        from tbpipeline_neww.machine import Machine
+        # push -1 ; call LockSegment ; push -1 ; mov ax, 0x4321 ; call UnlockSegment ; mov [0x40], ax
+        before = bytes([0x68, 0xFF, 0xFF]) + neww_ne.call_far()
+        before += bytes([0x68, 0xFF, 0xFF]) + neww_ne.mov_ax(0x4321) + neww_ne.call_far() + bytes([0xA3, 0x40, 0x00])
+        with tempfile.TemporaryDirectory() as d:
+            neww_ne.exit_program_with(d, before, [(3, 1, 4, 1, 23), (3, 1, 15, 1, 24)])
+            host = Machine(d).run(limit=5000)
+        self.assertEqual(host.stop, "dos exit 0x0")
+        ds = host.uc.reg_read(UC_X86_REG_DS)
+        self.assertEqual(host.word(ds, 0x40), 0x4321)
+        self.assertEqual(host.box.wine.locks, {ds: 0})
 
 
 if __name__ == "__main__":
