@@ -26,7 +26,7 @@ class Contract:
     stops and names both sizes. Neither is picked.
     """
 
-    def __init__(self, module, ordinal, name, args, ret, spec=None, binary=None):
+    def __init__(self, module, ordinal, name, args, ret, spec=None, binary=None, value=None):
         self.module = module
         self.ordinal = ordinal
         self.name = name
@@ -34,6 +34,8 @@ class Contract:
         self.ret = ret
         self.spec = spec
         self.binary = binary
+        # (ax, dx) when the answer is a constant. The row is the whole contract.
+        self.value = value
 
     @property
     def pop(self):
@@ -47,7 +49,7 @@ class Contract:
         return f"{self.module}.{self.ordinal} {self.name}: {where} pops {self.pop}, binary pops {self.binary}"
 
     @classmethod
-    def from_spec(cls, module, path, line, binary=None):
+    def from_spec(cls, module, path, line, binary=None, value=None):
         """line is the Wine spec entry, ordinal first, as the file has it."""
         head, _, rest = line.partition("(")
         words = head.split()
@@ -64,21 +66,28 @@ class Contract:
             ret = "word"
         else:
             ret = "long"
-        return cls(module, ordinal, name, args, ret, spec=(path, line), binary=binary)
+        return cls(module, ordinal, name, args, ret, spec=(path, line), binary=binary, value=value)
 
     def __repr__(self):
         return f"Contract({self.module}.{self.ordinal} {self.name} args={self.args} pop={self.pop} ret={self.ret})"
 
 
 def _table(module, path, lines):
-    rows = [Contract.from_spec(module, path, line) for line in lines]
+    """lines are spec lines, or (spec line, (ax, dx)) for a constant answer."""
+    rows = []
+    for line in lines:
+        value = None
+        if isinstance(line, tuple):
+            line, value = line
+        rows.append(Contract.from_spec(module, path, line, value=value))
     return {row.ordinal: row for row in rows}
 
 
 # Each line is copied from the spec file named above. ret: "word" in AX,
 # "long" in DX:AX, "register" when the call reads and sets registers.
 KERNEL = _table("KERNEL", KERNEL_SPEC, [
-    "3   pascal GetVersion() GetVersion16",
+    # Windows 3.10 in AX, DX 0. newl returns the same pair.
+    ("3   pascal GetVersion() GetVersion16", (0x0A03, 0)),
     "15  pascal -ret16 GlobalAlloc(word long) GlobalAlloc16",
     "17  pascal -ret16 GlobalFree(word) GlobalFree16",
     "18  pascal GlobalLock(word) WIN16_GlobalLock16",
@@ -93,7 +102,8 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "95  pascal -ret16 LoadLibrary(str) LoadLibrary16",
     "102 pascal -register DOS3Call() DOS3Call",
     "128 pascal -ret16 GetPrivateProfileString(str str str ptr word str) GetPrivateProfileString16",
-    "132 pascal GetWinFlags() GetWinFlags16",
+    # The enhanced-mode word, the same as the __WINFLAGS equate below. DX 0, as in newl.
+    ("132 pascal GetWinFlags() GetWinFlags16", (0x0C25, 0)),
 ])
 
 USER = _table("USER", USER_SPEC, [
@@ -108,6 +118,12 @@ USER = _table("USER", USER_SPEC, [
 EQUATES = {
     "KERNEL": {113: ("__AHSHIFT", 3), 114: ("__AHINCR", 8), 178: ("__WINFLAGS", 0x0C25)},
 }
+
+INITTASK_STOP = (
+    "KERNEL.91 InitTask has no contract neww can fill: Wine task.c InitTask16 returns "
+    "AX=1, CX=stack top, DX=nCmdShow, SI=previous instance, DI=hInstance, ES:BX=command line "
+    "in the PSP, and pushes one zero word. neww has no PSP. Pop size 0 from the spec, nothing guessed"
+)
 
 SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
 
@@ -155,6 +171,8 @@ class Wine:
             return 0, 0, self.missing(module, ordinal)
         if label.disagreement:
             return 0, 0, f"contract disagrees {label.disagreement}"
+        if label.value is not None:
+            return label.value[0], label.value[1], None
         if module == "KERNEL":
             return self._kernel(ordinal, arg)
         if module == "USER":
@@ -162,12 +180,10 @@ class Wine:
         return 0, 0, self.missing(module, ordinal)
 
     def _kernel(self, ordinal, arg):
-        if ordinal == 3:
-            return 0x0A03, 0, None
-        if ordinal == 132:
-            return EQUATES["KERNEL"][178][1], 0, None
         if ordinal == 91:
-            return 1, 0, None
+            # A register contract. AX = 1 alone is not it. Wine krnl386.exe16/task.c InitTask16
+            # also sets CX, DX, SI, DI, ES:BX and pushes a zero word.
+            return 0, 0, INITTASK_STOP
         if ordinal == 30:
             if self.events > 0:
                 self.events -= 1
