@@ -308,7 +308,13 @@ class Machine:
             return
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
         uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
-        registers = self.box.wine.registers or {}
+        registers = dict(self.box.wine.registers or {})
+        slot = self.box.slots.get((module, ordinal))
+        if slot is not None:
+            # The stub's tail loads ES and DS from these words. Unchanged unless the contract sets them.
+            es = registers.pop("es", uc.reg_read(UC_X86_REG_ES))
+            ds = registers.pop("ds", uc.reg_read(UC_X86_REG_DS))
+            self._write_guest(cs, slot, struct.pack("<HH", es, ds))
         for name, value in registers.items():
             if name != "push":
                 uc.reg_write(REGISTERS[name], value & 0xFFFF)
