@@ -4,7 +4,7 @@ import struct
 import time
 from pathlib import Path
 
-from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_UNMAPPED
+from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_CS, UC_X86_REG_DX, UC_X86_REG_IP,
@@ -17,6 +17,14 @@ from .ne import Segment
 
 # The cap stays. A run that ends on it says so.
 TIMEOUT_US = 15_000_000
+
+# PDB16 in Wine include/wine/winbase16.h, filled as task.c TASK_Create does.
+PSP_SIZE = 0x110
+# Fields Wine fills that neww has nothing for. A read of one stops the run.
+PSP_UNFILLED = (
+    (0x05, 0x0A, "dispatcher at 0x05, Wine's far call to KERNEL.DOS3Call"),
+    (0x2C, 0x2E, "environment at 0x2C, Wine's GetDOSEnvironment16 selector"),
+)
 
 
 def _descriptor(base, limit, access):
@@ -99,6 +107,9 @@ class Machine:
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
         code = exe.segments[exe.entry_seg - 1]
         data = exe.segments[exe.auto - 1]
+        psp = self._psp()
+        # Wine ne_module.c NE_StartTask: the handle of a moveable DGROUP is selector - 1.
+        instance = data.selector - 1 if data.flags & 0x0010 else data.selector
         gdtr_at = 0xF0E0
         self.uc.mem_write(gdtr_at, struct.pack("<HI", 0xFFFF, 0))
         self.uc.mem_write(0xF000, bytes([
@@ -107,9 +118,18 @@ class Machine:
             0xEA, 0x20, 0xF0, flat & 0xFF, (flat >> 8) & 0xFF,
         ]))
         sp = len(data.data) - 2
+
+        def word(value):
+            return [value & 0xFF, (value >> 8) & 0xFF]
+
+        # Registers at entry are NE_StartTask's: AX 0, BX stack size, CX heap size,
+        # SI previous instance (none), DI this instance, BP 0, ES the PSP, DS and SS DGROUP.
         blob = bytes([
-            0xB8, data.selector & 0xFF, (data.selector >> 8) & 0xFF, 0x8E, 0xD8, 0x8E, 0xD0,
-            0xBC, sp & 0xFF, (sp >> 8) & 0xFF,
+            0xB8, *word(data.selector), 0x8E, 0xD8, 0x8E, 0xD0,
+            0xBC, *word(sp),
+            0xB8, *word(psp), 0x8E, 0xC0,
+            0xBB, *word(exe.stack), 0xB9, *word(exe.heap),
+            0x31, 0xF6, 0xBF, *word(instance), 0x31, 0xED, 0x31, 0xC0,
             0xEA, exe.entry_ip & 0xFF, (exe.entry_ip >> 8) & 0xFF,
             code.selector & 0xFF, (code.selector >> 8) & 0xFF,
         ])
@@ -186,6 +206,33 @@ class Machine:
             self.uc.mem_write(sel, _descriptor(seg.base, left - 1, 0x92))
             first = sel if first is None else first
         return first
+
+    def _psp(self):
+        """The task's PDB16, as Wine task.c TASK_Create fills it. Returns its selector."""
+        sel = self._allocate(PSP_SIZE)
+        pdb = bytearray(PSP_SIZE)
+        struct.pack_into("<H", pdb, 0x00, 0x20CD)
+        pdb[0x18:0x2C] = b"\xFF" * 20
+        struct.pack_into("<H", pdb, 0x32, 20)
+        struct.pack_into("<HH", pdb, 0x34, 0x18, sel)
+        # The command line is what follows the program name: the book from --c, by name.
+        book = self.box.wine.book
+        line = book.name.encode("latin1", "replace")[:127] if book else b""
+        pdb[0x80] = len(line)
+        pdb[0x81:0x81 + len(line)] = line
+        self._write_guest(sel, 0, bytes(pdb))
+        base = self.box.selectors[sel].base
+        for start, end, _what in PSP_UNFILLED:
+            self.uc.hook_add(UC_HOOK_MEM_READ, self._psp_read, (base, start, end), base + start, base + end - 1)
+        return sel
+
+    def _psp_read(self, uc, access, address, size, value, user):
+        base, start, end = user
+        if self.stop or not (base + start <= address < base + end):
+            return
+        what = next(text for s, e, text in PSP_UNFILLED if s == start)
+        self.stop = f"PSP {what}, read {self.where()}: neww has nothing to put there"
+        uc.emu_stop()
 
     def _selector(self, base, limit, access):
         sel = self.box._selector()
