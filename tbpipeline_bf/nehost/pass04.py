@@ -356,6 +356,17 @@ class Pass04:
         if ordinal == 19:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
+        # GlobalWire(handle). Wine's GlobalWire16 is WIN16_GlobalLock16: the
+        # block's 16:16 address in DX:AX, with the selector in CX as well,
+        # and 0 for a handle that is not a block. As with GlobalLock here, a
+        # handle is its own selector and the block does not move.
+        if ordinal == 111:
+            handle = self._word(0)
+            sel = handle if handle in self.heap else 0
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, sel)
+            uc.reg_write(UC_X86_REG_CX, sel)
+            return True
         if ordinal == 21:
             # GlobalHandle: AX is the handle, DX the selector, and here they
             # are one value. TB80UTL keeps DX as a heap's selector; DX = 0
@@ -369,6 +380,13 @@ class Pass04:
             size = self.heap.get(self._word(0), 0)
             uc.reg_write(UC_X86_REG_AX, size & 0xFFFF)
             uc.reg_write(UC_X86_REG_DX, (size >> 16) & 0xFFFF)
+            return True
+        # GlobalUnWire(handle). Wine's GlobalUnWire16 is !GlobalUnlock16:
+        # TRUE once the lock count is 0, and TRUE for a handle that is not a
+        # block, since GlobalUnlock16 gives FALSE there. This host keeps no
+        # lock counts (GlobalUnlock above answers 0), so it is always TRUE.
+        if ordinal == 112:
+            uc.reg_write(UC_X86_REG_AX, 1)
             return True
         if ordinal == 5:
             return self._local_alloc(self._word(1), self._word(0))
@@ -894,6 +912,12 @@ class Pass04:
         # task in AX and the first task in DX; this host runs one task. The
         # handle is a zeroed block the host keeps. TB80UTL and TB80LNL key
         # their per-task tables on it, and AX = 1 is not a selector.
+        # Yield(). Wine's Yield16 is void. With a message queue it peeks
+        # once (PM_REMOVE | PM_QS_SENDMESSAGE), otherwise OldYield16 releases
+        # and retakes the Win16 lock. This host runs one task with no queue,
+        # so there is nothing to switch to and the call returns.
+        if ordinal == 29:
+            return True
         if ordinal == 36:
             if not getattr(self, "task_handle", 0):
                 self.task_handle = self.arena.alloc_selector(0x200, 0x92, bytes(0x200))
@@ -1016,6 +1040,13 @@ class Pass04:
             self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
             self.uc.emu_stop()
             return True
+        # InitApp(hInstance). Wine's InitApp16 creates the task's message queue
+        # and returns TRUE when it has one. This host keeps no queue, and
+        # nothing in the run reads one, so the answer is TRUE.
+        if ordinal == 5:
+            self.uc.reg_write(UC_X86_REG_AX, 1)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSysColor(index). Wine's GetSysColor16 reads system_colors in
         # win32u/sysparams.c, COLOR_SCROLLBAR to COLOR_MENUBAR, and gives 0
         # out of range. AX = 1 was a near-black red for every element.
@@ -1042,6 +1073,23 @@ class Pass04:
             out = (self._word(1), self._word(0))
             fmt = self._box_text(self._word(3), self._word(2))
             text = self._wsprintf(fmt, 4).encode("latin1", "replace")[:1023]
+            if out[0] in self.arena.segs:
+                self.arena.write(out[0], out[1], text + b"\x00")
+            self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # wvsprintf(out, fmt, args). Wine's wvsprintf16 formats as wsprintf16
+        # does, with the arguments read from the far pointer args instead of
+        # the stack. Pascal, so the host pops. AX = 1 left the buffer as it was.
+        if ordinal == 421:
+            out = (self._word(5), self._word(4))
+            fmt = self._box_text(self._word(3), self._word(2))
+            args_seg, args_off = self._word(1), self._word(0)
+
+            def arg(k):
+                return struct.unpack_from("<H", self.arena.read(args_seg, (args_off + 2 * k) & 0xFFFF, 2))[0]
+
+            text = self._wsprintf(fmt, 0, arg).encode("latin1", "replace")[:1023]
             if out[0] in self.arena.segs:
                 self.arena.write(out[0], out[1], text + b"\x00")
             self.uc.reg_write(UC_X86_REG_AX, len(text))
@@ -1119,6 +1167,16 @@ class Pass04:
         return True
 
     def _gdi(self, ordinal):
+        # GetStockObject(index). Wine's GetStockObject16 is the low word of
+        # GetStockObject: index + FIRST_GDI_HANDLE (32) at 96 DPI, for 0 to
+        # STOCK_LAST + 1 (20) except 9, and 0 for any other index. AX = 1
+        # handed every stock pen, brush and font back as one handle.
+        if ordinal == 87:
+            index = self._word(0)
+            valid = index <= 20 and index != 9
+            self.uc.reg_write(UC_X86_REG_AX, index + 32 if valid else 0)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetDeviceCaps(hdc, index). The only device is the screen. Wine's
         # GetDeviceCaps16 returns nulldrv_GetDeviceCaps cast to INT16, with
         # NUMCOLORS -1 turned into 2048: 32 bits per pixel when no display
@@ -1518,8 +1576,12 @@ class Pass04:
         size = max(0, min(512, info["limit"] + 1 - offset))
         return self.arena.read(sel, offset, size).split(b"\x00", 1)[0].decode("latin1", "replace")
 
-    def _wsprintf(self, fmt, n):
-        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer."""
+    def _wsprintf(self, fmt, n, word=None):
+        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer.
+
+        word reads the nth argument word from elsewhere, for wvsprintf.
+        """
+        word = word or self._word
         out = []
         pos = 0
         for m in re.finditer(r"%(%|([-#0]*)(\d*)(?:\.(\d+))?(l?)([sdiuxXc]))", fmt):
@@ -1530,20 +1592,20 @@ class Pass04:
                 continue
             flags, width, prec, long_, kind = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6)
             if kind == "s":
-                off, sel = self._word(n), self._word(n + 1)
+                off, sel = word(n), word(n + 1)
                 n += 2
                 value = self._box_text(sel, off)
                 if prec:
                     value = value[:int(prec)]
             elif kind == "c":
-                value = chr(self._word(n) & 0xFF)
+                value = chr(word(n) & 0xFF)
                 n += 1
             else:
-                raw = self._word(n)
+                raw = word(n)
                 n += 1
                 bits = 16
                 if long_:
-                    raw |= self._word(n) << 16
+                    raw |= word(n) << 16
                     n += 1
                     bits = 32
                 if kind in "di" and raw >> (bits - 1):
