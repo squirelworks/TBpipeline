@@ -66,6 +66,11 @@ class Unanswered(Exception):
     pass
 
 
+# A handler returns PENDING when it has started a call whose completion
+# sets EAX itself.
+PENDING = object()
+
+
 # The Windows version the 32-bit side reports: Wine's for an application
 # with no manifest (Wine commit 2528aff2). ntdll starts from WIN10
 # (dlls/ntdll/version.c:483), and kernelbase's init_current_version
@@ -711,6 +716,10 @@ class Win32:
             ret = bytes(uc.mem_read(esp, 4))
             uc.mem_write(esp + pop, ret)
             uc.reg_write(UC_X86_REG_ESP, esp + pop)
+        if eax is PENDING:
+            # The answer comes from 16-bit code the handler started. The
+            # stack is already popped; the completion sets EAX itself.
+            return
         uc.reg_write(UC_X86_REG_EAX, eax & 0xFFFFFFFF)
         uc.reg_write(UC_X86_REG_EDX, 0)
 

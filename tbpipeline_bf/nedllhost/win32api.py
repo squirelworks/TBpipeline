@@ -13,7 +13,9 @@ is freed.
 
 import struct
 
-from .win32 import SYSTEM_HANDLES, WIN32, Unanswered
+from unicorn.x86_const import UC_X86_REG_EAX
+
+from .win32 import PENDING, SYSTEM_HANDLES, WIN32, Unanswered
 
 # Memory comes from one bump arena: nothing is freed, and HeapSize reads
 # the size kept before each block.
@@ -468,3 +470,29 @@ def _wow_handle32(host, args):
 @_api("WOW32", "WOWHandle16", 8)
 def _wow_handle16(host, args):
     return args[0] & 0xFFFF
+
+
+# A send from 32-bit code reaches the 16-bit window procedure. A window
+# handle and a message number are words; wParam is truncated to one and
+# lParam is passed through, as WOW does for registered messages.
+
+def _send_32(host, hwnd, msg, wparam, lparam, done):
+    host._send(hwnd & 0xFFFF, msg & 0xFFFF, wparam & 0xFFFF, lparam, done)
+    return PENDING
+
+
+@_api("USER32", "SendMessageA", 16)
+def _send_message(host, args):
+    return _send_32(host, *args[:4], lambda r: host.uc.reg_write(UC_X86_REG_EAX, r))
+
+
+@_api("USER32", "SendMessageTimeoutA", 28)
+def _send_message_timeout(host, args):
+    result = args[6]
+
+    def done(r):
+        if result:
+            host.uc.mem_write(result, struct.pack("<I", r))
+        host.uc.reg_write(UC_X86_REG_EAX, 1)
+
+    return _send_32(host, *args[:4], done)

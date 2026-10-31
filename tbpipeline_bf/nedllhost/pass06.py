@@ -17,11 +17,12 @@ from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, INITTASK, last_call_li
 from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
 from .win32 import Win32
+from .windows import Windows
 
 from unicorn import UcError
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
-    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP,
+    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP, UC_X86_REG_EIP,
     UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_CS,
 )
 
@@ -49,7 +50,7 @@ COUNT = 4_000_000      # instructions per slice
 TIMEOUT = 30_000_000   # microseconds, for the whole run
 
 
-class Pass06(Win32, Pass04):
+class Pass06(Windows, Win32, Pass04):
     # Set by run and _run_tasks. The first task is the runtime. Unset, WinExec
     # of a missing file stays the wall instead of starting a task.
     tasks = None
@@ -439,14 +440,33 @@ class Pass06(Win32, Pass04):
         self.exe_inst = target.get("exe_inst") or target["inst"]
         if target["ctx"] is not None:
             self.uc.context_restore(target["ctx"])
-            return self.uc.reg_read(UC_X86_REG_IP)
-        # A fresh task starts from its own code selector. Segment registers
-        # cannot be loaded from the host in protected mode, so the far jump
-        # in thunk slot 0 gets there and the start code loads them.
-        # The caller stopped inside the thunk, so CS is already the thunk.
-        self.arena.write(self.thunk, 0, bytes([0xEA, 0, 0, target["start"] & 0xFF, target["start"] >> 8]))
-        if self.uc.reg_read(UC_X86_REG_CS) != self.thunk:
-            self.fault = f"cannot start {target['name']}: stopped outside the thunk"
+            return self.uc.reg_read(UC_X86_REG_EIP)
+        # A fresh task starts from its own code selector, and its start code
+        # loads the segment registers.
+        return self._dispatch(target["start"], 0)
+
+    def _dispatch(self, sel, off, ds=0):
+        """IP to resume at so that the guest far-jumps to sel:off with DS = ds.
+
+        Segment registers cannot be loaded from the host in protected mode.
+        The run stopped inside the thunk or a module stub, so slot 0 of the
+        current CS is a far jump to the dispatcher, which loads DS from its
+        own data and jumps through its own far pointer. The code never
+        changes, only the data, so no translated block goes stale.
+        """
+        if not getattr(self, "dispatcher", 0):
+            code = bytes([
+                0x2E, 0xA1, 0x44, 0x00,         # mov ax, cs:[0x44]
+                0x8E, 0xD8,                     # mov ds, ax
+                0x2E, 0xFF, 0x2E, 0x40, 0x00,   # jmp far cs:[0x40]
+            ])
+            self.dispatcher = self.arena.alloc_selector(0x80, 0x9A, code.ljust(0x80, b"\x00"))
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        if cs != self.thunk and cs not in getattr(self, "stub_module", {}):
+            self.fault = f"cannot leave {cs:#x}: stopped outside the thunk"
+            return 0
+        self.arena.write(self.dispatcher, 0x40, struct.pack("<HHH", off, sel, ds))
+        self.arena.write(cs, 0, bytes([0xEA, 0, 0, self.dispatcher & 0xFF, self.dispatcher >> 8]))
         return 0
 
     def _begin_tasks(self):
