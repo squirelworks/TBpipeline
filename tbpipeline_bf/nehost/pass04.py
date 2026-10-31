@@ -28,6 +28,7 @@ API_PORT = 0xE0
 INITTASK = 91
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
+OF_CREATE = 0x1000
 
 # Names other than *.ini the entry opens that TBK_INI may answer. The
 # pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
@@ -474,6 +475,8 @@ class Pass04:
                 self._ofstruct(full, 0)
                 uc.reg_write(UC_X86_REG_AX, 0)
                 return True
+            if style & OF_CREATE:
+                self.create_file(full)
             handle = self._take_file(path)
             self._ofstruct(full, 0 if handle is not None else 2)
             if handle is not None and style & OF_EXIST:
@@ -530,8 +533,27 @@ class Pass04:
         name = full.encode("latin1", "replace")[:127]
         self.arena.write(seg, off, struct.pack("<BBHI", 136, 1, error, 0) + name + b"\x00")
 
+    @property
+    def created(self):
+        """Files the guest created, by full upper-case path. Not on disk."""
+        if not hasattr(self, "_created"):
+            self._created = {}
+        return self._created
+
+    def create_file(self, full):
+        """Create or truncate a file the guest made, e.g. a temp file."""
+        self.created[full.upper()] = bytearray()
+
     def _take_file(self, path):
         low = path.lower().replace("/", "\\")
+        full = path if path[1:2] == ":" else "C:\\TOOLBOOK\\" + path.lstrip("\\")
+        if full.upper() in self.created:
+            # The same bytearray: what one handle writes, the next reads.
+            handle = self.next_handle
+            self.next_handle += 1
+            self.files[handle] = self.created[full.upper()]
+            self.pos[handle] = 0
+            return handle
         if low.endswith((".tbk", ".sbk")):
             blob = self.book_bytes
         else:
