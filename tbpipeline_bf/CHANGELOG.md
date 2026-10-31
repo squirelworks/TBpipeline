@@ -8,6 +8,7 @@ Not a release. `1.0.0r6` stays the version.
 - Kind-04 polygons are placed in `render.html` as SVG, at the record's twips / 15 from the page's top-left corner. Stage 2b says how many. Curve runs are still only files.
 - A page with text says, under the text, that its position is unknown. Field records do not yet name where the text sits, so it is listed, not placed. The payload carries `textAt: null` until those words are found.
 - A Windows BMP that sits inside a page is drawn on that page in `render.html`, in book order, with a line saying its position is unknown. It is still copied into `resources/`.
+- A status line under every page says compressed ToolBook pictures are not drawn, that the decoder is `TB80BMP` ordinal 3, and that the host stops at `0x1FCD`. The reader does not decode them.
 
 ## 1.0.0r6
 
