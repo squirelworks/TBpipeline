@@ -19,6 +19,10 @@ class Sandbox:
         self.linked = 0
         self.equates = 0
         self.gaps = []
+        # A call that could not be linked lands on a trap. A trap is not a gate:
+        # Wine never answers it, and the run stops with the gap's text.
+        self.trap = None
+        self.traps = []
         self.exe = None
 
     def load(self):
@@ -42,6 +46,8 @@ class Sandbox:
             self.exe = exes[0] if exes else None
         self._gates()
         self._place()
+        self.trap = Segment(0, 0, bytearray(0x10000))
+        self._place_segment(self.trap)
         self._link()
         return self
 
@@ -135,7 +141,7 @@ class Sandbox:
             elif kind == "code":
                 target, index, offset = rest
                 if not 1 <= index <= len(target.segments):
-                    self.gaps.append(f"{image.name} -> {target.name} segment {index}")
+                    self._gap(seg, disp, fix.atype, f"{image.name} -> {target.name} segment {index}")
                     continue
                 sel = target.segments[index - 1].selector
                 self._write(seg, disp, fix.atype, offset + addend, sel)
@@ -144,14 +150,25 @@ class Sandbox:
                 module, ordinal = rest
                 gate = self.images.get(module)
                 if gate is None or not gate.segments:
-                    self.gaps.append(f"{module}.{ordinal}")
+                    self._gap(seg, disp, fix.atype, f"{module}.{ordinal}")
                     continue
                 sel = gate.segments[0].selector
                 self._write(seg, disp, fix.atype, ordinal * 8 + addend, sel)
                 self.linked += 1
             else:
                 module, ordinal = rest
-                self.gaps.append(f"{image.name} -> {module}.{ordinal}")
+                self._gap(seg, disp, fix.atype, f"{image.name} -> {module}.{ordinal}")
+
+    def _gap(self, seg, disp, atype, text):
+        if text not in self.traps:
+            self.traps.append(text)
+            self.gaps.append(text)
+        slot = self.traps.index(text)
+        if (slot + 1) * 8 > len(self.trap.data):
+            return
+        # mov dx, slot ; out 0E5h, al ; hlt
+        self.trap.data[slot * 8:slot * 8 + 6] = bytes([0xBA, slot & 0xFF, slot >> 8, 0xE6, 0xE5, 0xF4])
+        self._write(seg, disp, atype, slot * 8, self.trap.selector)
 
     def _target(self, image, fix):
         if not fix.flags & 3:
