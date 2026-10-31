@@ -12,3 +12,4 @@
 - `KERNEL.102` `DOS3Call` with `AH = 30h`: `newl` returns 5, while `neww` returns 0.
 
 `GetVersion` (`0x0A03`), `GetWinFlags` and `__WINFLAGS` (`0x0C25`, not Wine's `0x413`) agree.
+- `KERNEL.131` `GetDOSEnvironment`: `newl` returns a 256-byte block of zeros, while `neww` returns Wine's layout with no strings: one 0, `WORD 1`, and `C:\WINDOWS\SYSTEM\KRNL386.EXE`, also named at PSP:`0x2C`.

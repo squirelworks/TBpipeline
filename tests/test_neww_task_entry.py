@@ -70,10 +70,10 @@ class TaskEntry(unittest.TestCase):
         es = host.uc.reg_read(UC_X86_REG_ES)
         self.assertEqual(host.word(es, 0x80) & 0xFF, 0)
 
-    def test_reading_the_environment_stops(self):
-        # mov ax, es:[0x2C]
-        host = self.run_program(bytes([0x26, 0xA1, 0x2C, 0x00]))
-        self.assertTrue(host.stop.startswith("PSP environment at 0x2C, Wine's GetDOSEnvironment16 selector, read at "), host.stop)
+    def test_reading_the_dispatcher_stops(self):
+        # mov ax, es:[0x06]
+        host = self.run_program(bytes([0x26, 0xA1, 0x06, 0x00]))
+        self.assertTrue(host.stop.startswith("PSP dispatcher at 0x05, Wine's far call to KERNEL.DOS3Call, read at "), host.stop)
         self.assertTrue(host.stop.endswith(": neww has nothing to put there"), host.stop)
         self.assertEqual(host.calls, 0)
 

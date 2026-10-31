@@ -31,8 +31,11 @@ PSP_SIZE = 0x110
 # Fields Wine fills that neww has nothing for. A read of one stops the run.
 PSP_UNFILLED = (
     (0x05, 0x0A, "dispatcher at 0x05, Wine's far call to KERNEL.DOS3Call"),
-    (0x2C, 0x2E, "environment at 0x2C, Wine's GetDOSEnvironment16 selector"),
 )
+
+# Wine task.c GetDOSEnvironment16: the host's environment strings, a 0, WORD 1, then this name.
+# neww copies no host environment, so the strings are none: one 0 ends the empty list.
+ENV_PROGRAM_NAME = b"C:\\WINDOWS\\SYSTEM\\KRNL386.EXE\x00"
 
 
 def _descriptor(base, limit, access):
@@ -341,6 +344,8 @@ class Machine:
         pdb[0x18:0x2C] = b"\xFF" * 20
         struct.pack_into("<H", pdb, 0x32, 20)
         struct.pack_into("<HH", pdb, 0x34, 0x18, sel)
+        # TASK_Create: environment = SELECTOROF(GetDOSEnvironment16()).
+        struct.pack_into("<H", pdb, 0x2C, self._environment())
         # The command line is what follows the program name: the book from --c, by name.
         book = self.box.wine.book
         line = book.name.encode("latin1", "replace")[:127] if book else b""
@@ -351,6 +356,15 @@ class Machine:
         for start, end, _what in PSP_UNFILLED:
             self.uc.hook_add(UC_HOOK_MEM_READ, self._psp_read, (base, start, end), base + start, base + end - 1)
         return sel
+
+    def _environment(self):
+        """The DOS environment block, a GMEM_FIXED block whose handle is its selector."""
+        if self.box.wine.environment is None:
+            block = b"\x00" + struct.pack("<H", 1) + ENV_PROGRAM_NAME
+            sel = self._allocate((len(block) + 0x1F) & ~0x1F)
+            self._write_guest(sel, 0, block)
+            self.box.wine.environment = sel
+        return self.box.wine.environment
 
     def _psp_read(self, uc, access, address, size, value, user):
         base, start, end = user
