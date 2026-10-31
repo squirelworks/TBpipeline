@@ -1,8 +1,14 @@
-"""The Win32 calls TB80W32.DLL makes, answered by name.
+"""Win32 calls TB80W32.DLL makes that win32.py does not already answer.
 
-Each answer is the documented Win32 behavior for the arguments seen, on
-a Windows 98 machine with ToolBook in C:\\TOOLBOOK. A call with no
-documented answer for its arguments raises Unanswered and the run stops.
+An answer already registered, including the Wine-cited ones (GetVersion,
+HeapCreate, VirtualAlloc, the environment block, GetProcAddress,
+GetModuleHandleA, GetCommandLineA, GetStartupInfoA), is left alone.
+A call with no documented answer for its arguments raises Unanswered
+and the run stops.
+
+HeapAlloc and the string buffers here come from a bump arena at
+0x60000000, not from HeapCreate's reservation. Nothing in that arena
+is freed.
 """
 
 import struct
@@ -12,7 +18,7 @@ from .win32 import SYSTEM_HANDLES, WIN32, Unanswered
 # Memory comes from one bump arena: nothing is freed, and HeapSize reads
 # the size kept before each block.
 
-HEAP32 = 0x20000000
+HEAP32 = 0x60000000
 HEAP32_SIZE = 0x01000000
 EXE_HANDLE = 0x00400000
 COMMAND_LINE = b"C:\\TOOLBOOK\\TB80RTM.EXE fixture.tbk"
@@ -20,7 +26,8 @@ COMMAND_LINE = b"C:\\TOOLBOOK\\TB80RTM.EXE fixture.tbk"
 
 def _api(dll, name, pop):
     def register(fn):
-        WIN32[(dll, name)] = (pop, fn)
+        # Do not replace an answer win32.py already registered.
+        WIN32.setdefault((dll, name), (pop, fn))
         return fn
     return register
 
@@ -88,7 +95,7 @@ def _get_module_handle(host, args):
     stem = name[:-4] if name.endswith((".DLL", ".EXE")) else name
     if stem in SYSTEM_HANDLES:
         return SYSTEM_HANDLES[stem]
-    for mod in host.pe32.values():
+    for mod in getattr(host, "pe32", {}).values():
         if mod["path"].upper().rsplit("/", 1)[-1].startswith(stem + "."):
             return mod["base"]
     return 0
@@ -101,7 +108,7 @@ def _get_proc_address(host, args):
     for dll, value in SYSTEM_HANDLES.items():
         if value == handle:
             return host._api32_stub(dll, what)
-    for mod in host.pe32.values():
+    for mod in getattr(host, "pe32", {}).values():
         if mod["base"] == handle:
             rva = (mod["ords"] if isinstance(what, int) else mod["names"]).get(what)
             return mod["base"] + rva if rva else 0
@@ -235,7 +242,7 @@ def _virtual_free(host, args):
 def _get_module_file_name(host, args):
     handle = args[0]
     name = "C:\\TOOLBOOK\\TB80RTM.EXE"
-    for mod in host.pe32.values():
+    for mod in getattr(host, "pe32", {}).values():
         if mod["base"] == handle:
             name = "C:\\TOOLBOOK\\" + mod["path"].replace("\\", "/").rsplit("/", 1)[-1].upper()
     return _copy_out(host, args[1], name.encode("latin1"), args[2])

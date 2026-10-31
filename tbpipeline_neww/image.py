@@ -4,7 +4,24 @@ import struct
 from pathlib import Path
 
 from .ne import Image, Segment, import_name, parse
-from .wine import KERNEL, SYSTEM, USER, Wine
+from .wine import GDI, KERNEL, MMSYSTEM, SYSTEM, USER, WIN87EM, Wine
+
+
+class Selectors(dict):
+    """Segments by selector, found by descriptor index as the CPU finds them.
+
+    The table bit and RPL do not change which block a selector names, so a moveable
+    handle (the selector with the table bit set) finds its block too.
+    """
+
+    def __getitem__(self, sel):
+        return super().__getitem__(sel & ~7)
+
+    def get(self, sel, default=None):
+        return super().get(sel & ~7, default)
+
+    def __contains__(self, sel):
+        return super().__contains__(sel & ~7)
 
 
 class Sandbox:
@@ -12,8 +29,10 @@ class Sandbox:
         self.root = Path(root)
         self.wine = Wine(root)
         self.images = {}
-        self.selectors = {}
+        self.selectors = Selectors()
         self.gates = {}
+        # (module, ordinal) -> offset of the ES and DS words a register contract's stub loads.
+        self.slots = {}
         self.next_index = 1
         self.linear = 0x200000
         self.linked = 0
@@ -77,7 +96,7 @@ class Sandbox:
                 if module in wanted and self.wine.equate(module, fix.target2) is None:
                     wanted[module].add(fix.target2)
         for module, ordinals in wanted.items():
-            tables = {"KERNEL": KERNEL, "USER": USER}
+            tables = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "MMSYSTEM": MMSYSTEM, "WIN87EM": WIN87EM}
             for ordinal in tables.get(module, {}):
                 ordinals.add(ordinal)
             if not ordinals:
@@ -89,7 +108,21 @@ class Sandbox:
                 pop = spec.pop if spec else 0
                 stub = bytearray(8)
                 stub[0:5] = bytes([0xBA, ordinal & 0xFF, (ordinal >> 8) & 0xFF, 0xE6, 0xE4])
-                if spec:
+                if spec and spec.ret == "register":
+                    # A register contract reads and sets registers, DX among them, so its stub
+                    # does not load DX: OUT 0E7h, and the gate finds the ordinal from IP / 8.
+                    # It may set ES and DS. Unicorn's register write does not load a
+                    # protected-mode descriptor, so the guest loads them: the stub jumps to a
+                    # tail that does mov es, cs:[slot] ; mov ds, cs:[slot + 2] ; retf pop.
+                    tail = len(blob)
+                    slot = tail + 13
+                    blob += bytes([0x2E, 0x8E, 0x06, slot & 0xFF, slot >> 8,
+                                   0x2E, 0x8E, 0x1E, (slot + 2) & 0xFF, (slot + 2) >> 8,
+                                   0xCA, pop & 0xFF, (pop >> 8) & 0xFF, 0, 0, 0, 0])
+                    rel = (tail - (ordinal * 8 + 5)) & 0xFFFF
+                    stub[0:5] = bytes([0xE6, 0xE7, 0xE9, rel & 0xFF, rel >> 8])
+                    self.slots[(module, ordinal)] = slot
+                elif spec:
                     stub[5:8] = bytes([0xCA, pop & 0xFF, (pop >> 8) & 0xFF])
                 blob[ordinal * 8:(ordinal + 1) * 8] = stub
             seg = Segment(1, 0, blob)
@@ -105,15 +138,23 @@ class Sandbox:
         stack = self.exe.stack if self.exe else 0
         for image in self.images.values():
             for seg in image.segments:
+                if image is not self.exe and not image.synthetic and seg.index == image.auto and image.heap:
+                    # A DLL's DGROUP gets its NE heap too (NE_CreateSegment), rounded as GLOBAL_Alloc rounds.
+                    size = (len(seg.data) + image.heap + 0x1F) & ~0x1F
+                    if size <= 0x10000:
+                        seg.data.extend(b"\x00" * (size - len(seg.data)))
                 if image is self.exe and seg.index == auto:
-                    extra = heap + stack
-                    if len(seg.data) + extra < 0x10000:
-                        seg.data.extend(b"\x00" * extra)
+                    # Wine ne_segment.c NE_CreateSegment: minsize + stack + heap, and
+                    # global.c GLOBAL_Alloc rounds a block up to 32 bytes.
+                    size = (len(seg.data) + heap + stack + 0x1F) & ~0x1F
+                    if size <= 0x10000:
+                        seg.data.extend(b"\x00" * (size - len(seg.data)))
                 self._place_segment(seg)
             if image.synthetic and image.segments:
                 sel = image.segments[0].selector
                 for ordinal in range(len(image.segments[0].data) // 8):
-                    if image.segments[0].data[ordinal * 8] == 0xBA:
+                    stub = image.segments[0].data[ordinal * 8:ordinal * 8 + 4]
+                    if (stub[0] == 0xBA and stub[3] == 0xE6) or stub[:2] == b"\xE6\xE7":
                         self.gates[(sel, ordinal)] = image.name
 
     def _link(self):
