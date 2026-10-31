@@ -905,6 +905,12 @@ class Pass04:
         # task in AX and the first task in DX; this host runs one task. The
         # handle is a zeroed block the host keeps. TB80UTL and TB80LNL key
         # their per-task tables on it, and AX = 1 is not a selector.
+        # Yield(). Wine's Yield16 is void. With a message queue it peeks
+        # once (PM_REMOVE | PM_QS_SENDMESSAGE), otherwise OldYield16 releases
+        # and retakes the Win16 lock. This host runs one task with no queue,
+        # so there is nothing to switch to and the call returns.
+        if ordinal == 29:
+            return True
         if ordinal == 36:
             if not getattr(self, "task_handle", 0):
                 self.task_handle = self.arena.alloc_selector(0x200, 0x92, bytes(0x200))
@@ -1015,6 +1021,13 @@ class Pass04:
             self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
             self.uc.emu_stop()
             return True
+        # InitApp(hInstance). Wine's InitApp16 creates the task's message queue
+        # and returns TRUE when it has one. This host keeps no queue, and
+        # nothing in the run reads one, so the answer is TRUE.
+        if ordinal == 5:
+            self.uc.reg_write(UC_X86_REG_AX, 1)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSysColor(index). Wine's GetSysColor16 reads system_colors in
         # win32u/sysparams.c, COLOR_SCROLLBAR to COLOR_MENUBAR, and gives 0
         # out of range. AX = 1 was a near-black red for every element.
@@ -1041,6 +1054,23 @@ class Pass04:
             out = (self._word(1), self._word(0))
             fmt = self._box_text(self._word(3), self._word(2))
             text = self._wsprintf(fmt, 4).encode("latin1", "replace")[:1023]
+            if out[0] in self.arena.segs:
+                self.arena.write(out[0], out[1], text + b"\x00")
+            self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # wvsprintf(out, fmt, args). Wine's wvsprintf16 formats as wsprintf16
+        # does, with the arguments read from the far pointer args instead of
+        # the stack. Pascal, so the host pops. AX = 1 left the buffer as it was.
+        if ordinal == 421:
+            out = (self._word(5), self._word(4))
+            fmt = self._box_text(self._word(3), self._word(2))
+            args_seg, args_off = self._word(1), self._word(0)
+
+            def arg(k):
+                return struct.unpack_from("<H", self.arena.read(args_seg, (args_off + 2 * k) & 0xFFFF, 2))[0]
+
+            text = self._wsprintf(fmt, 0, arg).encode("latin1", "replace")[:1023]
             if out[0] in self.arena.segs:
                 self.arena.write(out[0], out[1], text + b"\x00")
             self.uc.reg_write(UC_X86_REG_AX, len(text))
@@ -1185,31 +1215,37 @@ class Pass04:
     def _kernel_string(self, ordinal):
         """Far-string helpers. A stub return of 1 was loaded as a selector."""
         uc = self.uc
-        if ordinal == 128:
+        if ordinal in (58, 128):
             # GetPrivateProfileString(app, key, default, buf, size, file).
             # AX = 1 left the buffer as it was and said one character came
             # back. The value is the key's from the INI TBK_INI supplies,
             # else the default, cut to size - 1 and NUL-terminated.
-            size = self._word(2)
-            path = self._string(self._word(1), self._word(0))
-            app = self._string(self._word(10), self._word(9)) if self._word(10) else None
-            key = self._string(self._word(8), self._word(7)) if self._word(8) else None
-            default = self._string(self._word(6), self._word(5)) if self._word(6) else ""
+            # GetProfileString(app, key, default, buf, size) is the same call
+            # on "win.ini" in Wine's GetProfileString16.
+            n = 2 if ordinal == 128 else 0
+            size = self._word(n)
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(8 + n), self._word(7 + n)) if self._word(8 + n) else None
+            key = self._string(self._word(6 + n), self._word(5 + n)) if self._word(6 + n) else None
+            default = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else ""
             value = self._profile_value(path, app, key)
             text = default.rstrip(" ") if value is None else value
-            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(4), self._word(3), text, size) if size else 0)
+            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(2 + n), self._word(1 + n), text, size) if size else 0)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
-        if ordinal == 127:
+        if ordinal in (57, 127):
             # GetPrivateProfileInt(app, key, default, file). AX = 1 said every
             # key held 1. Wine's GetPrivateProfileInt16 reads the value into a
             # 30-character buffer: missing or empty gives the default, else
             # RtlUnicodeStringToInteger with base 0, cast to INT16.
-            path = self._string(self._word(1), self._word(0))
-            app = self._string(self._word(6), self._word(5)) if self._word(6) else None
-            key = self._string(self._word(4), self._word(3)) if self._word(4) else None
+            # GetProfileInt(app, key, default) is the same call on "win.ini"
+            # in Wine's GetProfileInt16.
+            n = 2 if ordinal == 127 else 0
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else None
+            key = self._string(self._word(2 + n), self._word(1 + n)) if self._word(2 + n) else None
             value = (self._profile_value(path, app, key) or "")[:29]
-            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(2))
+            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(n))
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
         if ordinal == 88:
@@ -1231,6 +1267,17 @@ class Pass04:
             text = self._string(self._word(1), self._word(0))
             uc.reg_write(UC_X86_REG_AX, len(text))
             uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # lstrcpyn(dst, src, n). Wine's lstrcpyn16 is lstrcpynA: at most n - 1
+        # characters and a NUL, nothing at all for n = 0, and n is signed, so
+        # a negative n has no limit. It returns dst. AX = 1 copied nothing.
+        if ordinal == 353:
+            dst_seg, dst_off, n = self._word(4), self._word(3), self._word(0)
+            if n:
+                src = self._string(self._word(2), self._word(1))
+                self._copy_to(dst_seg, dst_off, src, n if n < 0x8000 else 0x10000)
+            uc.reg_write(UC_X86_REG_AX, dst_off)
+            uc.reg_write(UC_X86_REG_DX, dst_seg)
             return True
         if ordinal == 47:
             uc.reg_write(UC_X86_REG_AX, self.segs[139])
@@ -1500,8 +1547,12 @@ class Pass04:
         size = max(0, min(512, info["limit"] + 1 - offset))
         return self.arena.read(sel, offset, size).split(b"\x00", 1)[0].decode("latin1", "replace")
 
-    def _wsprintf(self, fmt, n):
-        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer."""
+    def _wsprintf(self, fmt, n, word=None):
+        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer.
+
+        word reads the nth argument word from elsewhere, for wvsprintf.
+        """
+        word = word or self._word
         out = []
         pos = 0
         for m in re.finditer(r"%(%|([-#0]*)(\d*)(?:\.(\d+))?(l?)([sdiuxXc]))", fmt):
@@ -1512,20 +1563,20 @@ class Pass04:
                 continue
             flags, width, prec, long_, kind = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6)
             if kind == "s":
-                off, sel = self._word(n), self._word(n + 1)
+                off, sel = word(n), word(n + 1)
                 n += 2
                 value = self._box_text(sel, off)
                 if prec:
                     value = value[:int(prec)]
             elif kind == "c":
-                value = chr(self._word(n) & 0xFF)
+                value = chr(word(n) & 0xFF)
                 n += 1
             else:
-                raw = self._word(n)
+                raw = word(n)
                 n += 1
                 bits = 16
                 if long_:
-                    raw |= self._word(n) << 16
+                    raw |= word(n) << 16
                     n += 1
                     bits = 32
                 if kind in "di" and raw >> (bits - 1):
