@@ -13,6 +13,7 @@ Not a release. `1.0.0r6` stays the version.
 - `--open` lists `unread` handlers: ones whose expansion copied bytes from outside the book. Each line gives the page, the handler, its offset, and how many bytes were written as `?` for that reason. A real `?` in the source is not counted.
 - `next` and `back` run the page's `to handle next` or `to handle previous` / `back` when it has a jump the engine can compile, in `engine.py` and in `render.html`. Without one they use the page list, as before.
 - `python3 -m tbpipeline_bf.runtime` and `python3 -m tbpipeline_bf.runtime.debug` run again. They died unpacking `resolve()`, which had grown to seven values. Without `--dbgrender` they still write no `render.html`.
+- `render.html` marks its theme on `<body data-theme="…">`. An unknown `--theme` is drawn and marked as `default`.
 
 ## 1.0.0r6
 

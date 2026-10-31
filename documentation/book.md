@@ -40,4 +40,4 @@ Curves that are already decoded use marker `14 00 00`, a fill at `+4`, a count a
 
 Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files`. Stage 2b also says `placed K polygons on J pages, at record twips / 15`. On `nida81.tbk` those are 18 and 23, because P420 has four curves. The numbers differ and each line says which count it is.
 
-`render.html` is written only with `--dbgrender`. `--theme default` is a Windows 95 window. `--theme modern` is the dark reader. `--render old` also writes `render-old.html`. Each run gets `tbpipeline_bf/_debug/db-YYYYMMDD-HHMMSS/` so a later run does not erase the log.
+`render.html` is written only with `--dbgrender`. `--theme default` is a Windows 95 window. `--theme modern` is the dark reader. The page says which on `<body data-theme="…">`; an unknown name is `default`. `--render old` also writes `render-old.html`. Each run gets `tbpipeline_bf/_debug/db-YYYYMMDD-HHMMSS/` so a later run does not erase the log.

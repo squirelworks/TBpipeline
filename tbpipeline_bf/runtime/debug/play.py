@@ -74,8 +74,13 @@ def page_text(book: Book) -> list[dict]:
     return pages
 
 
+def theme_name(name):
+    return name if name in THEMES else "default"
+
+
 def document(title, payload, theme, script, extra=""):
     css = theme_css(theme)
+    theme = theme_name(theme)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -93,7 +98,7 @@ def document(title, payload, theme, script, extra=""):
   #files p {{ color: inherit; }}
 </style>
 </head>
-<body>
+<body data-theme="{theme}">
 <div class="window">
 <header><b id="title"></b><select id="pages"></select><span id="count"></span></header>
 <main id="stage"></main>
