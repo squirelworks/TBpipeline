@@ -4,7 +4,7 @@
 
 The entry asks for `TB80.INI` and `TB80enu1.DLL`, then parses the book name with `OpenFile(..., OF_PARSE)`. Every open is logged in `opens`. Only a `.tbk` or `.sbk` gets a handle. Nothing is rendered unless you pass `--dbgrender`.
 
-## The wall: the runtime's "Initialization failed" box after TB80NET's checks
+## The wall: the runtime refuses the fixture book after TB80NET's header check
 
 This is where the bf host sequence of item 27 stops. TB80BAS segment 45 `0x32` starts the book file manager with `WinExec("TB80NET.exe ToolBook", 2)`, checks the result is above 32, and then requires the word at its `DS:0x37C` to be non-zero. That word is written only by TB80BAS segment 45 `0x68`, an entry the new task calls with its window. So the book file manager is a second Win16 task talking to the runtime through a shared DLL and window messages.
 
@@ -28,4 +28,13 @@ The request's `lParam` is an `OFSTRUCT` whose `szPathName` is the book. TB80NET 
 message box '' type 0x2030: 'Initialization failed. Not enough memory or the file is damaged.'
 ```
 
-`USER.1` `MessageBox` is called from `0x0080:0x034f`. What the runtime checked before it is not known yet. That is the next behavior to find.
+`USER.1` `MessageBox` is called from `0x0080:0x034f`. Before it the runtime formats a second string from its own resources (`FindResource` type `0xD5`): "The requested file is not loadable by this application." The book's name with a `.tbr` extension, `fixture.tbr`, is also on the stack. Nothing opens a `.tbr`.
+
+This stop is about the fixture's bytes, not a host call. TB80W32 asks TB80NET for everything with `SendMessageTimeoutA(0x100, 0xC01D, code, lParam)`, where `lParam` is the `OFSTRUCT`. Code `0x0A` opens a file and returns its handle. Code `0x28` closes one, and code `0x14` seeks the book back to 0. The exchange goes in this order:
+
+1. TB80NET opens the book (`0x8012`, handle `0x1d`) and closes it again.
+2. It opens the book again (`0x8022`, handle `0x1e`) and keeps it open.
+3. It opens `OBJ1.TMP` twice and sends `0x14` for the book.
+4. It closes the book and the temp file, then reopens the temp file, closes it and deletes it.
+
+The runtime itself never reads the book. On every open, TB80NET reads the words at 0 and `0x18` of the file. When the word at `0x18` is `0x40` or more, it also reads the dword at `0x3C`. That is the MZ new-executable check. The fixture (`tests/fixtures/book.py`) has `MZ`, then zeros up to its `ZZZTBKBOOKLOC` locator, so `0x18` is 0. A scratch copy with `0x40` at `0x18` makes TB80NET read `0x3C` (0), and the same box follows. A real book's `0xC00` stub is a Click2learn shell, so getting further needs a book whose stub has the real header shape. No such book can go in the repo, and the books in the shared folder are off limits here.
