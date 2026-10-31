@@ -150,8 +150,18 @@ def _forward(opened: Opened, name: str) -> str:
     return pick.goto
 
 
+def _followed(engine) -> str:
+    script = engine.followed
+    if script is None:
+        return "no buttonClick"
+    return f"{script['name']} {script['offset']:#x}"
+
+
 def click(opened: Opened) -> list[str]:
-    """Run the first page's buttonClick, then the page it landed on."""
+    """Run the first page's buttonClick, then the page it landed on.
+
+    Each line is: from page, the handler that ran and its offset, landed page.
+    """
     from .engine import Engine
 
     if not opened.book.pages:
@@ -162,15 +172,15 @@ def click(opened: Opened) -> list[str]:
     try:
         landed = engine.button_click()
     except (KeyError, IndexError):
-        return [f"{start} -> -"]
-    lines = [f"{start} -> {landed.name}"]
+        return [f"{start} {_followed(engine)} -> -"]
+    lines = [f"{start} {_followed(engine)} -> {landed.name}"]
     if landed.name == start:
         return lines
     try:
         back = engine.button_click()
     except (KeyError, IndexError):
         return lines
-    lines.append(f"{landed.name} -> {back.name}")
+    lines.append(f"{landed.name} {_followed(engine)} -> {back.name}")
     return lines
 
 
