@@ -5,6 +5,13 @@
 Not a release. `1.0.0r6` stays the version.
 
 - `USER.118` `RegisterWindowMessage` returns one atom from `0xC000` per message name, compared without case, as Wine's `RegisterWindowMessageA` (`GlobalAddAtomA`) does. It used to fall through to `AX = 1`, so every registered message got message number 1.
+- `KERNEL.128` `GetPrivateProfileString` copies the key's value from the INI `TBK_INI` supplies, or else the default without trailing blanks, cut to `size - 1`, and returns its length. It used to fall through to `AX = 1` and leave the buffer as it was. The runtime reads its `ToolBook startup` keys this way before the `WinExec` wall.
+- `OpenFile` with `OF_DELETE` removes a file the guest created and returns 1. Any other path, the book included, returns `0xFFFF` with error 2.
+- `OpenFile` with `OF_CREATE` creates or truncates a file the host keeps, never on disk. Later opens of the same path find it, and every handle shares its bytes.
+- `OpenFile` with `OF_REOPEN` opens the `szPathName` the `OFSTRUCT` already holds and leaves it there. It used to qualify the NULL name and write `C:\TOOLBOOK\` over the path.
+- `LoadLibrary` of a module Windows has loaded (KERNEL, USER, GDI, KEYBOARD, SYSTEM, SOUND, DISPLAY, MOUSE) returns that module's handle. It used to return 2, file not found, and TB80W16 asked for KERNEL again until the instruction cap.
+- int 2Fh `AX = 150Bh`, the MSCDEX CD-ROM drive check, comes back with every register unchanged, as DOS does with nothing on the multiplex, so `BX` is not `ADADh`. Every other int 2Fh call still stops the run.
+- `USER.471` `lstrcmpi` compares the two strings without case and returns -1, 0 or 1. It used to fall through to `AX = 1`, "greater" for every pair, so TB80NET never matched its command line "ToolBook".
 - `KERNEL.21` `GlobalHandle` returns the handle in AX and the selector in DX; in this host they are the same value. TB80UTL's heap maker keeps DX as the new heap's selector, and DX = 0 gave TB80BAS a heap at selector 0.
 - `USER.420` `wsprintf` formats into the caller's buffer, and its pop size is 0: it is cdecl, and the caller does `add sp, 0xE`. The table had 8. The message box the book open stops on now reads "A internal error has occurred in File 'Unknown' line 629." The `TB80enu` open was the unformatted buffer: the entry asks for `C:\TOOLBOOK\TB80enu1.DLL`.
 - `USER.1` `MessageBox` stops the run, and the stop quotes the caption, the type and the text. It used to return `AX = 1`, which is `IDOK`: TB80UTL's internal-error box says "Press OK to continue", so the runtime ran past its own assertion and exited 0 without asking for the book.
