@@ -124,6 +124,7 @@ USER = _table("USER", USER_SPEC, [
     "118 pascal -ret16 RegisterWindowMessage(str) RegisterWindowMessageA",
     "176 pascal -ret16 LoadString(word word ptr s_word) LoadString16",
     "266 pascal -ret16 SetMessageQueue(word) SetMessageQueue16",
+    "291 pascal   SetWindowsHookEx(s_word segptr word word) SetWindowsHookEx16",
 ])
 
 WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
@@ -137,6 +138,12 @@ EQUATES = {
 
 # Wine task.c TASK_Create: cmdShow is 1, SW_SHOWNORMAL, unless the startup info sets one.
 SW_SHOWNORMAL = 1
+
+# Wine hook.c: WH_MINHOOK is WH_MSGFILTER (-1), Win16 goes up to WH_SHELL (10), and only
+# these indexes (id - WH_MINHOOK) have a hook_procs entry.
+WH_MINHOOK = -1
+WH_MAXHOOK16 = 10
+HOOKS16 = {0: "WH_MSGFILTER", 3: "WH_KEYBOARD", 4: "WH_GETMESSAGE", 5: "WH_CALLWNDPROC", 6: "WH_CBT", 8: "WH_MOUSE", 11: "WH_SHELL"}
 
 GMEM_MOVEABLE = 0x0002
 LOCAL_HEAP_MAGIC = 0x484C
@@ -172,6 +179,8 @@ class Wine:
         self.registers = None
         # Set by the machine: selector -> size of its block in bytes, or None.
         self.size = None
+        # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
+        self.hooks = {}
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
         self.messages = {}
         # selector -> lockCount, Wine's GLOBALARENA field, for LockSegment.
@@ -458,6 +467,24 @@ class Wine:
             "(6 frndint, 7 fistp, 8 fstsw), or has no case. neww does not answer it"
         )
 
+    def _set_windows_hook(self, id_, proc, task):
+        """Wine user.exe16/hook.c SetWindowsHookEx16. Returns (ax, dx, stop): the HHOOK in DX:AX."""
+        index = id_ - WH_MINHOOK
+        if id_ < WH_MINHOOK or id_ > WH_MAXHOOK16:
+            return 0, 0, None
+        if index not in HOOKS16:
+            # Wine: "hook type %d broken in Win16".
+            return 0, 0, None
+        if task:
+            return 0, 0, f"USER.291 SetWindowsHookEx hTask={task:#x}: Wine compares it with GetCurrentTask, and neww has no task handle"
+        if index in self.hooks:
+            # Wine: "Multiple hooks (%d) for the same task not supported yet".
+            return 0, 0, None
+        # Wine returns user32's HHOOK. neww numbers its own from 0x00010001.
+        hook = 0x00010001 + len(self.hooks)
+        self.hooks[index] = (hook, proc)
+        return hook & 0xFFFF, hook >> 16, None
+
     def _register_window_message(self, name):
         """RegisterWindowMessageA: a string atom, 0xC000 to 0xFFFF, the same for the same name.
 
@@ -554,6 +581,10 @@ class Wine:
             return self._register_window_message(arg.string(0)), 0, None
         if ordinal == 266:
             return 1, 0, None
+        if ordinal == 291:
+            # SetWindowsHookEx(s_word id, segptr proc, word hInst, word hTask)
+            id_ = arg(4) - 0x10000 if arg(4) & 0x8000 else arg(4)
+            return self._set_windows_hook(id_, arg(2) | (arg(3) << 16), arg(0))
         if ordinal in (1, 108, 111, 176):
             return 0, 0, None
         return 0, 0, f"unimplemented USER.{ordinal}"
