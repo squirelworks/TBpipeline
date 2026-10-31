@@ -16,6 +16,11 @@ from ..engine import Engine, compile_handler
 from ..tbk import Book
 from .shapes import polygons
 
+COMPRESSED = (
+    "Compressed ToolBook pictures are not drawn: the decoder is TB80BMP ordinal 3, "
+    "and the host stops at its far call 0x1FCD. Only Windows bitmaps are shown."
+)
+
 THEMES = {
     "default": """
   body { margin: 0; background: #008080; color: #000; font: 13px/1.4 Tahoma, "MS Sans Serif", sans-serif; }
@@ -81,6 +86,7 @@ def document(title, payload, theme, script, extra=""):
   .extra {{ max-width: 760px; margin: 8px auto 24px; text-align: center; }}
   .extra button {{ font: 13px Tahoma, "MS Sans Serif", sans-serif; padding: 4px 12px; }}
   main {{ position: relative; }}
+  #status {{ margin: 0 8px 4px; font-size: 12px; }}
   svg.placed {{ position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }}
   #files {{ margin-top: 10px; }}
   #files img {{ max-width: 100%; background: #fff; border: 1px solid #404040; }}
@@ -91,6 +97,7 @@ def document(title, payload, theme, script, extra=""):
 <div class="window">
 <header><b id="title"></b><select id="pages"></select><span id="count"></span></header>
 <main id="stage"></main>
+<p id="status" class="empty"></p>
 <footer>
   <span>
     <button id="back" type="button">Back</button>
@@ -292,6 +299,7 @@ function buttonClick(n) {
   engine.log.push(["buttonClick", handler ? handler.label : n]);
   if (handler) runSteps(handler.steps);
 }
+document.getElementById("status").textContent = book.compressed || "";
 document.getElementById("next").addEventListener("click", next);
 document.getElementById("back").addEventListener("click", back);
 menu.addEventListener("change", () => go(menu.value));
@@ -407,5 +415,6 @@ def render_new(book: Book, theme="default", files=None, resources=None, handlers
         "pages": walked(book, handlers, resources),
         "files": files or {},
         "resources": resources or {"book": [], "pages": {}},
+        "compressed": COMPRESSED,
     })
     return document(html.escape(book.path.stem), payload, theme, NEW_SCRIPT)
