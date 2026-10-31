@@ -1,18 +1,25 @@
 """Run TB80RTM. ToolBook code is real. Windows is the layer."""
 
 import struct
+import time
+from collections import deque
 from pathlib import Path
 
-from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_UNMAPPED
+from unicorn import (
+    Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_BLOCK, UC_HOOK_INSN, UC_HOOK_MEM_READ,
+    UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE,
+)
 from unicorn.x86_const import (
     UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS,
     UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DX, UC_X86_REG_ES,
     UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
-from .layer import EQUATES, TABLES, Gap, Layer
+from .layer import EQUATES, TABLES, Gap, Layer, Refused
 from .ne import load as ne_load
 from .ne import imported_modules
+
+TIMEOUT_US = 15_000_000
 
 SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
 
@@ -35,9 +42,9 @@ def _descriptor(base, limit, access):
 
 
 class Cpu:
-    def __init__(self, root):
+    def __init__(self, root, book=None):
         self.root = Path(root)
-        self.layer = Layer()
+        self.layer = Layer(book)
         self.selectors = {}
         self.gates = {}
         self.next_index = 1
@@ -47,6 +54,8 @@ class Cpu:
         self.stop = ""
         self.exe = None
         self.glock = {}
+        self.recent = deque(maxlen=20)  # (cs, ip) of the last basic blocks
+        self.blocks = {}  # linear base -> {"handle", "selector", "size", "written"}
         self._load()
 
     def _selector(self):
@@ -310,6 +319,7 @@ class Cpu:
             self.uc.mem_write(seg["selector"], _descriptor(seg["base"], limit_b, access))
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
+        self.uc.hook_add(UC_HOOK_BLOCK, self._block)
         code = exe["segments"][exe["entry_seg"] - 1]
         data = exe["segments"][exe["auto"] - 1]
         gdtr_at = 0xF0E0
@@ -339,7 +349,7 @@ class Cpu:
         self.uc.mem_write(0x101000, b"\x00\x00")
         self.env = self._map_selector(0x101000, 0xFF, 0x92)
         self.uc.mem_map(0x102000, 0x1000)
-        self.task = self._map_selector(0x102000, 0x1FF, 0x92)
+        self.task = self._task_selector(data)
         self.dgroup = data["selector"]
         self.layer.dgroup = self.dgroup
         self.layer.task = self.task
@@ -350,15 +360,37 @@ class Cpu:
         self.uc.mem_write(data["base"] + 0x1B02, b"\x00\x00")
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
+        began = time.monotonic()
         try:
-            self.uc.emu_start(0xF000, 0, timeout=15_000_000, count=limit)
+            self.uc.emu_start(0xF000, 0, timeout=TIMEOUT_US, count=limit)
         except UcError as exc:
             if not self.stop:
                 self.stop = str(exc)
         else:
             if not self.stop:
-                self.stop = "returned"
+                self.stop = self._ended(limit, time.monotonic() - began)
         return self
+
+    def _block(self, uc, address, size, user):
+        cs = uc.reg_read(UC_X86_REG_CS)
+        seg = self.selectors.get(cs)
+        self.recent.append((cs, address - seg["base"] if seg else address))
+
+    def _ended(self, limit, elapsed):
+        """emu_start came back on its own: a hlt, or one of the two caps."""
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        ip = self.uc.reg_read(UC_X86_REG_IP)
+        if ip and self._code(cs, ip - 1, 1) == b"\xf4":
+            return f"hlt at {cs:#x}:{ip - 1:#x}"
+        if elapsed * 1_000_000 >= TIMEOUT_US * 0.95:
+            cap = f"time cap {TIMEOUT_US // 1_000_000} s"
+        else:
+            cap = f"instruction cap {limit}"
+        cap += f" reached at {cs:#x}:{ip:#x}"
+        if not self.layer.trace:
+            return cap + ", no Windows call taken"
+        module, ordinal, label, _args = self.layer.trace[-1]
+        return cap + f", {len(self.layer.trace)} Windows calls taken, last {module}.{ordinal} {label}".rstrip()
 
     def _word(self, sel, offset):
         seg = self.selectors.get(sel)
@@ -386,9 +418,14 @@ class Cpu:
             sp = uc.reg_read(UC_X86_REG_SP)
             ss = uc.reg_read(UC_X86_REG_SS)
             args = [self._word(ss, sp + 4 + n * 2) for n in range(8)]
+        path = None
+        if module == "KERNEL" and ordinal == 74:
+            path = self._asciiz(args[4], args[3])
+        elif module == "KERNEL" and ordinal == 85:
+            path = self._asciiz(args[2], args[1])
         try:
-            ax = self.layer.call(module, ordinal, args)
-        except Gap as exc:
+            ax = self.layer.call(module, ordinal, args, at=self._site(uc), path=path)
+        except (Gap, Refused) as exc:
             self.stop = str(exc)
             uc.emu_stop()
             return
@@ -402,15 +439,25 @@ class Cpu:
                 uc.mem_write(seg["base"] + (off & 0xFFFF), raw)
                 ax = len(raw.rstrip(b"\x00"))
         if module == "KERNEL" and ordinal == 15:
-            lo = args[1] if len(args) > 1 else 0
-            hi = args[2] if len(args) > 2 else 0
-            size = (lo | (hi << 16)) or 0x1000
+            # pascal16 GlobalAlloc(word long): flags is pushed first, so the
+            # dword size is on top, low word nearest SP.
+            lo = args[0] if args else 0
+            hi = args[1] if len(args) > 1 else 0
+            asked = lo | (hi << 16)
+            size = asked or 0x1000
+            if size > 0x10000:
+                # One selector, one 16-bit segment. A larger block needs
+                # __AHINCR tiling, which this layer does not do.
+                self.layer.capped.append((ax, asked))
             size = min(size, 0x10000)
             size = max((size + 0xFFF) & ~0xFFF, 0x1000)
             base = self.linear
             self.linear += size
             uc.mem_map(base, size)
             self.glock[ax] = self._map_selector(base, size - 1, 0x92)
+            self.blocks[base] = {"handle": ax, "selector": self.glock[ax], "size": size, "written": bytearray(size)}
+            uc.hook_add(UC_HOOK_MEM_WRITE, self._block_write, base, base, base + size - 1)
+            uc.hook_add(UC_HOOK_MEM_READ, self._block_read, base, base, base + size - 1)
             self.layer.gsizes[ax] = size
         if module == "KERNEL" and ordinal == 18:
             uc.reg_write(UC_X86_REG_DX, self.glock.get(args[0] if args else 0, 0))
@@ -426,16 +473,117 @@ class Cpu:
         if module == "KERNEL" and ordinal == 131:
             uc.reg_write(UC_X86_REG_DX, self.env)
             ax = 0
+        if module == "KERNEL" and ordinal == 82 and self.layer.last_read:
+            seg = self.selectors.get(args[2])
+            if seg is not None:
+                uc.mem_write(seg["base"] + args[1], self.layer.last_read)
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
-        if not (module == "KERNEL" and ordinal in (18, 91, 131)):
+        if module == "KERNEL" and ordinal == 84:
+            uc.reg_write(UC_X86_REG_DX, (ax >> 16) & 0xFFFF)
+        elif not (module == "KERNEL" and ordinal in (18, 91, 131)):
             uc.reg_write(UC_X86_REG_DX, 0)
         if self.layer.exit is not None:
             self.stop = f"dos exit {self.layer.exit:#x}"
             uc.emu_stop()
 
+    def _asciiz(self, sel, offset, limit=260):
+        seg = self.selectors.get(sel)
+        if seg is None:
+            return ""
+        try:
+            raw = bytes(self.uc.mem_read(seg["base"] + offset, limit))
+        except UcError:
+            return ""
+        return raw.split(b"\x00", 1)[0].decode("latin1")
+
+    def _site(self, uc):
+        """The far call that reached the gate. SS:SP is still the return address."""
+        sp = uc.reg_read(UC_X86_REG_SP)
+        ss = uc.reg_read(UC_X86_REG_SS)
+        ip, cs = self._word(ss, sp), self._word(ss, sp + 2)
+        seg = self.selectors.get(cs)
+        if seg is not None and ip >= 5:
+            try:
+                if uc.mem_read(seg["base"] + ip - 5, 1)[0] == 0x9A:
+                    return cs, ip - 5, "call"
+            except UcError:
+                pass
+        return cs, ip, "return"
+
+    def _block_write(self, uc, access, address, size, value, base):
+        block = self.blocks[base]
+        at = address - base
+        block["written"][at:at + size] = b"\x01" * size
+
+    def _block_read(self, uc, access, address, size, value, base):
+        """A string scan over GlobalAlloc memory nothing wrote is the stop.
+
+        The layer hands back zeros. A lods/scas/cmps that reads them is
+        looking for a record the runtime never made, and walking on only
+        reaches the segment limit.
+        """
+        block = self.blocks[base]
+        at = address - base
+        if any(block["written"][at:at + size]):
+            return
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        op, after = self._string_op(cs, ip)
+        if op is None:
+            return
+        want = self._compared(cs, after)
+        self.stop = (f"scan {op} at {cs:#x}:{ip:#x} read {block['selector']:#x}:{at:#x}, "
+                     f"GlobalAlloc block {block['handle']:#x} that nothing wrote")
+        if want is not None:
+            self.stop += f", looking for {want:#06x}"
+        uc.emu_stop()
+
+    def _code(self, cs, ip, n):
+        seg = self.selectors.get(cs)
+        if seg is None:
+            return b""
+        try:
+            return bytes(self.uc.mem_read(seg["base"] + ip, n))
+        except UcError:
+            return b""
+
+    def _string_op(self, cs, ip):
+        raw = self._code(cs, ip, 6)
+        names = {0xAC: "lodsb", 0xAD: "lodsw", 0xAE: "scasb", 0xAF: "scasw", 0xA6: "cmpsb", 0xA7: "cmpsw"}
+        prefix = ""
+        for i, byte in enumerate(raw):
+            if byte in (0xF2, 0xF3):
+                prefix = "repne " if byte == 0xF2 else "repe "
+                continue
+            if byte in (0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67):
+                continue
+            if byte in names:
+                return prefix + names[byte], ip + i + 1
+            return None, ip
+        return None, ip
+
+    def _compared(self, cs, ip):
+        raw = self._code(cs, ip, 4)
+        if raw[:1] == b"\x3d" and len(raw) >= 3:
+            return struct.unpack_from("<H", raw, 1)[0]
+        if raw[:2] == b"\x83\xf8" and len(raw) >= 3:
+            return raw[2] - 0x100 & 0xFFFF if raw[2] & 0x80 else raw[2]
+        return None
+
     def _unmapped(self, uc, access, address, size, value, user):
         self.stop = f"unmapped {address:#x}"
         return False
+
+    def _task_selector(self, data):
+        """GetCurrentTask's answer. Not DGROUP, and not a word that already
+        sits in the static string table at 0x1B00. Startup matched both
+        once and copied from a far pointer whose segment was `uct.`."""
+        table = bytes(data["data"][0x1B00:0x1C00])
+        taken = {data["selector"]} | {_u16(table, i) for i in range(len(table) - 1)}
+        while True:
+            sel = self._map_selector(0x102000, 0x1FF, 0x92)
+            if sel not in taken:
+                return sel
 
     def _map_selector(self, base, limit, access):
         sel = self._selector()

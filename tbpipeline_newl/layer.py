@@ -56,15 +56,40 @@ TABLES = {"KERNEL": KERNEL, "USER": USER, "WIN87EM": WIN87EM}
 
 
 class Gap(Exception):
-    def __init__(self, module, ordinal, name):
+    """module.ordinal, the name if there is one, and where the far call was.
+
+    at is (cs, ip, how): "call" when the far call itself was found, "return"
+    when only the return address on the stack is known.
+    """
+
+    def __init__(self, module, ordinal, name="", at=None):
         self.module = module
         self.ordinal = ordinal
         self.name = name
-        super().__init__(f"{module}.{ordinal} {name}".strip())
+        self.at = at
+        super().__init__(self.text())
+
+    def text(self):
+        out = f"gap {self.module}.{self.ordinal}"
+        if self.name:
+            out += f" {self.name}"
+        if self.at:
+            cs, ip, how = self.at
+            out += f" far call at {cs:#x}:{ip:#x}" if how == "call" else f" returning to {cs:#x}:{ip:#x}"
+        return out
+
+
+class Refused(Exception):
+    """The layer has the contract but not what the call asks for."""
+
+
+BOOK_SUFFIXES = (".tbk", ".sbk")
 
 
 class Layer:
-    def __init__(self):
+    def __init__(self, book=None):
+        self.book = book  # the .tbk on the command line
+        self.last_read = b""
         self.files = {}
         self.next_file = 1
         self.heap = {}
@@ -79,6 +104,7 @@ class Layer:
         self.module_name_len = len(self.module_name)
         self.task = 0
         self.gsizes = {}
+        self.capped = []  # (handle, size asked) for GlobalAlloc over 64K
 
     def name_of(self, module, ordinal, name=""):
         module = module.upper()
@@ -104,21 +130,27 @@ class Layer:
             return True
         return False
 
-    def call(self, module, ordinal, args=()):
+    def call(self, module, ordinal, args=(), at=None, path=None):
         module = module.upper()
         label = self.name_of(module, ordinal)
-        if not self.knows(module, ordinal):
+        try:
+            if not self.knows(module, ordinal):
+                raise Gap(module, ordinal, label)
+            self.trace.append((module, ordinal, label, tuple(args)))
+            if module == "KERNEL":
+                return self._kernel(ordinal, args, path)
+            if module == "USER":
+                return self._user(ordinal, args)
+            if module == "WIN87EM":
+                return 0
             raise Gap(module, ordinal, label)
-        self.trace.append((module, ordinal, label, tuple(args)))
-        if module == "KERNEL":
-            return self._kernel(ordinal, args)
-        if module == "USER":
-            return self._user(ordinal, args)
-        if module == "WIN87EM":
-            return 0
-        raise Gap(module, ordinal, label)
+        except Gap as gap:
+            if at and not gap.at:
+                gap.at = at
+                gap.args = (gap.text(),)
+            raise
 
-    def _kernel(self, ordinal, args):
+    def _kernel(self, ordinal, args, path=None):
         if ordinal == 3:
             return 0x0A03  # Windows 3.10
         if ordinal == 132:
@@ -162,8 +194,8 @@ class Layer:
         if ordinal == 15:
             handle = self.next_heap
             self.next_heap += 1
-            size = (args[1] if len(args) > 1 else 0) or 1
-            self.heap[handle] = bytearray(size)
+            size = (args[0] if args else 0) | ((args[1] if len(args) > 1 else 0) << 16)
+            self.heap[handle] = bytearray(min(size, 0x10000) or 1)
             return handle
         if ordinal == 18:
             return args[0] if args else 0
@@ -171,14 +203,31 @@ class Layer:
             self.heap.pop(args[0] if args else 0, None)
             return 0
         if ordinal == 74 or ordinal == 85:
-            return self._open(args[0] if args else "")
+            return self._open(path or "")
         if ordinal == 81:
             self.files.pop(args[0] if args else 0, None)
             return 0
         if ordinal == 82:
-            return 0
+            # pascal16 _lread(word segptr word): count on top, handle deepest
+            entry = self.files.get(args[3] if len(args) > 3 else 0)
+            self.last_read = b""
+            if not entry or entry["data"] is None:
+                return 0
+            count = args[0]
+            self.last_read = entry["data"][entry["pos"]:entry["pos"] + count]
+            entry["pos"] += len(self.last_read)
+            return len(self.last_read)
         if ordinal == 84:
-            return 0
+            # pascal16 _llseek(word long word): origin, offset lo, hi, handle
+            entry = self.files.get(args[3] if len(args) > 3 else 0)
+            if not entry or entry["data"] is None:
+                return 0
+            origin, offset = args[0], args[1] | (args[2] << 16)
+            if offset & 0x80000000:
+                offset -= 1 << 32
+            base = {0: 0, 1: entry["pos"], 2: len(entry["data"])}.get(origin, 0)
+            entry["pos"] = max(base + offset, 0)
+            return entry["pos"]
         if ordinal in (50, 95, 128):
             return 0
         if ordinal == 102:
@@ -202,7 +251,15 @@ class Layer:
         raise Gap("USER", ordinal, self.name_of("USER", ordinal))
 
     def _open(self, path):
+        """A path ending in .tbk or .sbk is the book on the command line.
+        Any other path keeps the old answer: a handle with nothing behind it."""
+        data = None
+        if path.lower().endswith(BOOK_SUFFIXES):
+            if self.book is None:
+                raise Refused(f"OpenFile {path}: no book on the command line (--c)")
+            with open(self.book, "rb") as fh:
+                data = fh.read()
         handle = self.next_file
         self.next_file += 1
-        self.files[handle] = path
+        self.files[handle] = {"path": path, "data": data, "pos": 0}
         return handle

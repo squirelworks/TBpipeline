@@ -12,7 +12,7 @@ import struct
 import sys
 
 from tbpipeline_bf.binpath import unpacked
-from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT
+from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, last_call_line
 from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
 
@@ -217,6 +217,8 @@ class Pass06(Pass04):
         stub = (t2 * 8) & 0xFFF
         if atype == 3:
             self.arena.write(sel, disp, struct.pack("<HH", stub, self.thunk))
+            if disp >= 1 and self.arena.read(sel, disp - 1, 1) == b"\x9a":
+                self.callers[(sel, (disp + 4) & 0xFFFF)] = (mod, t2)
             pop = POP.get(mod, {}).get(t2)
             if pop is not None and disp >= 1 and self.arena.read(sel, disp - 1, 1) == b"\x9a":
                 self.sites[(sel, (disp + 4) & 0xFFFF)] = (mod, t2, pop)
@@ -272,11 +274,7 @@ class Pass06(Pass04):
 
     def run(self):
         self.build()
-        tail = (" " + os.path.basename(self.book)).encode("ascii") + b"\r"
-        psp = bytearray(0x100)
-        psp[0x80] = len(tail) - 1
-        psp[0x81:0x81 + len(tail)] = tail
-        self.psp = self.arena.alloc_selector(0x100, 0x92, bytes(psp))
+        self._make_psp()
         dgroup = self.segs[139]
         code = self.segs[2]
         gdtr_at = 0xF0E0
@@ -343,6 +341,7 @@ def main():
     used = sorted(set(host.dll_calls))
     print(f"stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
     print(f"opens: {host.opens or 'none'}")
+    print(last_call_line(host.last_call))
     print(f"dll entries bound {len(used)}")
     return 0
 
