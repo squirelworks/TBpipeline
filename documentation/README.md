@@ -9,6 +9,7 @@ This directory is the project record. A tree's own README says how to run that t
 | [book.md](book.md) | What a `.tbk` and a `.sbk` are on disk |
 | [openscript.md](openscript.md) | The bytecode, and what `--open` does with it |
 | [host.md](host.md) | Why there is a CPU, and where each host stops |
+| [layers.md](layers.md) | Where `newl` and `neww` answer one ordinal differently |
 | [future.md](future.md) | What is next, and what is not |
 
 The long notes stay where they were written. Do not copy them into here and let them drift.
