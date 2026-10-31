@@ -114,6 +114,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "84  pascal   _llseek(word long word) _llseek16",
     "85  pascal -ret16 _lopen(str word) _lopen16",
     "91  pascal -register InitTask() InitTask16",
+    "198 pascal -ret16 GlobalUnfix(word) GlobalUnfix16",
     "131 pascal GetDOSEnvironment() GetDOSEnvironment16",
     "95  pascal -ret16 LoadLibrary(str) LoadLibrary16",
     "102 pascal -register DOS3Call() DOS3Call",
@@ -371,6 +372,13 @@ class Wine:
             if handle == 0xFFFF:
                 handle = arg.regs("ds")
             sel = self.selector_of(handle)
+            if sel is not None:
+                self.locks[sel] = self.locks.get(sel, 0) - 1
+            return arg.regs("ax"), 0, None
+        if ordinal == 198:
+            # Wine global.c GlobalUnfix16 is void: lockCount goes down, AX is left as it was.
+            # Unlike UnlockSegment16, -1 is not CURRENT_DS.
+            sel = self.selector_of(arg(0))
             if sel is not None:
                 self.locks[sel] = self.locks.get(sel, 0) - 1
             return arg.regs("ax"), 0, None
