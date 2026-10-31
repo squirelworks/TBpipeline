@@ -44,6 +44,10 @@ def main(argv=None):
     ip = host.uc.reg_read(UC_X86_REG_IP) if host.uc else 0
     print(f"  stopped {cs:#x}:{ip:#x} {host.stop}")
     print(f"  calls {host.calls}")
+    defaults = host.box.wine.defaults
+    print(f"  answered by a loaded spec row with no handler: {len(defaults)}")
+    for module, ordinal, name, how in defaults[:24]:
+        print(f"    {module}.{ordinal} {name} {'void, AX left' if how == 'void' else 'returned 0'}")
     for line in host.box.wine.trace[:24]:
         print(f"  {line}")
     if len(host.box.wine.trace) > 24:
