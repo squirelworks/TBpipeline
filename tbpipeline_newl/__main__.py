@@ -75,6 +75,8 @@ def main(argv=None):
     cs = host.uc.reg_read(UC_X86_REG_CS) if host.uc else 0
     ip = host.uc.reg_read(UC_X86_REG_IP) if host.uc else 0
     print(f"  stopped {cs:#x}:{ip:#x} {host.stop}")
+    if host.stop.startswith(("instruction cap", "time cap")):
+        print("  last blocks " + " ".join(f"{s:#x}:{o:#x}" for s, o in host.recent))
     for module, ordinal, label, _args in host.layer.trace[:24]:
         print(f"  {module}.{ordinal} {label}")
     if len(host.layer.trace) > 24:

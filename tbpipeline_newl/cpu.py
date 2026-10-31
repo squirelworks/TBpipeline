@@ -2,10 +2,11 @@
 
 import struct
 import time
+from collections import deque
 from pathlib import Path
 
 from unicorn import (
-    Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ,
+    Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_BLOCK, UC_HOOK_INSN, UC_HOOK_MEM_READ,
     UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE,
 )
 from unicorn.x86_const import (
@@ -53,6 +54,7 @@ class Cpu:
         self.stop = ""
         self.exe = None
         self.glock = {}
+        self.recent = deque(maxlen=20)  # (cs, ip) of the last basic blocks
         self.blocks = {}  # linear base -> {"handle", "selector", "size", "written"}
         self._load()
 
@@ -317,6 +319,7 @@ class Cpu:
             self.uc.mem_write(seg["selector"], _descriptor(seg["base"], limit_b, access))
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
+        self.uc.hook_add(UC_HOOK_BLOCK, self._block)
         code = exe["segments"][exe["entry_seg"] - 1]
         data = exe["segments"][exe["auto"] - 1]
         gdtr_at = 0xF0E0
@@ -367,6 +370,11 @@ class Cpu:
             if not self.stop:
                 self.stop = self._ended(limit, time.monotonic() - began)
         return self
+
+    def _block(self, uc, address, size, user):
+        cs = uc.reg_read(UC_X86_REG_CS)
+        seg = self.selectors.get(cs)
+        self.recent.append((cs, address - seg["base"] if seg else address))
 
     def _ended(self, limit, elapsed):
         """emu_start came back on its own: a hlt, or one of the two caps."""
