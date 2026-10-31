@@ -109,15 +109,17 @@ def exit_program(directory, before=b"", modules=("KERNEL",), dos3call=102, data=
 
 
 def exit_program_with(directory, before, fixups, modules=("KERNEL",), dos3call=102, data=256):
+    """data is a size in bytes, or the bytes of DGROUP."""
     code = bytearray(before)
     code += mov_ax(0x4C00)
     at = len(code)
     code += call_far()
     code += bytes([0xF4])
     fixups = list(fixups) + [(3, 1, at + 1, modules.index("KERNEL") + 1, dos3call)]
+    data = bytes(data) if isinstance(data, (bytes, bytearray)) else b"\x00" * data
     blob = build(
         "TB80RTM",
-        [(0x0000, bytes(code), fixups), (0x0001, b"\x00" * data, [])],
+        [(0x0000, bytes(code), fixups), (0x0001, data, [])],
         modules=modules, entry=(1, 0), auto=2,
     )
     return write(directory, "TB80RTM.EXE", blob)

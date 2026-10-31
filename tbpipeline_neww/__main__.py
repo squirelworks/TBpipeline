@@ -1,4 +1,4 @@
-"""python3 -m tbpipeline_neww --b ~/TBK/bin
+"""python3 -m tbpipeline_neww --b ~/TBK/bin [--c book.tbk]
 
 Links every NE module in the directory, then enters TB80RTM.
 Windows ordinals are gates. ToolBook calls land in the other DLL.
@@ -14,15 +14,18 @@ def main(argv=None):
         print(__doc__.strip())
         return 0
     root = None
+    book = None
     for i, arg in enumerate(argv):
         if arg in ("--b", "--bin") and i + 1 < len(argv):
             root = Path(argv[i + 1]).expanduser()
+        if arg == "--c" and i + 1 < len(argv):
+            book = Path(argv[i + 1]).expanduser()
     if root is None or not root.is_dir():
         print("usage: python3 -m tbpipeline_neww --b ~/TBK/bin", file=sys.stderr)
         return 2
     from .machine import Machine
 
-    host = Machine(root)
+    host = Machine(root, book)
     box = host.box
     if box.exe is None:
         print(f"no NE executable in {root}", file=sys.stderr)
