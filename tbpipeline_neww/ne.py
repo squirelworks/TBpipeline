@@ -51,6 +51,8 @@ class Image:
     packed: list = field(default_factory=list)
     # NE header SS:SP, segment number in the high word.
     sssp: int = 0
+    # NE header module flags: 0x0001 SINGLEDATA, 0x8000 library.
+    flags: int = 0
 
 
 def _u16(buf, off):
@@ -121,6 +123,7 @@ def parse(path):
         fixups=fixups,
         packed=packed,
         sssp=sssp,
+        flags=_u16(data, ne + 0x0C),
     )
 
 

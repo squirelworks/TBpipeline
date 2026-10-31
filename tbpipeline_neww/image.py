@@ -14,6 +14,8 @@ class Sandbox:
         self.images = {}
         self.selectors = {}
         self.gates = {}
+        # (module, ordinal) -> offset of the ES and DS words a register contract's stub loads.
+        self.slots = {}
         self.next_index = 1
         self.linear = 0x200000
         self.linked = 0
@@ -89,7 +91,19 @@ class Sandbox:
                 pop = spec.pop if spec else 0
                 stub = bytearray(8)
                 stub[0:5] = bytes([0xBA, ordinal & 0xFF, (ordinal >> 8) & 0xFF, 0xE6, 0xE4])
-                if spec:
+                if spec and spec.ret == "register":
+                    # A register contract may set ES and DS. Unicorn's register write does not load
+                    # a protected-mode descriptor, so the guest loads them: the stub jumps to a tail
+                    # that does mov es, cs:[slot] ; mov ds, cs:[slot + 2] ; retf pop.
+                    tail = len(blob)
+                    slot = tail + 13
+                    blob += bytes([0x2E, 0x8E, 0x06, slot & 0xFF, slot >> 8,
+                                   0x2E, 0x8E, 0x1E, (slot + 2) & 0xFF, (slot + 2) >> 8,
+                                   0xCA, pop & 0xFF, (pop >> 8) & 0xFF, 0, 0, 0, 0])
+                    rel = (tail - (ordinal * 8 + 8)) & 0xFFFF
+                    stub[5:8] = bytes([0xE9, rel & 0xFF, rel >> 8])
+                    self.slots[(module, ordinal)] = slot
+                elif spec:
                     stub[5:8] = bytes([0xCA, pop & 0xFF, (pop >> 8) & 0xFF])
                 blob[ordinal * 8:(ordinal + 1) * 8] = stub
             seg = Segment(1, 0, blob)
@@ -105,15 +119,22 @@ class Sandbox:
         stack = self.exe.stack if self.exe else 0
         for image in self.images.values():
             for seg in image.segments:
+                if image is not self.exe and not image.synthetic and seg.index == image.auto and image.heap:
+                    # A DLL's DGROUP gets its NE heap too (NE_CreateSegment), rounded as GLOBAL_Alloc rounds.
+                    size = (len(seg.data) + image.heap + 0x1F) & ~0x1F
+                    if size <= 0x10000:
+                        seg.data.extend(b"\x00" * (size - len(seg.data)))
                 if image is self.exe and seg.index == auto:
-                    extra = heap + stack
-                    if len(seg.data) + extra < 0x10000:
-                        seg.data.extend(b"\x00" * extra)
+                    # Wine ne_segment.c NE_CreateSegment: minsize + stack + heap, and
+                    # global.c GLOBAL_Alloc rounds a block up to 32 bytes.
+                    size = (len(seg.data) + heap + stack + 0x1F) & ~0x1F
+                    if size <= 0x10000:
+                        seg.data.extend(b"\x00" * (size - len(seg.data)))
                 self._place_segment(seg)
             if image.synthetic and image.segments:
                 sel = image.segments[0].selector
                 for ordinal in range(len(image.segments[0].data) // 8):
-                    if image.segments[0].data[ordinal * 8] == 0xBA:
+                    if image.segments[0].data[ordinal * 8] == 0xBA and image.segments[0].data[ordinal * 8 + 3] == 0xE6:
                         self.gates[(sel, ordinal)] = image.name
 
     def _link(self):
