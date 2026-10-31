@@ -1035,6 +1035,23 @@ class Pass04:
             self.uc.reg_write(UC_X86_REG_AX, len(text))
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # wvsprintf(out, fmt, args). Wine's wvsprintf16 formats as wsprintf16
+        # does, with the arguments read from the far pointer args instead of
+        # the stack. Pascal, so the host pops. AX = 1 left the buffer as it was.
+        if ordinal == 421:
+            out = (self._word(5), self._word(4))
+            fmt = self._box_text(self._word(3), self._word(2))
+            args_seg, args_off = self._word(1), self._word(0)
+
+            def arg(k):
+                return struct.unpack_from("<H", self.arena.read(args_seg, (args_off + 2 * k) & 0xFFFF, 2))[0]
+
+            text = self._wsprintf(fmt, 0, arg).encode("latin1", "replace")[:1023]
+            if out[0] in self.arena.segs:
+                self.arena.write(out[0], out[1], text + b"\x00")
+            self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # RegisterWindowMessage(lpString). Wine's RegisterWindowMessageA is
         # GlobalAddAtomA: one atom from 0xC000 per name, without case. AX = 1
         # gave every message the same number. RegisterClipboardFormat(lpString)
@@ -1506,8 +1523,12 @@ class Pass04:
         size = max(0, min(512, info["limit"] + 1 - offset))
         return self.arena.read(sel, offset, size).split(b"\x00", 1)[0].decode("latin1", "replace")
 
-    def _wsprintf(self, fmt, n):
-        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer."""
+    def _wsprintf(self, fmt, n, word=None):
+        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer.
+
+        word reads the nth argument word from elsewhere, for wvsprintf.
+        """
+        word = word or self._word
         out = []
         pos = 0
         for m in re.finditer(r"%(%|([-#0]*)(\d*)(?:\.(\d+))?(l?)([sdiuxXc]))", fmt):
@@ -1518,20 +1539,20 @@ class Pass04:
                 continue
             flags, width, prec, long_, kind = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6)
             if kind == "s":
-                off, sel = self._word(n), self._word(n + 1)
+                off, sel = word(n), word(n + 1)
                 n += 2
                 value = self._box_text(sel, off)
                 if prec:
                     value = value[:int(prec)]
             elif kind == "c":
-                value = chr(self._word(n) & 0xFF)
+                value = chr(word(n) & 0xFF)
                 n += 1
             else:
-                raw = self._word(n)
+                raw = word(n)
                 n += 1
                 bits = 16
                 if long_:
-                    raw |= self._word(n) << 16
+                    raw |= word(n) << 16
                     n += 1
                     bits = 32
                 if kind in "di" and raw >> (bits - 1):
