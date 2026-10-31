@@ -102,7 +102,8 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "95  pascal -ret16 LoadLibrary(str) LoadLibrary16",
     "102 pascal -register DOS3Call() DOS3Call",
     "128 pascal -ret16 GetPrivateProfileString(str str str ptr word str) GetPrivateProfileString16",
-    "132 pascal GetWinFlags() GetWinFlags16",
+    # The enhanced-mode word, the same as the __WINFLAGS equate below. DX 0, as in newl.
+    ("132 pascal GetWinFlags() GetWinFlags16", (0x0C25, 0)),
 ])
 
 USER = _table("USER", USER_SPEC, [
@@ -169,8 +170,6 @@ class Wine:
         return 0, 0, f"unimplemented {module}.{ordinal}"
 
     def _kernel(self, ordinal, arg):
-        if ordinal == 132:
-            return EQUATES["KERNEL"][178][1], 0, None
         if ordinal == 91:
             return 1, 0, None
         if ordinal == 30:
