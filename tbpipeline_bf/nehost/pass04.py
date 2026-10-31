@@ -824,6 +824,11 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, handle)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # FreeLibrary(hinst). Wine's FreeLibrary16 is void and only drops a
+        # usage count while other users remain. This host keeps no counts and
+        # unloads nothing, so the module stays as it was.
+        if ordinal == 96:
+            return True
         if ordinal == 60:
             mod = self.mods.get(self._word(4) or self.exe_inst)
             want_t = self._res_arg(self._word(1), self._word(0))
@@ -894,6 +899,20 @@ class Pass04:
                 self.task_handle = self.arena.alloc_selector(0x200, 0x92, bytes(0x200))
             uc.reg_write(UC_X86_REG_AX, self.task_handle)
             uc.reg_write(UC_X86_REG_DX, self.task_handle)
+            return True
+        # GetVDMPointer32W(vp, fMode), a generic thunk, pops 6. Wine's
+        # GetVDMPointer32W16 is K32WOWGetVDMPointer: with fMode set, the
+        # selector's descriptor base plus the offset; with fMode 0, the
+        # real-mode address seg * 16 + off. An empty descriptor has base 0.
+        if ordinal == 516:
+            mode, off, sel = self._word(0), self._word(1), self._word(2)
+            if mode:
+                info = self.arena.segs.get(sel)
+                linear = (info["base"] if info else 0) + off
+            else:
+                linear = sel * 16 + off
+            uc.reg_write(UC_X86_REG_AX, linear & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, (linear >> 16) & 0xFFFF)
             return True
         # IsBadCodePtr(lpfn). AX=1 is "bad": TB80BAS skipped its file
         # manager's handler and the book open failed.
@@ -1018,11 +1037,35 @@ class Pass04:
             return True
         # RegisterWindowMessage(lpString). Wine's RegisterWindowMessageA is
         # GlobalAddAtomA: one atom from 0xC000 per name, without case. AX = 1
-        # gave every message the same number.
-        if ordinal == 118:
+        # gave every message the same number. RegisterClipboardFormat(lpString)
+        # is the same call in Wine (NtUserRegisterWindowMessage).
+        if ordinal in (118, 145):
             name = self._string(self._word(1), self._word(0)).lower()
             atoms = self.__dict__.setdefault("message_atoms", {})
             atom = atoms.setdefault(name, 0xC000 + len(atoms))
+            self.uc.reg_write(UC_X86_REG_AX, atom)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # RegisterClass(lpWndClass), pops 4. Wine's RegisterClass16 copies
+        # the WNDCLASS16 into RegisterClassEx16, which returns the class
+        # atom, or 0 when the instance already has a class of that name.
+        # Class names and registered messages share USER's atom table, so
+        # the atom comes from the same table as RegisterWindowMessage.
+        if ordinal == 57:
+            raw = self.arena.read(self._word(1), self._word(0), 26)
+            style, proc_off, proc_seg, cls_extra, wnd_extra, inst = struct.unpack_from("<6H", raw, 0)
+            name_off, name_seg = struct.unpack_from("<HH", raw, 22)
+            name = f"#{name_off}" if name_seg == 0 else self._string(name_seg, name_off)
+            classes = self.__dict__.setdefault("classes", {})
+            if (name.lower(), inst) in classes:
+                atom = 0
+            else:
+                atoms = self.__dict__.setdefault("message_atoms", {})
+                atom = atoms.setdefault(name.lower(), 0xC000 + len(atoms))
+                classes[(name.lower(), inst)] = {
+                    "name": name, "atom": atom, "style": style, "proc": (proc_seg, proc_off),
+                    "cls_extra": cls_extra, "wnd_extra": wnd_extra, "inst": inst,
+                }
             self.uc.reg_write(UC_X86_REG_AX, atom)
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
@@ -1060,6 +1103,29 @@ class Pass04:
         if dst[0] in self.arena.segs:
             self.arena.write(dst[0], dst[1], bytes(out) + b"\x00")
         self.uc.reg_write(UC_X86_REG_AX, 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
+    def _gdi(self, ordinal):
+        # GetDeviceCaps(hdc, index). The only device is the screen. Wine's
+        # GetDeviceCaps16 returns nulldrv_GetDeviceCaps cast to INT16, with
+        # NUMCOLORS -1 turned into 2048: 32 bits per pixel when no display
+        # reports a mode, 96 DPI for an application that is not DPI aware,
+        # and 0 for an index it does not know. HORZRES and VERTRES are the
+        # screen GetSystemMetrics reports. AX = 1 was one bit per pixel and
+        # one pixel per inch.
+        if ordinal != 80:
+            return False
+        width, height, dpi = 800, 600, 96
+        value = {
+            0: 0x4000, 2: 1,
+            4: (width * 254 + dpi * 5) // (dpi * 10), 6: (height * 254 + dpi * 5) // (dpi * 10),
+            8: width, 10: height, 12: 32, 14: 1, 16: -1, 18: -1, 24: 2048,
+            28: 0x1FF, 30: 0xFE, 32: 0xFF, 34: 0x79F7, 36: 1, 38: 0xBE99,
+            40: 36, 42: 36, 44: 51, 88: dpi, 90: dpi, 106: 20, 108: 24,
+            116: 1, 117: height, 118: width,
+        }.get(self._word(0), 0)
+        self.uc.reg_write(UC_X86_REG_AX, value & 0xFFFF)
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
 
@@ -1108,31 +1174,37 @@ class Pass04:
     def _kernel_string(self, ordinal):
         """Far-string helpers. A stub return of 1 was loaded as a selector."""
         uc = self.uc
-        if ordinal == 128:
+        if ordinal in (58, 128):
             # GetPrivateProfileString(app, key, default, buf, size, file).
             # AX = 1 left the buffer as it was and said one character came
             # back. The value is the key's from the INI TBK_INI supplies,
             # else the default, cut to size - 1 and NUL-terminated.
-            size = self._word(2)
-            path = self._string(self._word(1), self._word(0))
-            app = self._string(self._word(10), self._word(9)) if self._word(10) else None
-            key = self._string(self._word(8), self._word(7)) if self._word(8) else None
-            default = self._string(self._word(6), self._word(5)) if self._word(6) else ""
+            # GetProfileString(app, key, default, buf, size) is the same call
+            # on "win.ini" in Wine's GetProfileString16.
+            n = 2 if ordinal == 128 else 0
+            size = self._word(n)
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(8 + n), self._word(7 + n)) if self._word(8 + n) else None
+            key = self._string(self._word(6 + n), self._word(5 + n)) if self._word(6 + n) else None
+            default = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else ""
             value = self._profile_value(path, app, key)
             text = default.rstrip(" ") if value is None else value
-            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(4), self._word(3), text, size) if size else 0)
+            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(2 + n), self._word(1 + n), text, size) if size else 0)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
-        if ordinal == 127:
+        if ordinal in (57, 127):
             # GetPrivateProfileInt(app, key, default, file). AX = 1 said every
             # key held 1. Wine's GetPrivateProfileInt16 reads the value into a
             # 30-character buffer: missing or empty gives the default, else
             # RtlUnicodeStringToInteger with base 0, cast to INT16.
-            path = self._string(self._word(1), self._word(0))
-            app = self._string(self._word(6), self._word(5)) if self._word(6) else None
-            key = self._string(self._word(4), self._word(3)) if self._word(4) else None
+            # GetProfileInt(app, key, default) is the same call on "win.ini"
+            # in Wine's GetProfileInt16.
+            n = 2 if ordinal == 127 else 0
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else None
+            key = self._string(self._word(2 + n), self._word(1 + n)) if self._word(2 + n) else None
             value = (self._profile_value(path, app, key) or "")[:29]
-            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(2))
+            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(n))
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
         if ordinal == 88:
@@ -1154,6 +1226,17 @@ class Pass04:
             text = self._string(self._word(1), self._word(0))
             uc.reg_write(UC_X86_REG_AX, len(text))
             uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # lstrcpyn(dst, src, n). Wine's lstrcpyn16 is lstrcpynA: at most n - 1
+        # characters and a NUL, nothing at all for n = 0, and n is signed, so
+        # a negative n has no limit. It returns dst. AX = 1 copied nothing.
+        if ordinal == 353:
+            dst_seg, dst_off, n = self._word(4), self._word(3), self._word(0)
+            if n:
+                src = self._string(self._word(2), self._word(1))
+                self._copy_to(dst_seg, dst_off, src, n if n < 0x8000 else 0x10000)
+            uc.reg_write(UC_X86_REG_AX, dst_off)
+            uc.reg_write(UC_X86_REG_DX, dst_seg)
             return True
         if ordinal == 47:
             uc.reg_write(UC_X86_REG_AX, self.segs[139])
@@ -1278,6 +1361,8 @@ class Pass04:
         if self.pending and self.pending[0] == "USER" and self._user(ordinal):
             return
         if self.pending and self.pending[0] == "KEYBOARD" and self._keyboard(ordinal):
+            return
+        if self.pending and self.pending[0] == "GDI" and self._gdi(ordinal):
             return
         if self.pending and self.pending[0] in ("COMPOBJ", "OLE2", "OLE2DISP") and self._oleapi():
             return

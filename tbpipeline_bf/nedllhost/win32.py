@@ -2,9 +2,10 @@
 
 TB80W16 reaches TB80W32.DLL, a PE DLL, through the KERNEL generic thunks
 (krnl386.exe16.spec 513 to 518). This mixin answers KERNEL.513
-LoadLibraryEx32W: it maps the PE at its image base in the same CPU, gives
-it a flat 32-bit code and data selector, a stack and a TEB, and runs its
-entry point with DLL_PROCESS_ATTACH, as Wine's LoadLibraryEx32W16
+LoadLibraryEx32W and KERNEL.515 GetProcAddress32W. LoadLibraryEx32W
+maps the PE at its image base in the same CPU, gives it a flat 32-bit
+code and data selector, a stack and a TEB, and runs its entry point
+with DLL_PROCESS_ATTACH, as Wine's LoadLibraryEx32W16
 (dlls/krnl386.exe16/wowthunk.c) does through LoadLibraryExA.
 
 Its imports from KERNEL32, USER32 and the rest bind to 8-byte stubs,
@@ -208,6 +209,8 @@ class Win32:
     def _kernel_proc(self, ordinal):
         if ordinal == 518:
             return self._call_proc_ex32()
+        if ordinal == 515:
+            return self._get_proc_address32()
         if ordinal != 513:
             return super()._kernel_proc(ordinal)
         # LoadLibraryEx32W(lpszLibFile, hFile, dwFlags), Pascal, pops 12.
@@ -260,6 +263,29 @@ class Win32:
             return 0
         info = self.arena.segs.get(far >> 16)
         return (info["base"] if info else 0) + (far & 0xFFFF)
+
+    def _get_proc_address32(self):
+        # GetProcAddress32W(hModule, lpszProc), Pascal, pops 8. Wine's
+        # GetProcAddress32W16 is GetProcAddress: the export's address, by
+        # name or by an ordinal in the low word, or 0. A Win32 system DLL
+        # has no image here; its export is a stub WIN32 answers by name.
+        noff, nseg = self._word(0), self._word(1)
+        hmod = self._word(2) | (self._word(3) << 16)
+        what = noff if nseg == 0 else self._string(nseg, noff)
+        system = next((d for d, h in SYSTEM_HANDLES.items() if h == hmod), None)
+        if system:
+            self._win32_setup()
+            self._dx_ax(self._api32_stub(system, what))
+            return True
+        mod = next((m for m in getattr(self, "pe32", {}).values() if m["base"] == hmod), None)
+        if mod is None:
+            rva = None
+        elif nseg == 0:
+            rva = mod["ords"].get(noff)
+        else:
+            rva = mod["names"].get(what)
+        self._dx_ax(mod["base"] + rva if rva else 0)
+        return True
 
     def _dx_ax(self, value):
         self.uc.reg_write(UC_X86_REG_AX, value & 0xFFFF)
