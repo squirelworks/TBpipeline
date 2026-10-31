@@ -1106,6 +1106,42 @@ class Pass04:
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
 
+    # The registry. This host has no hive, so the predefined roots
+    # (HKEY_CLASSES_ROOT 0x80000000 to HKEY_DYN_DATA 0x80000006) are the only
+    # keys, and none of them has a subkey or a value.
+    REG_ROOTS = range(0x80000000, 0x80000007)
+
+    def _hkey(self, lo, hi):
+        """Wine's fix_win16_hkey: 0 and 1 are HKEY_CLASSES_ROOT in Win16."""
+        hkey = lo | (hi << 16)
+        return 0x80000000 if hkey in (0, 1) else hkey
+
+    def _reg_result(self, error):
+        self.uc.reg_write(UC_X86_REG_AX, error & 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_DX, (error >> 16) & 0xFFFF)
+        return True
+
+    def _shell(self, ordinal):
+        # RegOpenKey(hkey, name, retkey). Wine's RegOpenKey16 fixes the Win16
+        # root and calls RegOpenKeyA: no retkey is ERROR_INVALID_PARAMETER,
+        # an empty or null name hands back hkey itself, and otherwise
+        # open_key clears *retkey and the missing key is
+        # ERROR_FILE_NOT_FOUND. A key that is not a root was never handed
+        # out here, so it is ERROR_INVALID_HANDLE.
+        if ordinal == 1:
+            ret_off, ret_seg = self._word(0), self._word(1)
+            name_off, name_seg = self._word(2), self._word(3)
+            hkey = self._hkey(self._word(4), self._word(5))
+            if not ret_seg and not ret_off:
+                return self._reg_result(87)
+            name = self._string(name_seg, name_off) if name_seg or name_off else ""
+            if not name:
+                self._store(ret_seg, ret_off, struct.pack("<I", hkey))
+                return self._reg_result(0)
+            self._store(ret_seg, ret_off, struct.pack("<I", 0))
+            return self._reg_result(2 if hkey in self.REG_ROOTS else 6)
+        return False
+
     def _gdi(self, ordinal):
         # GetDeviceCaps(hdc, index). The only device is the screen. Wine's
         # GetDeviceCaps16 returns nulldrv_GetDeviceCaps cast to INT16, with
@@ -1346,6 +1382,8 @@ class Pass04:
         if self.pending and self.pending[0] == "KEYBOARD" and self._keyboard(ordinal):
             return
         if self.pending and self.pending[0] == "GDI" and self._gdi(ordinal):
+            return
+        if self.pending and self.pending[0] == "SHELL" and self._shell(ordinal):
             return
         if self.pending and self.pending[0] in ("COMPOBJ", "OLE2", "OLE2DISP") and self._oleapi():
             return
