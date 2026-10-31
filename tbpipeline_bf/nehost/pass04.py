@@ -1227,6 +1227,17 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, len(text))
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # lstrcpyn(dst, src, n). Wine's lstrcpyn16 is lstrcpynA: at most n - 1
+        # characters and a NUL, nothing at all for n = 0, and n is signed, so
+        # a negative n has no limit. It returns dst. AX = 1 copied nothing.
+        if ordinal == 353:
+            dst_seg, dst_off, n = self._word(4), self._word(3), self._word(0)
+            if n:
+                src = self._string(self._word(2), self._word(1))
+                self._copy_to(dst_seg, dst_off, src, n if n < 0x8000 else 0x10000)
+            uc.reg_write(UC_X86_REG_AX, dst_off)
+            uc.reg_write(UC_X86_REG_DX, dst_seg)
+            return True
         if ordinal == 47:
             uc.reg_write(UC_X86_REG_AX, self.segs[139])
             uc.reg_write(UC_X86_REG_DX, 0)
