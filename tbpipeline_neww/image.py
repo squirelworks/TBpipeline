@@ -7,12 +7,29 @@ from .ne import Image, Segment, import_name, parse
 from .wine import GDI, KERNEL, SYSTEM, USER, WIN87EM, Wine
 
 
+class Selectors(dict):
+    """Segments by selector, found by descriptor index as the CPU finds them.
+
+    The table bit and RPL do not change which block a selector names, so a moveable
+    handle (the selector with the table bit set) finds its block too.
+    """
+
+    def __getitem__(self, sel):
+        return super().__getitem__(sel & ~7)
+
+    def get(self, sel, default=None):
+        return super().get(sel & ~7, default)
+
+    def __contains__(self, sel):
+        return super().__contains__(sel & ~7)
+
+
 class Sandbox:
     def __init__(self, root):
         self.root = Path(root)
         self.wine = Wine(root)
         self.images = {}
-        self.selectors = {}
+        self.selectors = Selectors()
         self.gates = {}
         # (module, ordinal) -> offset of the ES and DS words a register contract's stub loads.
         self.slots = {}
