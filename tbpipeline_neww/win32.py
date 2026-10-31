@@ -34,7 +34,7 @@ from .spec32_rows import SPEC32_ROWS
 
 # The Win32 modules Wine always has, by base name. Their HMODULE is neww's own number, with
 # nothing mapped there.
-WIN32_MODULES = ("KERNEL32", "USER32", "GDI32", "ADVAPI32", "WOW32", "SHELL32", "OLE32", "VERSION", "WINMM", "NTDLL")
+WIN32_MODULES = ("KERNEL32", "USER32", "GDI32", "ADVAPI32", "WOW32", "SHELL32", "OLE32", "VERSION", "WINMM", "NTDLL", "COMDLG32")
 HMODULE_BASE = 0x7B000000
 # include/winnt.h CPEX_DEST_CDECL, a flag in nrofargs of _CallProcEx32W.
 CPEX_DEST_CDECL = 0x80000000
@@ -267,9 +267,13 @@ def find_file(wine, name):
     return None
 
 
-def load_pe(wine, path):
+def load_pe(wine, path, new=None):
     """Map, relocate and bind a PE file, as ntdll loader.c load_native_dll and fixup_imports
-    do. Returns (module, stop). DllMain has not run."""
+    do. Returns (module, stop). DllMain has not run. A PE import not loaded yet is found in
+    --b and loaded first (fixup_imports -> load_dll), and each module loaded is appended to
+    new after the ones it imports, the order process_attach runs their DllMain in."""
+    if new is None:
+        new = []
     try:
         pe = PE(Path(path).read_bytes(), Path(path).name)
     except ValueError as exc:
@@ -289,8 +293,15 @@ def load_pe(wine, path):
         if target is None:
             other = st.modules.get(dll.upper().rsplit(".", 1)[0])
             if other is None:
-                return None, (f"{Path(path).name} imports {dll}, which is not a Wine builtin, "
-                              "and neww loads a PE file's PE imports only once they are loaded")
+                found = find_file(wine, dll)
+                if found is None:
+                    return None, (f"{Path(path).name} imports {dll}, which is neither a Wine builtin "
+                                  "nor a file in --b: Wine's loader fails the load (STATUS_DLL_NOT_FOUND)")
+                other, why = load_pe(wine, found, new)
+                if why:
+                    return None, why
+            else:
+                other.refs += 1
             target = other
         for iat, what in items:
             addr = proc_address(wine, target, what, bind=True)
@@ -301,6 +312,7 @@ def load_pe(wine, path):
     wine.write_linear(base, bytes(img))
     st.ranges.append((base, base + pe.size_of_image))
     st.modules[name] = module
+    new.append(module)
     wine.trace.append(f"  loaded {Path(path).name} at {base:#x}")
     return module, None
 
@@ -340,15 +352,19 @@ def load_library(wine, name):
         # ERROR_MOD_NOT_FOUND.
         st.last_error = 126
         return 0
-    module, why = load_pe(wine, path)
+    new = []
+    module, why = load_pe(wine, path, new)
     if why:
         yield why
-    if module.pe.entry:
-        wine.trace.append(f"  {module.name} DllMain(PROCESS_ATTACH)")
-        ok = yield module.base + module.pe.entry, [module.base, DLL_PROCESS_ATTACH, 0]
-        wine.trace.append(f"  {module.name} DllMain -> {ok:#x}")
+    for each in new:
+        # process_attach: the imports' DllMain first, then the importer's.
+        if not each.pe.entry:
+            continue
+        wine.trace.append(f"  {each.name} DllMain(PROCESS_ATTACH)")
+        ok = yield each.base + each.pe.entry, [each.base, DLL_PROCESS_ATTACH, 0]
+        wine.trace.append(f"  {each.name} DllMain -> {ok:#x}")
         if not ok:
-            yield (f"{module.name}'s DllMain(DLL_PROCESS_ATTACH) answered FALSE: Wine's loader would "
+            yield (f"{each.name}'s DllMain(DLL_PROCESS_ATTACH) answered FALSE: Wine's loader would "
                    "call it with DLL_PROCESS_DETACH and unload it, which neww does not do yet")
     return module.base
 

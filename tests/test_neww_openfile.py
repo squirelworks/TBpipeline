@@ -79,14 +79,26 @@ def run(path, files=None, book=True, mode=0):
 
 class OpenFileTable(unittest.TestCase):
     def test_tbk_handle_is_the_book(self):
-        host, mem, ax, bx = run("C:\\BOOKS\\LESSON.TBK")
+        # The book's own name, in any directory, opens the book from --c.
+        host, mem, ax, bx = run("C:\\BOOKS\\FIXTURE.TBK")
         self.assertIn("KERNEL.999", host.stop)
         self.assertEqual(bx, 5)
         self.assertEqual(ax, 4)
         self.assertEqual(struct.unpack_from("<I", mem, BUF)[0], 0x22222222)
         self.assertEqual(mem[OFS], 136)
         self.assertEqual(struct.unpack_from("<H", mem, OFS + 2)[0], 0)
-        self.assertEqual(mem[OFS + 8:OFS + 8 + 19], b"C:\\BOOKS\\LESSON.TBK")
+        self.assertEqual(mem[OFS + 8:OFS + 8 + 20], b"C:\\BOOKS\\FIXTURE.TBK")
+
+    def test_another_tbk_is_not_the_book(self):
+        # A book that opens another book by name gets that book or nothing, not itself.
+        _host, mem, _ax, bx = run("C:\\BOOKS\\LESSON.TBK")
+        self.assertEqual(bx, 0xFFFF)
+        self.assertEqual(struct.unpack_from("<H", mem, OFS + 2)[0], 2)
+
+    def test_another_tbk_beside_the_book_opens(self):
+        host, mem, _ax, bx = run("C:\\BOOKS\\OTHER.TBK", files={"other.tbk": b"\x33" * 0x1000})
+        self.assertEqual(bx, 5)
+        self.assertEqual(mem[BUF:BUF + 4], b"\x33\x33\x33\x33")
 
     def test_missing_ini_is_hfile_error(self):
         host, mem, _ax, bx = run("C:\\WINDOWS\\TB80.INI")
@@ -107,7 +119,7 @@ class OpenFileTable(unittest.TestCase):
     def test_read_write_mode_opens_the_book(self):
         # OF_READWRITE opens as OF_READ does: TB80NET opens the book so. A write to it stops
         # (write_file), since neww never writes the host.
-        host, mem, _ax, bx = run("A.TBK", mode=0x0002)
+        host, mem, _ax, bx = run("FIXTURE.TBK", mode=0x0002)
         self.assertNotEqual(bx, 0xFFFF)
         self.assertEqual(mem[BUF:BUF + 4], b"\x22\x22\x22\x22")
 

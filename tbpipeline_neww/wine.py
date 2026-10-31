@@ -349,6 +349,51 @@ SW_SHOWNORMAL = 1
 # directory through a DOS drive. Any directory finds the file: resolve() goes by base name.
 BIN_DIR = "C:\\TBK"
 
+# GetSystemDirectory16 is C:\WINDOWS\SYSTEM; a 32-bit program's is SYSTEM32.
+SYSTEM_DIRS = ("C:\\WINDOWS\\SYSTEM", "C:\\WINDOWS\\SYSTEM32")
+# The Win32 system DLLs neww answers for (spec32_rows.py), present in the system directory.
+SYSTEM_PLACEHOLDERS = ("KERNEL32.DLL", "USER32.DLL", "GDI32.DLL", "ADVAPI32.DLL", "WOW32.DLL")
+
+
+def is_dos_name(name):
+    """An 8.3 name: at most 8 characters, one dot, at most 3 after it, no spaces."""
+    stem, dot, ext = name.partition(".")
+    return bool(stem) and len(stem) <= 8 and len(ext) <= 3 and "." not in ext and " " not in name
+
+
+def short_alias(name, taken):
+    """Windows' short name for a long one: the stem's first six valid characters (spaces
+    and dots dropped, others not allowed in 8.3 made _), ~n with the first free n, then the
+    first three valid characters of the last extension."""
+    def clean(text):
+        return "".join(c if c.isalnum() or c in "!#$%&'()-@^_`{}~" else "_" for c in text.upper()
+                       if c not in " .")
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    stem, ext = clean(stem), clean(ext)[:3]
+    for n in range(1, 10000):
+        tail = f"~{n}"
+        alias = stem[:8 - len(tail)] + tail + ("." + ext if ext else "")
+        if alias not in taken:
+            return alias
+    return None
+
+
+def placeholder_pe(name):
+    """A minimal PE DLL header for a system DLL placeholder: MZ, e_lfanew 0x40, PE, i386,
+    IMAGE_FILE_DLL, and the name in the DOS stub area so it reads as what it is."""
+    blob = bytearray(0x200)
+    blob[0:2] = b"MZ"
+    struct.pack_into("<I", blob, 0x3C, 0x80)
+    note = f"neww placeholder for {name}".encode("latin1")
+    blob[0x40:0x40 + len(note)] = note
+    blob[0x80:0x84] = b"PE\0\0"
+    # IMAGE_FILE_HEADER: Machine i386, 0 sections, SizeOfOptionalHeader 0,
+    # Characteristics EXECUTABLE_IMAGE | 32BIT_MACHINE | DLL.
+    struct.pack_into("<HHIIIHH", blob, 0x84, 0x14C, 0, 0, 0, 0, 0, 0x2102)
+    return bytes(blob)
+
 # Wine hook.c: WH_MINHOOK is WH_MSGFILTER (-1), Win16 goes up to WH_SHELL (10), and only
 # these indexes (id - WH_MINHOOK) have a hook_procs entry.
 WH_MINHOOK = -1
@@ -798,16 +843,11 @@ class Wine(KernelState):
         return {"ax": attr, "cx": attr, "eflags_cf": 0}, None
 
     def _find_entries(self):
-        """The files a DOS search sees: neww's file system is base names, the --b directory,
-        the files created this run and the book, whatever directory the path names. A name
-        that is not 8.3 has no short name here, and the search skips it."""
+        """The files a DOS search sees: neww's file system is base names (dos_names), whatever
+        directory the path names, and the files created this run. A long name is seen by its
+        short alias."""
         self._kstate()
-        names = {}
-        for item in sorted(Path(self.root).iterdir()):
-            if item.is_file():
-                names[item.name.upper()] = item
-        if self.book is not None and Path(self.book).is_file():
-            names[Path(self.book).name.upper()] = Path(self.book)
+        names = {name: item for name, item in self.dos_names().items() if is_dos_name(name)}
         for name, data in self.written.items():
             names[name] = data
         out = []
@@ -853,7 +893,11 @@ class Wine(KernelState):
         if first:
             spec = self.read(reg("ds"), reg("dx"), 128).split(b"\x00", 1)[0].decode("cp437", "replace")
             path = self.full_path(spec)
-            mask = self.fcb_mask(path.rsplit("\\", 1)[-1])
+            last = path.rsplit("\\", 1)[-1]
+            mask = self.fcb_mask(last)
+            if mask is None and last.upper() in self.dos_names():
+                # A long name, as a working Windows finds it: the search is for its alias.
+                mask = self.fcb_mask(self.dos_name(self.dos_names()[last.upper()]))
             self.trace[-1] += f" FINDFIRST {spec!r} attr {reg('cx'):#x}"
             if mask is None:
                 return {"ax": 2, "eflags_cf": 1}, None
@@ -886,6 +930,10 @@ class Wine(KernelState):
         self.trace[-1] += " -> none"
         return {"ax": 18, "eflags_cf": 1}, None
 
+    def int31(self, reg):
+        from .selector16 import int31
+        return int31(self, reg)
+
     def int2f(self, reg):
         """Wine int2f.c DOSVM_Int2fHandler for the functions a run has reached. AH=15h is
         MSCDEX_Handler. neww has no CD-ROM drive, so is_cdrom is FALSE for every drive."""
@@ -903,19 +951,69 @@ class Wine(KernelState):
     def resolve(self, path):
         """The host file a guest path opens, or None.
 
-        A path ending in .tbk is the book from --c, whatever its directory.
-        Any other path, a system book (.sbk) among them, is its base name,
-        looked up without case in --b. Nothing else is searched.
+        neww's disk is a flat set of base names, whatever directory a path names: the files
+        in --b, the files beside the book, and the book. A long name is also found by its
+        short alias (dos_names). A .tbk path whose name is the book's opens the book from --c;
+        another .tbk is looked up like any file, so a book that opens another book by name
+        finds it beside it. In the system directory (C:\\WINDOWS\\SYSTEM or SYSTEM32) the
+        Win32 system DLLs are there too, as on any working Windows (system_placeholder).
         """
-        name = path.replace("/", "\\").rsplit("\\", 1)[-1].rsplit(":", 1)[-1]
-        if name.lower().endswith(".tbk"):
-            return self.book
+        full = path.replace("/", "\\")
+        name = full.rsplit("\\", 1)[-1].rsplit(":", 1)[-1]
         if not name:
             return None
-        for item in Path(self.root).iterdir():
-            if item.is_file() and item.name.lower() == name.lower():
-                return item
-        return None
+        folder = full.rsplit("\\", 1)[0].upper() if "\\" in full else ""
+        if folder in SYSTEM_DIRS and name.upper() in SYSTEM_PLACEHOLDERS:
+            return self.system_placeholder(name.upper())
+        return self.dos_names().get(name.upper())
+
+    def dos_names(self):
+        """Upper-case name -> host Path, for every file neww's disk has: each name, and for
+        a name that is not 8.3 its short alias too, made as Windows makes them (first six
+        valid characters, ~1, ~2, ... in name order, the first three of the extension). The
+        book from --c wins over a file of the same name."""
+        files = {}
+        dirs = [Path(self.root)]
+        if self.book is not None and Path(self.book).parent.resolve() != Path(self.root).resolve():
+            dirs.append(Path(self.book).parent)
+        for folder in dirs:
+            if not folder.is_dir():
+                continue
+            for item in sorted(folder.iterdir()):
+                if item.is_file():
+                    files.setdefault(item.name.upper(), item)
+        if self.book is not None:
+            files[Path(self.book).name.upper()] = Path(self.book)
+        out = dict(files)
+        for long_name in sorted(files):
+            if is_dos_name(long_name):
+                continue
+            alias = short_alias(long_name, out)
+            out[alias] = files[long_name]
+        return out
+
+    def dos_name(self, host):
+        """The 8.3 name neww's disk shows for a host file: its own, or its alias."""
+        name = Path(host).name
+        if is_dos_name(name.upper()):
+            return name
+        for alias, item in self.dos_names().items():
+            if item == Path(host) and is_dos_name(alias):
+                return alias
+        return name
+
+    def system_placeholder(self, name):
+        """A file standing in for a Win32 system DLL, as a working Windows has one in its
+        system directory: a PE header naming the DLL, nothing to run. Loading it goes to
+        neww's own Win32 module of that name (win32.py), as LoadLibraryEx32W does."""
+        folder = getattr(self, "_placeholder_dir", None)
+        if folder is None:
+            import tempfile
+            folder = self._placeholder_dir = Path(tempfile.mkdtemp(prefix="neww-system-"))
+        target = folder / name
+        if not target.exists():
+            target.write_bytes(placeholder_pe(name))
+        return target
 
     def _handle(self, path, host):
         handle = self.next_file
@@ -1718,4 +1816,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, tasks, win32, kernel32, mmsystem16  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, tasks, win32, kernel32, mmsystem16, selector16  # noqa: E402,F401

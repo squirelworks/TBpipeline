@@ -57,6 +57,8 @@ WIN32_SPEC_FILES = {
     "GDI32": "dlls/gdi32/gdi32.spec",
     "ADVAPI32": "dlls/advapi32/advapi32.spec",
     "WOW32": "dlls/wow32/wow32.spec",
+    "COMDLG32": "dlls/comdlg32/comdlg32.spec",
+    "VERSION": "dlls/version/version.spec",
 }
 
 ENTRY32 = re.compile(r"^\s*(@|\d+)\s+(stdcall|cdecl|varargs)\b")
