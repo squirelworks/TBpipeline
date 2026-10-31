@@ -13,8 +13,11 @@ Not a release. `1.0.0r6` stays the version.
 - The same `TBK_INI` directory answers the extensionless `TB80enu` open. `OpenFile`'s style word is recorded beside each path.
 - Guest reads of the PSP command tail at `0x80` are recorded, and `02_launch.txt` counts them. The fake PSP is built in one place for pass 04 and pass 06.
 - A status line under every page says compressed ToolBook pictures are not drawn, that the decoder is `TB80BMP` ordinal 3, and that the host stops at `0x1FCD`. The reader does not decode them.
+- `--open`'s `click` lines name the handler that ran and its offset, then the page it landed on: `P20000 buttonClick 0x… -> P20001`. A page whose click ran nothing says `no buttonClick`.
 - No host change: a test pins the `.tbk` / `.sbk` rule. `OpenFile`, `_lopen`, and DOS `3Dh` on such a path return a handle whose bytes are the command-line book, and the magic at `0xC00` reads back through it. A `0xFFFF` there fails the test.
 - Each run keeps its last Windows call with the registers it returned. `02_launch.txt` and `pass06` print it as `last call ...`.
+- `--open` lists `unread` handlers: ones whose expansion copied bytes from outside the book. Each line gives the page, the handler, its offset, and how many bytes were written as `?` for that reason. A real `?` in the source is not counted.
+- `next` and `back` run the page's `to handle next` or `to handle previous` / `back` when it has a jump the engine can compile, in `engine.py` and in `render.html`. Without one they use the page list, as before.
 - `bmp_bitmap.py` applies `TB80BMP`'s relocs, so the far call at `0x1FCD` is bound. An internal target runs; an import stops and is named. It prints instead of rewriting `bmp_bitmap.txt`.
 
 ## 1.0.0r6
