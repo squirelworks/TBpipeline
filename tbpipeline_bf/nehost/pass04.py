@@ -894,6 +894,12 @@ class Pass04:
         # task in AX and the first task in DX; this host runs one task. The
         # handle is a zeroed block the host keeps. TB80UTL and TB80LNL key
         # their per-task tables on it, and AX = 1 is not a selector.
+        # Yield(). Wine's Yield16 is void. With a message queue it peeks
+        # once (PM_REMOVE | PM_QS_SENDMESSAGE), otherwise OldYield16 releases
+        # and retakes the Win16 lock. This host runs one task with no queue,
+        # so there is nothing to switch to and the call returns.
+        if ordinal == 29:
+            return True
         if ordinal == 36:
             if not getattr(self, "task_handle", 0):
                 self.task_handle = self.arena.alloc_selector(0x200, 0x92, bytes(0x200))
