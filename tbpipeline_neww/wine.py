@@ -142,9 +142,14 @@ METRICS = {
 # exposes one monitor in modes[2], 1024x768, when no current mode is saved in the registry.
 METRICS[0], METRICS[1] = 1024, 768
 
+# SM_CXFRAME and SM_CYFRAME are SM_CXDLGFRAME 3 plus max(BorderWidth, 1). BorderWidth is
+# TWIPS_ENTRY( BORDER, -15, ...), and get_twips_entry turns -15 twips into muldiv(15, dpi, 1440)
+# pixels. A Win16 task is DPI unaware, so get_system_dpi is USER_DEFAULT_SCREEN_DPI 96: 1 pixel.
+METRICS[32], METRICS[33] = 3 + 1, 3 + 1
+
 # The other cases of that switch. Any index that is not a case returns 0.
 METRICS_FROM_HOST = frozenset([
-    2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 32, 33, 34, 35,
+    2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 34, 35,
     36, 37, 38, 39, 40, 42, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
     68, 69, 70, 71, 72, 76, 77, 78, 79, 80,
 ])
