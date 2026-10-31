@@ -1816,4 +1816,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, tasks, win32, kernel32, mmsystem16, selector16  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, tasks, win32, kernel32, mmsystem16, selector16, input16  # noqa: E402,F401

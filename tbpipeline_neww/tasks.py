@@ -123,7 +123,8 @@ def next_ready(wine, prefer=None):
 
 
 def earliest_timer(wine, include_current=True):
-    """(due, task) of the first timer of a task waiting for messages, or None."""
+    """(due, task) of the first timer, or hardware input due later, of a task waiting for
+    messages, or None."""
     from .user_wnd import wm
     m = wm(wine)
     best = None
@@ -138,6 +139,11 @@ def earliest_timer(wine, include_current=True):
         for timer in m.queue_of(t.htask).timers.values():
             if best is None or timer[2] < best[0]:
                 best = (timer[2], t)
+        # Hardware input waiting for its time counts as a timer: the clock moves to it.
+        from .input16 import due_time
+        due = due_time(wine, t.htask)
+        if due is not None and (best is None or due < best[0]):
+            best = (due, t)
     return best
 
 
