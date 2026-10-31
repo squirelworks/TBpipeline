@@ -387,7 +387,7 @@ class Cpu:
             ss = uc.reg_read(UC_X86_REG_SS)
             args = [self._word(ss, sp + 4 + n * 2) for n in range(8)]
         try:
-            ax = self.layer.call(module, ordinal, args)
+            ax = self.layer.call(module, ordinal, args, at=self._site(uc))
         except Gap as exc:
             self.stop = str(exc)
             uc.emu_stop()
@@ -402,9 +402,16 @@ class Cpu:
                 uc.mem_write(seg["base"] + (off & 0xFFFF), raw)
                 ax = len(raw.rstrip(b"\x00"))
         if module == "KERNEL" and ordinal == 15:
-            lo = args[1] if len(args) > 1 else 0
-            hi = args[2] if len(args) > 2 else 0
-            size = (lo | (hi << 16)) or 0x1000
+            # pascal16 GlobalAlloc(word long): flags is pushed first, so the
+            # dword size is on top, low word nearest SP.
+            lo = args[0] if args else 0
+            hi = args[1] if len(args) > 1 else 0
+            asked = lo | (hi << 16)
+            size = asked or 0x1000
+            if size > 0x10000:
+                # One selector, one 16-bit segment. A larger block needs
+                # __AHINCR tiling, which this layer does not do.
+                self.layer.capped.append((ax, asked))
             size = min(size, 0x10000)
             size = max((size + 0xFFF) & ~0xFFF, 0x1000)
             base = self.linear
@@ -432,6 +439,20 @@ class Cpu:
         if self.layer.exit is not None:
             self.stop = f"dos exit {self.layer.exit:#x}"
             uc.emu_stop()
+
+    def _site(self, uc):
+        """The far call that reached the gate. SS:SP is still the return address."""
+        sp = uc.reg_read(UC_X86_REG_SP)
+        ss = uc.reg_read(UC_X86_REG_SS)
+        ip, cs = self._word(ss, sp), self._word(ss, sp + 2)
+        seg = self.selectors.get(cs)
+        if seg is not None and ip >= 5:
+            try:
+                if uc.mem_read(seg["base"] + ip - 5, 1)[0] == 0x9A:
+                    return cs, ip - 5, "call"
+            except UcError:
+                pass
+        return cs, ip, "return"
 
     def _unmapped(self, uc, access, address, size, value, user):
         self.stop = f"unmapped {address:#x}"
