@@ -17,11 +17,12 @@ from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, INITTASK, last_call_li
 from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
 from .win32 import Win32
+from .windows import Windows
 
 from unicorn import UcError, UC_HOOK_CODE
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
-    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP,
+    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP, UC_X86_REG_EIP,
     UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_CS,
 )
 
@@ -43,11 +44,12 @@ UNPACKED = str(unpacked())
 # WinExec returns to its caller only once the new task reaches one of them.
 YIELDS = {("USER", 108), ("USER", 109), ("USER", 112), ("KERNEL", 29)}
 
+TRAMP32 = 0xF100           # below 64K, beside the real-mode start code at 0xF000
 COUNT = 4_000_000      # instructions, shared by every task
 TIMEOUT = 30_000_000   # microseconds, shared by every task
 
 
-class Pass06(Win32, Pass04):
+class Pass06(Windows, Win32, Pass04):
     # Set by _run_tasks. The first task is the runtime.
     tasks = ()
     task = None
@@ -427,7 +429,15 @@ class Pass06(Win32, Pass04):
     def _slice(self, ip):
         # Unicorn's 16-bit emu_start takes a real-mode address and sets IP
         # to begin - CS * 16, whatever the descriptor base is.
-        begin = (self.uc.reg_read(UC_X86_REG_CS) << 4) + ip
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        if ip > 0xFFFF:
+            # It also keeps only 16 bits of IP. A 32-bit EIP is reached
+            # through `jmp dword [TRAMP32 + 0x10]` at a low linear address,
+            # which the flat 32-bit code selector sees at that offset.
+            self.uc.mem_write(TRAMP32, bytes([0xFF, 0x25]) + struct.pack("<I", TRAMP32 + 0x10))
+            self.uc.mem_write(TRAMP32 + 0x10, struct.pack("<I", ip))
+            ip = TRAMP32
+        begin = (cs << 4) + ip
         left = COUNT - self.executed
         micros = TIMEOUT - self.spent
         if left <= 0 or micros <= 0:
@@ -448,14 +458,33 @@ class Pass06(Win32, Pass04):
         self.exe_inst = target.get("exe_inst") or target["inst"]
         if target["ctx"] is not None:
             self.uc.context_restore(target["ctx"])
-            return self.uc.reg_read(UC_X86_REG_IP)
-        # A fresh task starts from its own code selector. Segment registers
-        # cannot be loaded from the host in protected mode, so the far jump
-        # in thunk slot 0 gets there and the start code loads them.
-        # The caller stopped inside the thunk, so CS is already the thunk.
-        self.arena.write(self.thunk, 0, bytes([0xEA, 0, 0, target["start"] & 0xFF, target["start"] >> 8]))
-        if self.uc.reg_read(UC_X86_REG_CS) != self.thunk:
-            self.fault = f"cannot start {target['name']}: stopped outside the thunk"
+            return self.uc.reg_read(UC_X86_REG_EIP)
+        # A fresh task starts from its own code selector, and its start code
+        # loads the segment registers.
+        return self._dispatch(target["start"], 0)
+
+    def _dispatch(self, sel, off, ds=0):
+        """IP to resume at so that the guest far-jumps to sel:off with DS = ds.
+
+        Segment registers cannot be loaded from the host in protected mode.
+        The run stopped inside the thunk or a module stub, so slot 0 of the
+        current CS is a far jump to the dispatcher, which loads DS from its
+        own data and jumps through its own far pointer. The code never
+        changes, only the data, so no translated block goes stale.
+        """
+        if not getattr(self, "dispatcher", 0):
+            code = bytes([
+                0x2E, 0xA1, 0x44, 0x00,         # mov ax, cs:[0x44]
+                0x8E, 0xD8,                     # mov ds, ax
+                0x2E, 0xFF, 0x2E, 0x40, 0x00,   # jmp far cs:[0x40]
+            ])
+            self.dispatcher = self.arena.alloc_selector(0x80, 0x9A, code.ljust(0x80, b"\x00"))
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        if cs != self.thunk and cs not in getattr(self, "stub_module", {}):
+            self.fault = f"cannot leave {cs:#x}: stopped outside the thunk"
+            return 0
+        self.arena.write(self.dispatcher, 0x40, struct.pack("<HHH", off, sel, ds))
+        self.arena.write(cs, 0, bytes([0xEA, 0, 0, self.dispatcher & 0xFF, self.dispatcher >> 8]))
         return 0
 
 

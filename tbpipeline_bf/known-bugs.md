@@ -4,7 +4,7 @@
 
 The entry asks for `TB80.INI` and `TB80enu1.DLL`, then parses the book name with `OpenFile(..., OF_PARSE)`. Every open is logged in `opens`. Only a `.tbk` or `.sbk` gets a handle. Nothing is rendered unless you pass `--dbgrender`.
 
-## The wall: SendMessageTimeoutA to TB80NET's window
+## The wall: TB80NET's OpenFile with OF_REOPEN
 
 This is where the bf host sequence of item 27 stops. TB80BAS segment 45 `0x32` starts the book file manager with `WinExec("TB80NET.exe ToolBook", 2)`, checks the result is above 32, and then requires the word at its `DS:0x37C` to be non-zero. That word is written only by TB80BAS segment 45 `0x68`, an entry the new task calls with its window. So the book file manager is a second Win16 task talking to the runtime through a shared DLL and window messages.
 
@@ -14,10 +14,12 @@ TB80W16 gets the Windows 95/NT generic thunks with `GetProcAddress(LoadLibrary("
 
 Pass 06 runs it (`nedllhost/win32.py`). `LoadLibraryEx32W` maps the PE at its image base, `0x10000000`. It binds each import to a stub that the host answers by name, and it runs the entry point as 32-bit code on a flat code and data selector, with its own stack and TEB. `CallProc32W` and `CallProcEx32W` run an export the same way and return `EAX` in `DX:AX`. A Win32 call the host has no answer for stops the run, and the stop names it. With the unpacked binaries and `TB80W32.DLL` in `TBK_UNPACKED`, pass 06 used to stop at `win32 KERNEL32.GetVersion`, the first call of TB80W32's C runtime start-up.
 
-`nedllhost/win32api.py` answers the start-up and the calls after it the way Windows 98 does: the C runtime's heap, environment, command line, code pages and locale, the `WOW32` pointer and handle maps, the string calls, the temp-file name, and the mutexes (one thread, so a wait is satisfied at once). An unknown locale type stops the run. The runtime goes on past the `TB80enu1.DLL` and `fixture.tbk` opens, starts TB80NET, and stops on:
+`nedllhost/win32api.py` answers the start-up and the calls after it the way Windows 98 does: the C runtime's heap, environment, command line, code pages and locale, the `WOW32` pointer and handle maps, the string calls, the temp-file name, and the mutexes (one thread, so a wait is satisfied at once). An unknown locale type stops the run. The runtime goes on past the `TB80enu1.DLL` and `fixture.tbk` opens, starts TB80NET, and used to stop at `win32 USER32.SendMessageTimeoutA`.
+
+`nedllhost/windows.py` keeps a window table. A class keeps its procedure and instance. `CreateWindow` sends `WM_NCCREATE` and `WM_CREATE`. A registered message is an atom from `0xC000`. A send calls the window procedure with `DS` = the window's instance. A send to another task's window runs on that task's stack, with its context restored, and returns to the sender. TB80NET registers `TbkNet3TB80` and creates window `0x100`, and TB80W32's `SendMessageTimeoutA(0x100, 0xC01D, 0xA, …)` now reaches it. With the unpacked binaries, pass 06 stops on the runtime's own message box:
 
 ```
-win32 USER32.SendMessageTimeoutA
+message box 'Error' type 0x2025: 'This network book cannot be opened. Either another user is using it, or you do not have proper privileges for its network location. Try making the book read-only.'
 ```
 
-TB80W32 sends the book file manager its first request: `SendMessageTimeoutA(hwnd 1, msg 1, 0xA, 1178:0550, SMTO_BLOCK, INFINITE, ...)`. Both `1`s come from `AX = 1`. TB80NET's `CreateWindow` (`USER.41`) and TB80BAS's `RegisterWindowMessage` (`USER.118`) still fall through to it, as do `RegisterClass` (`USER.57`) and the 16-bit `SendMessage`. The next behavior is a window table: classes with their window procedures, windows with their task, registered message numbers from `0xC000`, and a send that calls the target window's procedure.
+The request's `lParam` is an `OFSTRUCT` whose `szPathName` is the book. TB80NET opens it with `OpenFile(NULL, &ofs, OF_REOPEN | ...)` (`0x8012`, `0x8020`, `0x8022`). The host has no `OF_REOPEN`. It qualified the empty name and wrote `C:\TOOLBOOK\` over `szPathName`, so the book's path became `C:\TOOLBOOK\` and the open failed. The next behavior is `OF_REOPEN`: open the path the `OFSTRUCT` already holds.

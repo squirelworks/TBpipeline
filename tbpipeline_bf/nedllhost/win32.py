@@ -13,7 +13,7 @@ never returns a made-up value.
 
 Entering 32-bit code needs segment loads, and the host cannot load a
 segment register in protected mode, so the switch is made in the guest:
-the 16-bit stub selector's slot 0 is a far jump to ENTRY32, which loads
+Pass06._dispatch jumps to a gate whose far jump reaches ENTRY32, which loads
 the selectors, takes ESP and the target from a parameter block, calls
 the target, and ends in `out 0xE2, al`. The host saves the 16-bit
 context before the jump and restores it at that OUT.
@@ -23,7 +23,7 @@ import struct
 
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_CS, UC_X86_REG_DX, UC_X86_REG_EAX, UC_X86_REG_EDX,
-    UC_X86_REG_ESP, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
+    UC_X86_REG_EIP, UC_X86_REG_ESP, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
 from tbpipeline_bf.nehost.win16stack import POP
@@ -51,6 +51,11 @@ WIN32 = {}
 
 class Unanswered(Exception):
     pass
+
+
+# A handler returns PENDING when it has started a call whose completion
+# sets EAX itself.
+PENDING = object()
 
 
 def _u32(buf, off):
@@ -141,6 +146,10 @@ class Win32:
             # Base 0, 4 GB, 4K granularity, 32-bit.
             self.arena._write_descriptor(sel // 8, 0, 0xFFFFF, info["access"], 0xC)
         self.fs32 = self.arena.alloc_selector(0x1000, 0x92, fixed_base=TEB)
+        # A 16-bit far jump cannot carry a 32-bit offset, so the dispatcher
+        # jumps here first: jmp far code32:ENTRY32.
+        self.code32_gate = self.arena.alloc_selector(
+            0x10, 0x9A, bytes([0x66, 0xEA]) + struct.pack("<IH", ENTRY32, self.code32) + bytes(8))
         top = STACK32 + STACK32_SIZE
         # NT_TIB: no exception handler, the stack, and the TEB's own address.
         self.uc.mem_write(TEB, struct.pack("<III", 0xFFFFFFFF, top, STACK32) + bytes(12) + struct.pack("<I", TEB))
@@ -294,26 +303,20 @@ class Win32:
 
     def _enter32(self, target, params, done):
         uc = self.uc
-        cs = uc.reg_read(UC_X86_REG_CS)
-        if self.stub_module.get(cs) is None:
-            self.fault = f"cannot enter 32-bit code from {cs:#x}"
-            return 0
         saved = uc.context_save()
         top = self.frames32[-1][2] - 0x40 if self.frames32 else STACK32 + STACK32_SIZE - 0x40
         esp = top - 4 * len(params)
         uc.mem_write(esp, b"".join(struct.pack("<I", p & 0xFFFFFFFF) for p in params))
         uc.mem_write(PARAMS32, struct.pack("<II", esp, target))
         self.frames32.append((saved, done, esp))
-        # Slot 0 of the stub selector: jmp far code32:ENTRY32.
-        self.arena.write(cs, 0, bytes([0x66, 0xEA]) + struct.pack("<IH", ENTRY32, self.code32))
-        return 0
+        return self._dispatch(self.code32_gate, 0)
 
     def _leave32(self):
         saved, done, _ = self.frames32.pop()
         eax = self.uc.reg_read(UC_X86_REG_EAX)
         self.uc.context_restore(saved)
         done(eax)
-        return self.uc.reg_read(UC_X86_REG_IP)
+        return self.uc.reg_read(UC_X86_REG_EIP)
 
     def _on_out(self, uc, port, size, value, user):
         if port == PORT_RETURN32:
@@ -338,16 +341,20 @@ class Win32:
             return
         pop, handler = answer
         args = struct.unpack("<8I", bytes(uc.mem_read(esp + 4, 32)))
+        if pop:
+            ret = bytes(uc.mem_read(esp, 4))
+            uc.mem_write(esp + pop, ret)
+            uc.reg_write(UC_X86_REG_ESP, esp + pop)
         try:
             eax = handler(self, args)
         except Unanswered as exc:
             self.fault = f"win32 {name} {exc}"
             uc.emu_stop()
             return
-        if pop:
-            ret = bytes(uc.mem_read(esp, 4))
-            uc.mem_write(esp + pop, ret)
-            uc.reg_write(UC_X86_REG_ESP, esp + pop)
+        if eax is PENDING:
+            # The answer comes from 16-bit code the handler started; its
+            # completion sets EAX in the restored context.
+            return
         uc.reg_write(UC_X86_REG_EAX, eax & 0xFFFFFFFF)
         uc.reg_write(UC_X86_REG_EDX, 0)
 
