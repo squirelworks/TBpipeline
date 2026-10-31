@@ -836,6 +836,25 @@ class Pass04:
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
 
+    def _keyboard(self, ordinal):
+        # AnsiToOem(src, dst). AX=1 copied nothing, and TB80BAS opened the
+        # book under whatever its stack buffer held.
+        if ordinal != 5:
+            return False
+        dst, src = (self._word(1), self._word(0)), (self._word(3), self._word(2))
+        text = self._string(*src).encode("latin1")
+        oem = bytearray()
+        for ch in text:
+            try:
+                oem += bytes([ch]).decode("cp1252").encode("cp437")
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                oem.append(ch)
+        if dst[0] in self.arena.segs:
+            self.arena.write(dst[0], dst[1], bytes(oem) + b"\x00")
+        self.uc.reg_write(UC_X86_REG_AX, 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
     def _com_unk(self):
         """One IUnknown whose Query/AddRef/Release just return."""
         pair = getattr(self, "_com_pair", None)
@@ -1016,6 +1035,8 @@ class Pass04:
         if self.pending and self.pending[0] == "KERNEL" and self._kernel_proc(ordinal):
             return
         if self.pending and self.pending[0] == "USER" and self._user(ordinal):
+            return
+        if self.pending and self.pending[0] == "KEYBOARD" and self._keyboard(ordinal):
             return
         if self.pending and self.pending[0] in ("COMPOBJ", "OLE2", "OLE2DISP") and self._oleapi():
             return

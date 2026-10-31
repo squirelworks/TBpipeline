@@ -154,6 +154,8 @@ The default is still `AX = 1`. These are the calls that could not stay that way.
 
 **KERNEL.336** `IsBadCodePtr` is read from the arena: a known selector with the code bit set (`access & 0x08`) and an offset at or under its limit is good (0), anything else is bad (1). TB80BAS segment 7 dispatches book-file commands at `0x928`; before it calls the handler through `[bx]` it asks `IsBadCodePtr` (`0x788:0xB09`). With `AX = 1` the handler never ran, the command returned 0, and the runtime raised "Failed initializing the book file manager. Make sure the file TB80NET.EXE is available in your PATH." With it answered, the handler runs and the next stop is the runtime's "Not a valid file name." box, after a DOS open of a garbage name.
 
+**KEYBOARD.5** `AnsiToOem` is answered. TB80BAS segment 10 builds the book's path at `0x2C0A`: `lstrlen` of the name, then `AnsiToOem` into one stack buffer, then `OemToAnsi` (`KEYBOARD.6`) into another, then `OpenFile` through TB80W16. With both at `AX = 1` the buffers kept stack garbage and `OpenFile` got `'P\x07'`; the runtime said "Not a valid file name." The conversion maps 1252 to 437 byte by byte and keeps a byte either side cannot name. `KEYBOARD` has a pop table entry now, so the call is dispatched by module; `-1` is the return Wine gives.
+
 **USER.179** `GetSystemMetrics` returns a small table. Metric `0x29` is `SM_PENWINDOWS`. A non-zero value makes startup call `RegisterPenApp` through a null pointer. It stays 0.
 
 **USER.266** `SetMessageQueue` is the ordinal `run.py` prints by name. The return is 1. There is no queue.
