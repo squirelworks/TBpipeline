@@ -10,11 +10,13 @@ fall through zeros.
 import os
 import struct
 import sys
+import time
 
 from tbpipeline_bf.binpath import unpacked
 from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, last_call_line
 from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
+from .win32 import Win32
 
 from unicorn import UcError
 from unicorn.x86_const import (
@@ -38,7 +40,12 @@ EQUATES = {
 UNPACKED = str(unpacked())
 
 
-class Pass06(Pass04):
+# One run's budget, shared by every slice of it.
+COUNT = 4_000_000      # instructions per slice
+TIMEOUT = 30_000_000   # microseconds, for the whole run
+
+
+class Pass06(Win32, Pass04):
     def build(self):
         self.dlls = {}
         self.dll_segs = {}
@@ -291,15 +298,38 @@ class Pass06(Pass04):
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
         self.fault = ""
+        self._run_from(0xF000)
+        return self.last
+
+    def _run_from(self, begin):
+        """Run until a stop. A stop that leaves a jump (entering or leaving
+        32-bit code) runs on from where the jump puts CS:IP."""
+        self.jump = None
+        self.spent = 0
+        self._slice(begin)
+        while not self.fault and self.jump is not None:
+            go, self.jump = self.jump, None
+            ip = go()
+            if self.fault:
+                break
+            # Unicorn's 16-bit emu_start takes a real-mode address and sets
+            # IP to begin - CS * 16, whatever the descriptor base is.
+            self._slice((self.uc.reg_read(UC_X86_REG_CS) << 4) + ip)
+        if not self.fault:
+            self.fault = "returned"
+
+    def _slice(self, begin):
+        micros = TIMEOUT - self.spent
+        if micros <= 0:
+            self.fault = self.fault or "timeout"
+            return
+        began = time.monotonic()
         try:
-            self.uc.emu_start(0xF000, 0, timeout=30_000_000, count=4_000_000)
+            self.uc.emu_start(begin, 0, timeout=micros, count=COUNT)
         except UcError as exc:
             if not self.fault:
                 self.fault = str(exc)
-        else:
-            if not self.fault:
-                self.fault = "returned"
-        return self.last
+        self.spent += int((time.monotonic() - began) * 1_000_000)
 
     def _startup(self, stack, code):
         """Set the EXE stack, call each DLL entry, then jump to the EXE."""
