@@ -1,4 +1,4 @@
-"""Item 27: int 2Fh AX = 150Bh, the MSCDEX CD-ROM drive check, finds no MSCDEX.
+"""int 2Fh AX = 150Bh, the MSCDEX CD-ROM drive check, finds no MSCDEX.
 
 TB80BAS segment 2 0x56B asks whether drive CX is a CD-ROM. BX = 0xADAD
 back means MSCDEX is installed. With nothing on the multiplex, DOS
@@ -36,8 +36,11 @@ class MscdexDriveCheck(unittest.TestCase):
         self.assertEqual(host.uc.reg_read(UC_X86_REG_CX), 3)
 
     def test_other_multiplex_calls_still_stop(self):
-        host = drive_check(0x1600)
-        self.assertEqual(host.fault, "int 0x2f")
+        # Only AX = 150Bh is answered. Every other AX stops as before.
+        for ax in (0x1500, 0x150A, 0x150C, 0x1600, 0x4300):
+            with self.subTest(ax=hex(ax)):
+                host = drive_check(ax)
+                self.assertEqual(host.fault, "int 0x2f")
 
 
 if __name__ == "__main__":

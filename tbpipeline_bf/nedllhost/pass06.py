@@ -19,7 +19,7 @@ from .bind import DLLS, export_names, exports, modules, segment_bytes
 from .win32 import Win32
 from .windows import Windows
 
-from unicorn import UcError, UC_HOOK_CODE
+from unicorn import UcError
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
     UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP, UC_X86_REG_EIP,
@@ -40,20 +40,23 @@ EQUATES = {
 
 UNPACKED = str(unpacked())
 
-# The calls where a Win16 task gives the CPU away when its queue is empty.
+# A Win16 task gives the CPU away on these when its queue is empty.
 # WinExec returns to its caller only once the new task reaches one of them.
 YIELDS = {("USER", 108), ("USER", 109), ("USER", 112), ("KERNEL", 29)}
 
-TRAMP32 = 0xF100           # below 64K, beside the real-mode start code at 0xF000
-COUNT = 4_000_000      # instructions, shared by every task
-TIMEOUT = 30_000_000   # microseconds, shared by every task
+
+# One run's budget, shared by every slice of it.
+COUNT = 4_000_000      # instructions per slice
+TIMEOUT = 30_000_000   # microseconds, for the whole run
 
 
-class Pass06(Windows, Win32, Pass04):
-    # Set by _run_tasks. The first task is the runtime.
-    tasks = ()
+class Pass06(Win32, Pass04):
+    # Set by run and _run_tasks. The first task is the runtime. Unset, WinExec
+    # of a missing file stays the wall instead of starting a task.
+    tasks = None
     task = None
-
+    task_log = None
+    switch = None
     def build(self):
         self.dlls = {}
         self.dll_segs = {}
@@ -290,9 +293,9 @@ class Pass06(Windows, Win32, Pass04):
             disp = nxt
 
     def _kernel_proc(self, ordinal):
-        # WinExec. TB80BAS starts the book file manager, TB80NET.EXE, and
-        # waits for it to call back with its window. The EXE is loaded as a
-        # second task in this CPU; the caller gets its instance once it yields.
+        # WinExec. An EXE in the unpacked directory is a second task in this
+        # CPU. The caller gets its instance once that task yields. A missing
+        # EXE falls through to the wall, which stops and quotes the command.
         if ordinal == 166 and self._win_exec():
             return True
         return super()._kernel_proc(ordinal)
@@ -302,11 +305,13 @@ class Pass06(Windows, Win32, Pass04):
         show = self._word(0)
         name, _, tail = cmd.strip().partition(" ")
         path = self._task_file(name)
-        if not path or not self.tasks or any(t["file"] == os.path.basename(path).upper() for t in self.tasks):
+        tasks = self.tasks
+        if not path or not tasks or any(t["file"] == os.path.basename(path).upper() for t in tasks):
             return False
         task = self._load_task(path, tail, show)
-        self.tasks.append(task)
-        self.task_log.append(f"winexec {cmd!r} started {task['name']} instance {task['inst']:#x}")
+        tasks.append(task)
+        if self.task_log is not None:
+            self.task_log.append(f"winexec {cmd!r} started {task['name']} instance {task['inst']:#x}")
         self.uc.reg_write(UC_X86_REG_AX, task["inst"])
         self.uc.reg_write(UC_X86_REG_DX, 0)
         self.switch = task
@@ -331,9 +336,11 @@ class Pass06(Windows, Win32, Pass04):
         for the reloc pass. Imports into the ToolBook DLLs bind to the copies
         already loaded, which is what makes the two tasks share TB80BAS.
         """
-        data = open(path, "rb").read()
+        with open(path, "rb") as fh:
+            data = fh.read()
         ne = struct.unpack_from("<H", data, 0x3C)[0]
-        nseg, segoff = struct.unpack_from("<HH", data, ne + 0x1C)[0], struct.unpack_from("<H", data, ne + 0x22)[0]
+        nseg = struct.unpack_from("<H", data, ne + 0x1C)[0]
+        segoff = struct.unpack_from("<H", data, ne + 0x22)[0]
         shift = struct.unpack_from("<H", data, ne + 0x32)[0]
         auto, heap, stack = struct.unpack_from("<HHH", data, ne + 0x0E)
         ip, cs = struct.unpack_from("<HH", data, ne + 0x14)
@@ -394,7 +401,8 @@ class Pass06(Windows, Win32, Pass04):
 
     def _answer(self, uc, ordinal):
         task = self.task
-        if task is None or task is self.tasks[0]:
+        tasks = self.tasks
+        if task is None or not tasks or task is tasks[0]:
             return super()._answer(uc, ordinal)
         module = self._calling_module()
         if (module, ordinal) == ("KERNEL", INITTASK) and not task["init"]:
@@ -417,38 +425,12 @@ class Pass06(Windows, Win32, Pass04):
             # the call until a message is delivered to it.
             self._fix_ret(ordinal)
             self.calls.append(ordinal)
-            self.task_log.append(f"{task['name']} yielded at {module}.{ordinal}")
-            self.switch = self.tasks[0]
+            if self.task_log is not None:
+                self.task_log.append(f"{task['name']} yielded at {module}.{ordinal}")
+            self.switch = tasks[0]
             uc.emu_stop()
             return
         super()._answer(uc, ordinal)
-
-    def _count(self, uc, address, size, user):
-        self.executed += 1
-
-    def _slice(self, ip):
-        # Unicorn's 16-bit emu_start takes a real-mode address and sets IP
-        # to begin - CS * 16, whatever the descriptor base is.
-        cs = self.uc.reg_read(UC_X86_REG_CS)
-        if ip > 0xFFFF:
-            # It also keeps only 16 bits of IP. A 32-bit EIP is reached
-            # through `jmp dword [TRAMP32 + 0x10]` at a low linear address,
-            # which the flat 32-bit code selector sees at that offset.
-            self.uc.mem_write(TRAMP32, bytes([0xFF, 0x25]) + struct.pack("<I", TRAMP32 + 0x10))
-            self.uc.mem_write(TRAMP32 + 0x10, struct.pack("<I", ip))
-            ip = TRAMP32
-        begin = (cs << 4) + ip
-        left = COUNT - self.executed
-        micros = TIMEOUT - self.spent
-        if left <= 0 or micros <= 0:
-            return
-        began = time.monotonic()
-        try:
-            self.uc.emu_start(begin, 0, timeout=micros, count=left)
-        except UcError as exc:
-            if not self.fault:
-                self.fault = str(exc)
-        self.spent += int((time.monotonic() - began) * 1_000_000)
 
     def _switch(self):
         target, self.switch = self.switch, None
@@ -487,6 +469,13 @@ class Pass06(Windows, Win32, Pass04):
         self.arena.write(cs, 0, bytes([0xEA, 0, 0, self.dispatcher & 0xFF, self.dispatcher >> 8]))
         return 0
 
+    def _begin_tasks(self):
+        if self.tasks:
+            return
+        self.tasks = [{"name": "TB80RTM", "file": "TB80RTM.EXE", "inst": self.exe_inst, "ctx": None}]
+        self.task = self.tasks[0]
+        self.task_log = []
+        self.switch = None
 
     def run(self):
         self.build()
@@ -503,39 +492,56 @@ class Pass06(Windows, Win32, Pass04):
         ]))
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
-        self._run_tasks(0xF000)
+        self.fault = ""
+        self._begin_tasks()
+        self._run_from(0xF000)
         return self.last
 
-    def _run_tasks(self, ip):
-        """Run from ip until no task is left to switch to.
+    def _run_tasks(self, begin):
+        """Run from begin until no task is left to switch to.
 
-        The instruction count and the timeout are one budget for all tasks.
-        A stop inside a task other than the first is prefixed with its name.
+        Tests enter here. A real run() uses the same loop.
         """
         self.fault = ""
-        self.tasks = [{"name": "TB80RTM", "file": "TB80RTM.EXE", "inst": self.exe_inst, "ctx": None}]
-        self.task = self.tasks[0]
-        self.task_log = []
-        self.switch = None
+        self.tasks = None
+        self._begin_tasks()
+        self._run_from(begin)
+
+    def _run_from(self, begin):
+        """Run until a stop. A stop that leaves a jump (entering or leaving
+        32-bit code) or a task switch runs on from where that puts CS:IP."""
         self.jump = None
-        self.executed = 0
+        self.switch = None
         self.spent = 0
-        self.uc.hook_add(UC_HOOK_CODE, self._count)
-        self._slice(ip)
-        while not self.fault:
+        self._slice(begin)
+        while not self.fault and (self.jump is not None or self.switch is not None):
             if self.switch is not None:
                 ip = self._switch()
-            elif self.jump is not None:
-                # A host-side transfer, such as entering 32-bit code.
+            else:
                 go, self.jump = self.jump, None
                 ip = go()
-            else:
+            if self.fault:
                 break
-            self._slice(ip)
+            # Unicorn's 16-bit emu_start takes a real-mode address and sets
+            # IP to begin - CS * 16, whatever the descriptor base is.
+            self._slice((self.uc.reg_read(UC_X86_REG_CS) << 4) + ip)
         if not self.fault:
             self.fault = "returned"
-        elif self.task is not self.tasks[0]:
+        elif self.task is not None and self.tasks and self.task is not self.tasks[0]:
             self.fault = f"{self.task['name']}: {self.fault}"
+
+    def _slice(self, begin):
+        micros = TIMEOUT - self.spent
+        if micros <= 0:
+            self.fault = self.fault or "timeout"
+            return
+        began = time.monotonic()
+        try:
+            self.uc.emu_start(begin, 0, timeout=micros, count=COUNT)
+        except UcError as exc:
+            if not self.fault:
+                self.fault = str(exc)
+        self.spent += int((time.monotonic() - began) * 1_000_000)
 
     def _startup(self, stack, code):
         """Set the EXE stack, call each DLL entry, then jump to the EXE."""
@@ -582,7 +588,7 @@ def main():
     print(f"opens: {host.opens or 'none'}")
     print(last_call_line(host.last_call))
     print(f"dll entries bound {len(used)}")
-    for line in host.task_log:
+    for line in host.task_log or ():
         print(f"task: {line}")
     return 0
 

@@ -16,7 +16,7 @@ class UnknownGateDoesNotPop(unittest.TestCase):
         fixups = [(3, 1, 4, 1, UNKNOWN)]
         neww_ne.exit_program_with(directory, before, fixups)
         host = Machine(directory)
-        sp0 = len(host.box.exe.segments[host.box.exe.auto - 1].data) - 2
+        sp0 = host.box.exe.segments[host.box.exe.auto - 1].minsize + host.box.exe.stack
         host.run()
         return host, sp0, host.uc.reg_read(UC_X86_REG_SP), host.uc.reg_read(UC_X86_REG_AX)
 

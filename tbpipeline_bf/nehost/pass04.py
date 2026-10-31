@@ -28,8 +28,13 @@ API_PORT = 0xE0
 # Modules that are part of Windows itself. LoadLibrary finds them loaded.
 SYSTEM_MODULES = {"KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND", "DISPLAY", "MOUSE"}
 INITTASK = 91
+# The task's own file name, as KERNEL.49 GetModuleFileName gives it.
+EXE_PATH = "C:\\TOOLBOOK\\TB80RTM.EXE"
+OF_CREATE = 0x1000
+OF_DELETE = 0x0200
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
+OF_REOPEN = 0x8000
 
 # Names other than *.ini the entry opens that TBK_INI may answer. The
 # pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
@@ -58,6 +63,29 @@ def ax1_line(module, ordinal, words, cs, ip):
     """One line of 02_launch.txt for a call that got the AX = 1 default."""
     stack = " ".join(f"{w:04x}" for w in words)
     return f"ax=1 {module}.{ordinal} from {cs:#06x}:{ip:#06x} stack {stack}"
+
+
+def _string_to_integer(text):
+    """ntdll RtlUnicodeStringToInteger with base 0: leading blanks, a sign,
+    a 0b / 0o / 0x prefix, then digits up to the first that does not fit."""
+    i = 0
+    while i < len(text) and text[i] <= " ":
+        i += 1
+    sign = 1
+    if i < len(text) and text[i] in "+-":
+        sign = -1 if text[i] == "-" else 1
+        i += 1
+    base = 10
+    if text[i:i + 2].lower() in ("0b", "0o", "0x"):
+        base = {"b": 2, "o": 8, "x": 16}[text[i + 1].lower()]
+        i += 2
+    value = 0
+    for ch in text[i:]:
+        digit = int(ch, 36) if ch.isascii() and ch.isalnum() else 99
+        if digit >= base:
+            break
+        value = value * base + digit
+    return sign * value
 
 
 class Pass04:
@@ -264,11 +292,6 @@ class Pass04:
         ss = uc.reg_read(UC_X86_REG_SS)
         sp = uc.reg_read(UC_X86_REG_SP)
         ret_ip, ret_cs = struct.unpack("<HH", self.arena.read(ss, sp, 4))
-        stub = getattr(self, "stub_module", {}).get(uc.reg_read(UC_X86_REG_CS))
-        if stub:
-            # A call through a GetProcAddress pointer: the stub names the module.
-            self.callers[(ret_cs, ret_ip)] = (stub, ordinal)
-            self.sites[(ret_cs, ret_ip)] = (stub, ordinal, POP[stub][ordinal])
         site = self.sites.get((ret_cs, ret_ip))
         pop = site[2] if site else self._pushed(ret_cs, ret_ip)
         self.pending = site
@@ -304,6 +327,14 @@ class Pass04:
     def _kernel_heap(self, ordinal):
         """GlobalAlloc/Lock/Free. A fake 0000:0001 pointer was written through the GDT."""
         uc = self.uc
+        # GlobalCompact(dwMinFree). Wine's GlobalCompact16 compacts nothing
+        # and returns GLOBAL_MAX_ALLOC_SIZE, 0x00FF0000 (16M - 64K), as the
+        # largest free block. AX = 1 with DX left as it was said one byte, or
+        # whatever DX held.
+        if ordinal == 25:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0x00FF)
+            return True
         if ordinal == 15:
             size = self._word(0) | (self._word(1) << 16)
             flags = self._word(2)
@@ -335,6 +366,17 @@ class Pass04:
         if ordinal == 19:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
+        # GlobalWire(handle). Wine's GlobalWire16 is WIN16_GlobalLock16: the
+        # block's 16:16 address in DX:AX, with the selector in CX as well,
+        # and 0 for a handle that is not a block. As with GlobalLock here, a
+        # handle is its own selector and the block does not move.
+        if ordinal == 111:
+            handle = self._word(0)
+            sel = handle if handle in self.heap else 0
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, sel)
+            uc.reg_write(UC_X86_REG_CX, sel)
+            return True
         if ordinal == 21:
             # GlobalHandle: AX is the handle, DX the selector, and here they
             # are one value. TB80UTL keeps DX as a heap's selector; DX = 0
@@ -348,6 +390,13 @@ class Pass04:
             size = self.heap.get(self._word(0), 0)
             uc.reg_write(UC_X86_REG_AX, size & 0xFFFF)
             uc.reg_write(UC_X86_REG_DX, (size >> 16) & 0xFFFF)
+            return True
+        # GlobalUnWire(handle). Wine's GlobalUnWire16 is !GlobalUnlock16:
+        # TRUE once the lock count is 0, and TRUE for a handle that is not a
+        # block, since GlobalUnlock16 gives FALSE there. This host keeps no
+        # lock counts (GlobalUnlock above answers 0), so it is always TRUE.
+        if ordinal == 112:
+            uc.reg_write(UC_X86_REG_AX, 1)
             return True
         if ordinal == 5:
             return self._local_alloc(self._word(1), self._word(0))
@@ -366,6 +415,12 @@ class Pass04:
             ds = uc.reg_read(UC_X86_REG_DS)
             heap = self.local.get(ds, {})
             uc.reg_write(UC_X86_REG_AX, heap.get("sizes", {}).get(self._word(0), 0))
+            return True
+        if ordinal == 198:
+            # GlobalUnfix(handle). Wine's GlobalUnfix16 is void: it lowers
+            # the block's lock count and returns nothing. This host keeps no
+            # lock counts, as GlobalUnlock shows, so nothing changes and no
+            # register is set. AX = 1 logged it as unanswered.
             return True
         if ordinal in (23, 24):
             # LockSegment / UnlockSegment. -1 means the current data segment.
@@ -472,6 +527,10 @@ class Pass04:
         if ordinal == 74:
             style = self._word(0)
             path = self._string(self._word(4), self._word(3))
+            if style & OF_REOPEN:
+                # The name is the szPathName an earlier OpenFile left in
+                # the OFSTRUCT; lpFileName is not read.
+                path = self._string(self._word(2), (self._word(1) + 8) & 0xFFFF)
             self.opens.append(path)
             self.open_styles.append((path, style))
             print(f"  open {path}", file=sys.stderr, flush=True)
@@ -481,6 +540,13 @@ class Pass04:
                 self._ofstruct(full, 0)
                 uc.reg_write(UC_X86_REG_AX, 0)
                 return True
+            if style & OF_DELETE:
+                gone = self.created.pop(full.upper(), None) is not None
+                self._ofstruct(full, 0 if gone else 2)
+                uc.reg_write(UC_X86_REG_AX, 1 if gone else 0xFFFF)
+                return True
+            if style & OF_CREATE:
+                self.create_file(full)
             handle = self._take_file(path)
             self._ofstruct(full, 0 if handle is not None else 2)
             if handle is not None and style & OF_EXIST:
@@ -501,7 +567,7 @@ class Pass04:
             count = self._word(0)
             blob = self.files.get(handle, b"")
             pos = self.pos.get(handle, 0)
-            chunk = blob[pos:pos + count]
+            chunk = bytes(blob[pos:pos + count])
             self.pos[handle] = pos + len(chunk)
             if chunk:
                 self.arena.write(self._word(2), self._word(1), chunk)
@@ -526,6 +592,22 @@ class Pass04:
         if ordinal == 81:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
+        if ordinal == 86:
+            # _lwrite(hFile, lpBuffer, cbWrite). Only a file the guest created
+            # takes writes; the book and the INI files are read-only here.
+            handle, count = self._word(3), self._word(0)
+            blob = self.files.get(handle)
+            if not isinstance(blob, bytearray):
+                uc.reg_write(UC_X86_REG_AX, 0xFFFF)
+                return True
+            pos = self.pos.get(handle, 0)
+            data = self.arena.read(self._word(2), self._word(1), count) if count else b""
+            if pos > len(blob):
+                blob.extend(bytes(pos - len(blob)))
+            blob[pos:pos + len(data)] = data
+            self.pos[handle] = pos + len(data)
+            uc.reg_write(UC_X86_REG_AX, len(data))
+            return True
         return False
 
     def _ofstruct(self, full, error):
@@ -537,8 +619,27 @@ class Pass04:
         name = full.encode("latin1", "replace")[:127]
         self.arena.write(seg, off, struct.pack("<BBHI", 136, 1, error, 0) + name + b"\x00")
 
+    @property
+    def created(self):
+        """Files the guest created, by full upper-case path. Not on disk."""
+        if not hasattr(self, "_created"):
+            self._created = {}
+        return self._created
+
+    def create_file(self, full):
+        """Create or truncate a file the guest made, e.g. a temp file."""
+        self.created[full.upper()] = bytearray()
+
     def _take_file(self, path):
         low = path.lower().replace("/", "\\")
+        full = path if path[1:2] == ":" else "C:\\TOOLBOOK\\" + path.lstrip("\\")
+        if full.upper() in self.created:
+            # The same bytearray: what one handle writes, the next reads.
+            handle = self.next_handle
+            self.next_handle += 1
+            self.files[handle] = self.created[full.upper()]
+            self.pos[handle] = 0
+            return handle
         if low.endswith((".tbk", ".sbk")):
             blob = self.book_bytes
         else:
@@ -566,6 +667,30 @@ class Pass04:
         for entry in os.listdir(root):
             if entry.lower() == base:
                 return open(os.path.join(root, entry), "rb").read()
+        return None
+
+    def _profile_value(self, path, app, key):
+        """A key's value from the INI TBK_INI supplies, or None.
+
+        Sections and keys match without case, as in Windows. With app or
+        key NULL, Windows lists the names; that is not answered here and
+        the caller gets the default.
+        """
+        if app is None or key is None:
+            return None
+        base = path.replace("/", "\\").split("\\")[-1].lower()
+        raw = self._ini_bytes(base if "." in base else base + ".ini")
+        if raw is None:
+            return None
+        section = None
+        for line in raw.decode("latin1").splitlines():
+            line = line.strip()
+            if line.startswith("[") and "]" in line:
+                section = line[1:line.index("]")].strip().lower()
+            elif section == app.lower() and "=" in line and not line.startswith(";"):
+                name, _, value = line.partition("=")
+                if name.strip().lower() == key.lower():
+                    return value.strip()
         return None
 
     def _copy_to(self, seg, offset, text, limit):
@@ -706,30 +831,8 @@ class Pass04:
             if mod["name"] == stem:
                 return handle
         handle = self.arena.alloc_selector(16, 0x92, b"\x00" * 16)
-        self.mods[handle] = {"name": stem, "resources": [], "procs": {}, "ords": {}, "system": True}
+        self.mods[handle] = {"name": stem, "resources": [], "procs": {}, "ords": {}}
         return handle
-
-    def _module_stub(self, name, ordinal):
-        """(offset, selector) of a callable stub for name.ordinal, or None.
-
-        GetProcAddress on a system module hands out a pointer the caller
-        calls through, so no reloc names the call site. Each module gets
-        its own stub selector, laid out like the thunk, and _fix_ret reads
-        the module from the selector the OUT runs in. Only ordinals with a
-        known pop size get a stub.
-        """
-        if POP.get(name, {}).get(ordinal) is None or ordinal * 8 + 8 > 0x2000:
-            return None
-        if not hasattr(self, "stub_module"):
-            self.stub_module = {}
-        sel = next((s for s, m in self.stub_module.items() if m == name), None)
-        if sel is None:
-            blob = bytearray(0x2000)
-            for n in range(1, 0x2000 // 8):
-                blob[n * 8:n * 8 + 8] = bytes([0xBA, n & 0xFF, n >> 8, 0xE6, API_PORT, 0xCA, 0x00, 0x00])
-            sel = self.arena.alloc_selector(len(blob), 0x9A, bytes(blob))
-            self.stub_module[sel] = name
-        return ordinal * 8, sel
 
     def _load_library(self, name):
         system = self._system_module(name)
@@ -754,6 +857,11 @@ class Pass04:
             print(f"  load {name!r} -> {handle:#x}", file=sys.stderr, flush=True)
             uc.reg_write(UC_X86_REG_AX, handle)
             uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # FreeLibrary(hinst). Wine's FreeLibrary16 is void and only drops a
+        # usage count while other users remain. This host keeps no counts and
+        # unloads nothing, so the module stays as it was.
+        if ordinal == 96:
             return True
         if ordinal == 60:
             mod = self.mods.get(self._word(4) or self.exe_inst)
@@ -816,6 +924,62 @@ class Pass04:
     def _kernel_proc(self, ordinal):
         """Pointers must be null or a real thunk. AX=1 was called as 0000:0001."""
         uc = self.uc
+        # GetCurrentTask. Wine's WIN16_GetCurrentTask returns the current
+        # task in AX and the first task in DX; this host runs one task. The
+        # handle is a zeroed block the host keeps. TB80UTL and TB80LNL key
+        # their per-task tables on it, and AX = 1 is not a selector.
+        # Yield(). Wine's Yield16 is void. With a message queue it peeks
+        # once (PM_REMOVE | PM_QS_SENDMESSAGE), otherwise OldYield16 releases
+        # and retakes the Win16 lock. This host runs one task with no queue,
+        # so there is nothing to switch to and the call returns.
+        if ordinal == 29:
+            return True
+        if ordinal == 36:
+            if not getattr(self, "task_handle", 0):
+                self.task_handle = self.arena.alloc_selector(0x200, 0x92, bytes(0x200))
+            uc.reg_write(UC_X86_REG_AX, self.task_handle)
+            uc.reg_write(UC_X86_REG_DX, self.task_handle)
+            return True
+        # WaitEvent(hTask). Wine's NE_CreateThread posts one event to start
+        # the task, and WaitEvent16 takes a pending event and returns FALSE.
+        # With none pending it blocks until another task posts one; this host
+        # runs one task, so nothing ever would, and the run stops there
+        # instead of waiting forever.
+        if ordinal == 30:
+            events = getattr(self, "task_events", 1)
+            if events == 0:
+                self.fault = "WaitEvent with no event pending: the task would block"
+                uc.emu_stop()
+                return True
+            self.task_events = events - 1
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        # GetDOSEnvironment(). Wine's GetDOSEnvironment16 copies the
+        # environment strings, then the WORD 1 and the program name
+        # "C:\\WINDOWS\\SYSTEM\\KRNL386.EXE", into one fixed block and returns
+        # it as a SEGPTR in DX:AX. This host gives the guest no variables, so
+        # the strings are the one empty terminator. AX = 1 was 0000:0001.
+        if ordinal == 131:
+            if not getattr(self, "dos_environment", 0):
+                block = b"\x00" + struct.pack("<H", 1) + b"C:\\WINDOWS\\SYSTEM\\KRNL386.EXE\x00"
+                self.dos_environment = self.arena.alloc_selector(len(block), 0x92, block)
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, self.dos_environment)
+            return True
+        # GetVDMPointer32W(vp, fMode), a generic thunk, pops 6. Wine's
+        # GetVDMPointer32W16 is K32WOWGetVDMPointer: with fMode set, the
+        # selector's descriptor base plus the offset; with fMode 0, the
+        # real-mode address seg * 16 + off. An empty descriptor has base 0.
+        if ordinal == 516:
+            mode, off, sel = self._word(0), self._word(1), self._word(2)
+            if mode:
+                info = self.arena.segs.get(sel)
+                linear = (info["base"] if info else 0) + off
+            else:
+                linear = sel * 16 + off
+            uc.reg_write(UC_X86_REG_AX, linear & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, (linear >> 16) & 0xFFFF)
+            return True
         # IsBadCodePtr(lpfn). AX=1 is "bad": TB80BAS skipped its file
         # manager's handler and the book open failed.
         if ordinal == 336:
@@ -825,12 +989,18 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, 0 if good else 1)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # WinExec(cmdline, show). TB80BAS starts the book file manager,
+        # TB80NET.EXE, a second Win16 task that calls back into TB80BAS with
+        # its window. This host runs one task, so the call is the wall.
+        if ordinal == 166:
+            cmd = self._string(self._word(2), self._word(1))
+            self.fault = f"winexec {cmd!r} show {self._word(0)}"
+            uc.emu_stop()
+            return True
         if ordinal == 50:
             noff, nseg, hmod = self._word(0), self._word(1), self._word(2)
             mod = self.mods.get(hmod) or (self.mods.get(self.exe_inst) if hmod == 0 else None)
-            if nseg == 0 and (mod or {}).get("system"):
-                hit = self._module_stub(mod["name"], noff)
-            elif nseg == 0:
+            if nseg == 0:
                 hit = (mod or {}).get("ords", {}).get(noff)
             else:
                 hit = (mod or {}).get("procs", {}).get(self._string(nseg, noff).lower())
@@ -840,23 +1010,6 @@ class Pass04:
         if ordinal == 52:
             uc.reg_write(UC_X86_REG_AX, 0)
             uc.reg_write(UC_X86_REG_DX, 0)
-            return True
-        # WinExec(cmdline, show). TB80BAS starts the book file manager,
-        # TB80NET.EXE, a second Win16 task that calls back into TB80BAS with
-        # its window. Pass 06 runs an EXE it can find as a second task; here
-        # the call is the wall.
-        if ordinal == 166:
-            cmd = self._string(self._word(2), self._word(1))
-            self.fault = f"winexec {cmd!r} show {self._word(0)}"
-            uc.emu_stop()
-            return True
-        # LoadLibraryEx32W(lpszLibFile, hFile, dwFlags), the first generic
-        # thunk call. TB80W16 loads TB80W32.DLL, 32-bit code, through it.
-        # This host runs no 32-bit DLL, so the call is the wall.
-        if ordinal == 513:
-            name = self._string(self._word(5), self._word(4))
-            self.fault = f"LoadLibraryEx32W {name!r}"
-            uc.emu_stop()
             return True
         if ordinal != 51:
             return False
@@ -917,6 +1070,37 @@ class Pass04:
             self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
             self.uc.emu_stop()
             return True
+        # SetMessageQueue(size). Wine's SetMessageQueue16 is SetMessageQueue,
+        # which returns TRUE for any size: the queue grows as it needs to.
+        if ordinal == 266:
+            self.uc.reg_write(UC_X86_REG_AX, 1)
+            return True
+        # InitApp(hInstance). Wine's InitApp16 creates the task's message queue
+        # and returns TRUE when it has one. This host keeps no queue, and
+        # nothing in the run reads one, so the answer is TRUE.
+        if ordinal == 5:
+            self.uc.reg_write(UC_X86_REG_AX, 1)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # GetSysColor(index). Wine's GetSysColor16 reads system_colors in
+        # win32u/sysparams.c, COLOR_SCROLLBAR to COLOR_MENUBAR, and gives 0
+        # out of range. AX = 1 was a near-black red for every element.
+        if ordinal == 180:
+            index = self._word(0)
+            colors = (
+                (212, 208, 200), (58, 110, 165), (10, 36, 106), (128, 128, 128),
+                (212, 208, 200), (255, 255, 255), (0, 0, 0), (0, 0, 0),
+                (0, 0, 0), (255, 255, 255), (212, 208, 200), (212, 208, 200),
+                (128, 128, 128), (10, 36, 106), (255, 255, 255), (212, 208, 200),
+                (128, 128, 128), (128, 128, 128), (0, 0, 0), (212, 208, 200),
+                (255, 255, 255), (64, 64, 64), (212, 208, 200), (0, 0, 0),
+                (255, 255, 225), (181, 181, 181), (0, 0, 200), (166, 202, 240),
+                (192, 192, 192), (10, 36, 106), (212, 208, 200),
+            )
+            r, g, b = colors[index] if index < len(colors) else (0, 0, 0)
+            self.uc.reg_write(UC_X86_REG_AX, r | (g << 8))
+            self.uc.reg_write(UC_X86_REG_DX, b)
+            return True
         # wsprintf(out, fmt, ...) is cdecl, so the caller pops. AX=1 left
         # the buffer as it was, and the error box the runtime raised read
         # as garbage.
@@ -927,6 +1111,57 @@ class Pass04:
             if out[0] in self.arena.segs:
                 self.arena.write(out[0], out[1], text + b"\x00")
             self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # wvsprintf(out, fmt, args). Wine's wvsprintf16 formats as wsprintf16
+        # does, with the arguments read from the far pointer args instead of
+        # the stack. Pascal, so the host pops. AX = 1 left the buffer as it was.
+        if ordinal == 421:
+            out = (self._word(5), self._word(4))
+            fmt = self._box_text(self._word(3), self._word(2))
+            args_seg, args_off = self._word(1), self._word(0)
+
+            def arg(k):
+                return struct.unpack_from("<H", self.arena.read(args_seg, (args_off + 2 * k) & 0xFFFF, 2))[0]
+
+            text = self._wsprintf(fmt, 0, arg).encode("latin1", "replace")[:1023]
+            if out[0] in self.arena.segs:
+                self.arena.write(out[0], out[1], text + b"\x00")
+            self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # RegisterWindowMessage(lpString). Wine's RegisterWindowMessageA is
+        # GlobalAddAtomA: one atom from 0xC000 per name, without case. AX = 1
+        # gave every message the same number. RegisterClipboardFormat(lpString)
+        # is the same call in Wine (NtUserRegisterWindowMessage).
+        if ordinal in (118, 145):
+            name = self._string(self._word(1), self._word(0)).lower()
+            atoms = self.__dict__.setdefault("message_atoms", {})
+            atom = atoms.setdefault(name, 0xC000 + len(atoms))
+            self.uc.reg_write(UC_X86_REG_AX, atom)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # RegisterClass(lpWndClass), pops 4. Wine's RegisterClass16 copies
+        # the WNDCLASS16 into RegisterClassEx16, which returns the class
+        # atom, or 0 when the instance already has a class of that name.
+        # Class names and registered messages share USER's atom table, so
+        # the atom comes from the same table as RegisterWindowMessage.
+        if ordinal == 57:
+            raw = self.arena.read(self._word(1), self._word(0), 26)
+            style, proc_off, proc_seg, cls_extra, wnd_extra, inst = struct.unpack_from("<6H", raw, 0)
+            name_off, name_seg = struct.unpack_from("<HH", raw, 22)
+            name = f"#{name_off}" if name_seg == 0 else self._string(name_seg, name_off)
+            classes = self.__dict__.setdefault("classes", {})
+            if (name.lower(), inst) in classes:
+                atom = 0
+            else:
+                atoms = self.__dict__.setdefault("message_atoms", {})
+                atom = atoms.setdefault(name.lower(), 0xC000 + len(atoms))
+                classes[(name.lower(), inst)] = {
+                    "name": name, "atom": atom, "style": style, "proc": (proc_seg, proc_off),
+                    "cls_extra": cls_extra, "wnd_extra": wnd_extra, "inst": inst,
+                }
+            self.uc.reg_write(UC_X86_REG_AX, atom)
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
         # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
@@ -963,6 +1198,108 @@ class Pass04:
         if dst[0] in self.arena.segs:
             self.arena.write(dst[0], dst[1], bytes(out) + b"\x00")
         self.uc.reg_write(UC_X86_REG_AX, 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
+    # The registry. This host has no hive, so the predefined roots
+    # (HKEY_CLASSES_ROOT 0x80000000 to HKEY_DYN_DATA 0x80000006) are the only
+    # keys, and none of them has a subkey or a value.
+    REG_ROOTS = range(0x80000000, 0x80000007)
+
+    def _hkey(self, lo, hi):
+        """Wine's fix_win16_hkey: 0 and 1 are HKEY_CLASSES_ROOT in Win16."""
+        hkey = lo | (hi << 16)
+        return 0x80000000 if hkey in (0, 1) else hkey
+
+    def _reg_result(self, error):
+        self.uc.reg_write(UC_X86_REG_AX, error & 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_DX, (error >> 16) & 0xFFFF)
+        return True
+
+    def _shell(self, ordinal):
+        # RegOpenKey(hkey, name, retkey). Wine's RegOpenKey16 fixes the Win16
+        # root and calls RegOpenKeyA: no retkey is ERROR_INVALID_PARAMETER,
+        # an empty or null name hands back hkey itself, and otherwise
+        # open_key clears *retkey and the missing key is
+        # ERROR_FILE_NOT_FOUND. A key that is not a root was never handed
+        # out here, so it is ERROR_INVALID_HANDLE.
+        if ordinal == 1:
+            ret_off, ret_seg = self._word(0), self._word(1)
+            name_off, name_seg = self._word(2), self._word(3)
+            hkey = self._hkey(self._word(4), self._word(5))
+            if not ret_seg and not ret_off:
+                return self._reg_result(87)
+            name = self._string(name_seg, name_off) if name_seg or name_off else ""
+            if not name:
+                self._store(ret_seg, ret_off, struct.pack("<I", hkey))
+                return self._reg_result(0)
+            self._store(ret_seg, ret_off, struct.pack("<I", 0))
+            return self._reg_result(2 if hkey in self.REG_ROOTS else 6)
+        # RegCloseKey(hkey). Wine's RegCloseKey16 fixes the Win16 root and
+        # calls RegCloseKey: a predefined root (0x80000000 and up) is
+        # ERROR_SUCCESS without a close, and any other key goes to NtClose.
+        # This host hands out no other key, so that is ERROR_INVALID_HANDLE.
+        if ordinal == 3:
+            hkey = self._hkey(self._word(0), self._word(1))
+            return self._reg_result(0 if hkey >= 0x80000000 else 6)
+        # RegQueryValue(hkey, name, data, count). Wine's RegQueryValue16
+        # fixes the Win16 root, masks *count to 16 bits, and calls
+        # RegQueryValueA. A name opens that subkey first, which fails as
+        # RegOpenKey does. With no name it reads hkey's default value; a
+        # default that is not there is "" with *count 1 and ERROR_SUCCESS.
+        # A root has no value here, and any other key is
+        # ERROR_INVALID_HANDLE.
+        if ordinal == 6:
+            cnt_off, cnt_seg = self._word(0), self._word(1)
+            data_off, data_seg = self._word(2), self._word(3)
+            name_off, name_seg = self._word(4), self._word(5)
+            hkey = self._hkey(self._word(6), self._word(7))
+            has_count = bool(cnt_seg or cnt_off)
+            if has_count and cnt_seg in self.arena.segs:
+                count = struct.unpack("<I", self.arena.read(cnt_seg, cnt_off, 4))[0] & 0xFFFF
+                self._store(cnt_seg, cnt_off, struct.pack("<I", count))
+            name = self._string(name_seg, name_off) if name_seg or name_off else ""
+            if name:
+                return self._reg_result(2 if hkey in self.REG_ROOTS else 6)
+            if hkey not in self.REG_ROOTS:
+                return self._reg_result(6)
+            if data_seg or data_off:
+                self._store(data_seg, data_off, b"\x00")
+            if has_count:
+                self._store(cnt_seg, cnt_off, struct.pack("<I", 1))
+            return self._reg_result(0)
+        return False
+
+    def _gdi(self, ordinal):
+        # GetStockObject(index). Wine's GetStockObject16 is the low word of
+        # GetStockObject: index + FIRST_GDI_HANDLE (32) at 96 DPI, for 0 to
+        # STOCK_LAST + 1 (20) except 9, and 0 for any other index. AX = 1
+        # handed every stock pen, brush and font back as one handle.
+        if ordinal == 87:
+            index = self._word(0)
+            valid = index <= 20 and index != 9
+            self.uc.reg_write(UC_X86_REG_AX, index + 32 if valid else 0)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # GetDeviceCaps(hdc, index). The only device is the screen. Wine's
+        # GetDeviceCaps16 returns nulldrv_GetDeviceCaps cast to INT16, with
+        # NUMCOLORS -1 turned into 2048: 32 bits per pixel when no display
+        # reports a mode, 96 DPI for an application that is not DPI aware,
+        # and 0 for an index it does not know. HORZRES and VERTRES are the
+        # screen GetSystemMetrics reports. AX = 1 was one bit per pixel and
+        # one pixel per inch.
+        if ordinal != 80:
+            return False
+        width, height, dpi = 800, 600, 96
+        value = {
+            0: 0x4000, 2: 1,
+            4: (width * 254 + dpi * 5) // (dpi * 10), 6: (height * 254 + dpi * 5) // (dpi * 10),
+            8: width, 10: height, 12: 32, 14: 1, 16: -1, 18: -1, 24: 2048,
+            28: 0x1FF, 30: 0xFE, 32: 0xFF, 34: 0x79F7, 36: 1, 38: 0xBE99,
+            40: 36, 42: 36, 44: 51, 88: dpi, 90: dpi, 106: 20, 108: 24,
+            116: 1, 117: height, 118: width,
+        }.get(self._word(0), 0)
+        self.uc.reg_write(UC_X86_REG_AX, value & 0xFFFF)
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
 
@@ -1011,6 +1348,39 @@ class Pass04:
     def _kernel_string(self, ordinal):
         """Far-string helpers. A stub return of 1 was loaded as a selector."""
         uc = self.uc
+        if ordinal in (58, 128):
+            # GetPrivateProfileString(app, key, default, buf, size, file).
+            # AX = 1 left the buffer as it was and said one character came
+            # back. The value is the key's from the INI TBK_INI supplies,
+            # else the default, cut to size - 1 and NUL-terminated.
+            # GetProfileString(app, key, default, buf, size) is the same call
+            # on "win.ini" in Wine's GetProfileString16.
+            n = 2 if ordinal == 128 else 0
+            size = self._word(n)
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(8 + n), self._word(7 + n)) if self._word(8 + n) else None
+            key = self._string(self._word(6 + n), self._word(5 + n)) if self._word(6 + n) else None
+            default = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else ""
+            value = self._profile_value(path, app, key)
+            text = default.rstrip(" ") if value is None else value
+            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(2 + n), self._word(1 + n), text, size) if size else 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal in (57, 127):
+            # GetPrivateProfileInt(app, key, default, file). AX = 1 said every
+            # key held 1. Wine's GetPrivateProfileInt16 reads the value into a
+            # 30-character buffer: missing or empty gives the default, else
+            # RtlUnicodeStringToInteger with base 0, cast to INT16.
+            # GetProfileInt(app, key, default) is the same call on "win.ini"
+            # in Wine's GetProfileInt16.
+            n = 2 if ordinal == 127 else 0
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else None
+            key = self._string(self._word(2 + n), self._word(1 + n)) if self._word(2 + n) else None
+            value = (self._profile_value(path, app, key) or "")[:29]
+            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(n))
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         if ordinal == 88:
             dst_seg, dst_off = self._word(3), self._word(2)
             src = self._string(self._word(1), self._word(0))
@@ -1031,13 +1401,24 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, len(text))
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # lstrcpyn(dst, src, n). Wine's lstrcpyn16 is lstrcpynA: at most n - 1
+        # characters and a NUL, nothing at all for n = 0, and n is signed, so
+        # a negative n has no limit. It returns dst. AX = 1 copied nothing.
+        if ordinal == 353:
+            dst_seg, dst_off, n = self._word(4), self._word(3), self._word(0)
+            if n:
+                src = self._string(self._word(2), self._word(1))
+                self._copy_to(dst_seg, dst_off, src, n if n < 0x8000 else 0x10000)
+            uc.reg_write(UC_X86_REG_AX, dst_off)
+            uc.reg_write(UC_X86_REG_DX, dst_seg)
+            return True
         if ordinal == 47:
             uc.reg_write(UC_X86_REG_AX, self.segs[139])
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
         if ordinal == 49:
             seg, off = self._word(2), self._word(1)
-            name = self._copy_to(seg, off, "C:\\TOOLBOOK\\TB80RTM.EXE", self._word(0) or 1)
+            name = self._copy_to(seg, off, EXE_PATH, self._word(0) or 1)
             uc.reg_write(UC_X86_REG_AX, name)
             return True
         if ordinal in (134, 135):
@@ -1154,6 +1535,10 @@ class Pass04:
         if self.pending and self.pending[0] == "USER" and self._user(ordinal):
             return
         if self.pending and self.pending[0] == "KEYBOARD" and self._keyboard(ordinal):
+            return
+        if self.pending and self.pending[0] == "GDI" and self._gdi(ordinal):
+            return
+        if self.pending and self.pending[0] == "SHELL" and self._shell(ordinal):
             return
         if self.pending and self.pending[0] in ("COMPOBJ", "OLE2", "OLE2DISP") and self._oleapi():
             return
@@ -1297,8 +1682,12 @@ class Pass04:
         size = max(0, min(512, info["limit"] + 1 - offset))
         return self.arena.read(sel, offset, size).split(b"\x00", 1)[0].decode("latin1", "replace")
 
-    def _wsprintf(self, fmt, n):
-        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer."""
+    def _wsprintf(self, fmt, n, word=None):
+        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer.
+
+        word reads the nth argument word from elsewhere, for wvsprintf.
+        """
+        word = word or self._word
         out = []
         pos = 0
         for m in re.finditer(r"%(%|([-#0]*)(\d*)(?:\.(\d+))?(l?)([sdiuxXc]))", fmt):
@@ -1309,20 +1698,20 @@ class Pass04:
                 continue
             flags, width, prec, long_, kind = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6)
             if kind == "s":
-                off, sel = self._word(n), self._word(n + 1)
+                off, sel = word(n), word(n + 1)
                 n += 2
                 value = self._box_text(sel, off)
                 if prec:
                     value = value[:int(prec)]
             elif kind == "c":
-                value = chr(self._word(n) & 0xFF)
+                value = chr(word(n) & 0xFF)
                 n += 1
             else:
-                raw = self._word(n)
+                raw = word(n)
                 n += 1
                 bits = 16
                 if long_:
-                    raw |= self._word(n) << 16
+                    raw |= word(n) << 16
                     n += 1
                     bits = 32
                 if kind in "di" and raw >> (bits - 1):
