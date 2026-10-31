@@ -103,6 +103,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "23  pascal -ret16 LockSegment(word) LockSegment16",
     "24  pascal -ret16 UnlockSegment(word) UnlockSegment16",
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
+    "36  pascal   GetCurrentTask() WIN16_GetCurrentTask",
     "47  pascal   GetModuleHandle(segstr) WIN16_GetModuleHandle",
     "49  pascal -ret16 GetModuleFileName(word ptr s_word) GetModuleFileName16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
@@ -268,6 +269,7 @@ class Wine:
         # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
         self.hooks = {}
         self.dcs = {}
+        self.htask = 0
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
         self.messages = {}
         # selector -> lockCount, Wine's GLOBALARENA field, for LockSegment.
@@ -361,6 +363,9 @@ class Wine:
             if sel is not None:
                 self.locks[sel] = self.locks.get(sel, 0) - 1
             return arg.regs("ax"), 0, None
+        if ordinal == 36:
+            # WIN16_GetCurrentTask: the current task in AX, hFirstTask in DX.
+            return self.htask, self.htask, None
         if ordinal == 47:
             # WIN16_GetModuleHandle(segstr name): the module in AX, hFirstModule in DX.
             if arg(1) == 0:
