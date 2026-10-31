@@ -44,7 +44,7 @@ The names are the order the work happened. There is no pass 01 source file. The 
 
 **Pass 03** died inside the packed loader. `GetProcAddress` fixups in the stub were the wall. The note is in the `pass04.py` docstring. The packed image is the wrong place to study the entry.
 
-**Pass 04** starts from an already-unpacked `TB80RTM`. It reads the NE segment table itself, builds selectors, applies the reloc records, and jumps to segment 2 offset `0x35A`. That offset is the real entry after the unpacker, not `BootApp`. The book name is placed in a fake PSP command tail at `0x80`, the way DOS hands `WinExec` arguments across. Unresolved far calls used to be skipped so the trace could show the next question. The current entry path does not skip the thunk calls. It answers them.
+**Pass 04** starts from an already-unpacked `TB80RTM`. It reads the NE segment table itself, builds selectors, applies the reloc records, and jumps to segment 2 offset `0x35A`. That offset is the real entry after the unpacker, not `BootApp`. The book name is placed in a fake PSP command tail at `0x80`, the way DOS hands `WinExec` arguments across. Every guest read of `PSP:0x80` through `0xFF` is recorded in `tail_reads`, and `02_launch.txt` says how many there were. The recorded pass-06 run exits before asking for the book; until a run shows a read of the tail, the book was not requested, whatever the tail holds. `InitTask` hands the tail over as `ES:BX` = PSP:`0x80`. Unresolved far calls used to be skipped so the trace could show the next question. The current entry path does not skip the thunk calls. It answers them.
 
 **Pass 05** is pass 04 run as a probe. The log is `nehost/rtm - pass 05/PASS05.txt`. The spaces in the directory name are the note's name. Leave them. The log is a record of one run: DOS exit 0, no book, and the ordinals the entry touched. `pass04` no longer rewrites that file.
 
@@ -110,6 +110,10 @@ The OLE sizes were checked against the `TB80OLE` call sites, not taken from a sp
 
 Anything the table does not name pops 0. The default return is `AX = 1`, `DX = 0`. That default is why so many calls looked fine and were wrong. `AX = 1` is a plausible BOOL and a bad pointer, a bad HRESULT, and a bad selector.
 
+Every call that still takes that default is written to `02_launch.txt` as `ax=1 MODULE.ordinal from CS:IP stack w0 w1 w2 w3`. The module is the one the reloc named at that call site, even when the pop table has no size for it, and `?` when no reloc named it. `w0` is the last word pushed. The list is the inventory of answers that are still guesses.
+
+The last call of a run, answered or not, is kept as `last_call` and written as `last call MODULE.ordinal from CS:IP stack w0 w1 w2 w3 -> ax=.. bx=.. cx=.. dx=.. si=.. di=.. ds=.. es=..`, tagged `(AX = 1 default)` when it fell through. That line is how a run names the call that still refuses the book. When it is an `AX = 1` call, the next change replaces that one ordinal with a real answer or a stop. When the same call is named twice, it goes into `known-bugs.md` as the wall.
+
 ## Relocs
 
 NE relocations are chained. The word at the fixup address is the next offset, or `0xFFFF` for the end. The host saves that next pointer, writes the resolved value, and follows the saved pointer. Following the value it just wrote walks off into the address it patched in.
@@ -136,7 +140,7 @@ The default is still `AX = 1`. These are the calls that could not stay that way.
 
 **Heap.** `GlobalAlloc` / `GlobalLock` / `GlobalFree` and the local-heap ordinals. A pointer the runtime writes through has to be a selector the arena owns. Returning 1 makes the next instruction a write to selector 1.
 
-**Files.** `KERNEL.74` `OpenFile` and `KERNEL.85` `_lopen` log the path and call `_take_file`. A `.tbk` or `.sbk` returns a handle whose bytes are the book passed on the command line. Anything else returns `0xFFFF` and stays in the `opens` list so the log shows what was asked for. `_lread`, `_lwrite`'s absence, and `_llseek` (`KERNEL.84`) use that handle. DOS `INT 21h` `AH=3Dh` is the same rule. `AH=3Fh` reads, `AH=42h` seeks, `AH=30h` reports DOS 5, `AH=4Ch` stops the CPU.
+**Files.** `KERNEL.74` `OpenFile` and `KERNEL.85` `_lopen` log the path and call `_take_file`. A `.tbk` or `.sbk` returns a handle whose bytes are the book passed on the command line. A name ending in `.ini` returns a handle only when `TBK_INI` is set and that directory holds a file of the same name; the bytes are that file. Without `TBK_INI` it is `0xFFFF`, as before. The same directory answers `TB80enu`, the extensionless name pass 06 opens from `C:\TOOLBOOK` between the two rounds of `TB80.INI` opens. What that file should hold is not known, so the host takes whatever the caller put there. `OpenFile`'s style word is kept beside the path in `open_styles`, so a run shows whether an open was an `OF_EXIST` probe. Anything else returns `0xFFFF` and stays in the `opens` list so the log shows what was asked for. `_lread`, `_lwrite`'s absence, and `_llseek` (`KERNEL.84`) use that handle. DOS `INT 21h` `AH=3Dh` is the same rule, and no longer overwrites the handle's bytes with the book after `_take_file` chose them. `AH=3Fh` reads, `AH=42h` seeks, `AH=30h` reports DOS 5, `AH=4Ch` stops the CPU.
 
 **Strings.** `KERNEL.88` `lstrcpy`, `89` `lstrcat`, `90` `lstrlen` copy real bytes. Returning 1 from `lstrcpy` was being loaded as a selector. `KERNEL.49` `GetModuleFileName` writes `C:\TOOLBOOK\TB80RTM.EXE`. `134` and `135` write `C:\WINDOWS` and `C:\WINDOWS\SYSTEM`. `137` `FatalAppExit` prints the string and stops.
 
