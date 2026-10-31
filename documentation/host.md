@@ -26,6 +26,8 @@ The CPU got through the early startup and died on bad data, not on a missing nam
 
 The next fault was `GlobalAlloc`. The size is a dword. Using only the low word handed back a 4K block. A later `lodsw` scanned for `0x0012` from offset `0x1276` and walked off the end. Capping the size at `0x10000` made the block big enough to contain the scan. The block is still zeros. The scan runs to the segment limit and faults, because nothing wrote the record the runtime expected to find.
 
+That `GlobalAlloc` reading was wrong, and the cap only hid it. Wine's spec is `pascal16 GlobalAlloc(word long)`: the flags word is pushed first, so the low word of the size is on top of the stack and the high word is under it. The old code took the high word as the low word and the flags as the high word. Any flags with a bit set made the size look larger than 64K, and the cap turned every such block into exactly `0x10000`. `newl` now reads the size the spec names. A request over 64K still gets one 64K segment, because one selector cannot address more and this layer does not tile selectors by `__AHINCR`. Those requests are listed in `Layer.capped` with the size that was asked. The block the `0x1276` scan walks may now be smaller than before. Nobody has rerun startup since this change, so the size that scan was given is not known yet.
+
 That is as far as `newl` has gone. The book is not open. The next useful change is the data those startup scans are looking for, or a stop that names the scan, not another guessed return value.
 
 ## neww
