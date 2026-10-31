@@ -156,6 +156,8 @@ The default is still `AX = 1`. These are the calls that could not stay that way.
 
 **KEYBOARD.5** `AnsiToOem` is answered. TB80BAS segment 10 builds the book's path at `0x2C0A`: `lstrlen` of the name, then `AnsiToOem` into one stack buffer, then `OemToAnsi` (`KEYBOARD.6`) into another, then `OpenFile` through TB80W16. With both at `AX = 1` the buffers kept stack garbage and `OpenFile` got `'P\x07'`; the runtime said "Not a valid file name." The conversion maps 1252 to 437 byte by byte and keeps a byte either side cannot name. `KEYBOARD` has a pop table entry now, so the call is dispatched by module; `-1` is the return Wine gives.
 
+**KERNEL.74** `OpenFile` writes the `OFSTRUCT`. The book opens TB80RTM makes once the path is right are `OpenFile("fixture.tbk", &ofs, OF_PARSE)`, twice. `OF_PARSE` opens nothing on Windows: it returns 0 and leaves the qualified name in `szPathName` for the caller to use. The host used to return a book handle and leave the struct as stack bytes. The qualifying directory is `C:\TOOLBOOK\`, the same one `GetModuleFileName` reports; there is no current directory in the host yet, so that is a stand-in and the `.tbk` rule does not depend on it. `OF_EXIST` opens and closes, so its handle is not kept.
+
 **USER.179** `GetSystemMetrics` returns a small table. Metric `0x29` is `SM_PENWINDOWS`. A non-zero value makes startup call `RegisterPenApp` through a null pointer. It stays 0.
 
 **USER.266** `SetMessageQueue` is the ordinal `run.py` prints by name. The return is 1. There is no queue.
