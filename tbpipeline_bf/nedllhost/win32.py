@@ -28,7 +28,7 @@ import struct
 
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_CS, UC_X86_REG_DX, UC_X86_REG_EAX, UC_X86_REG_EDX,
-    UC_X86_REG_ESP, UC_X86_REG_IP,
+    UC_X86_REG_ESP, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
 PORT_API32 = 0xE1
@@ -206,6 +206,8 @@ class Win32:
     # -- KERNEL.513 ----------------------------------------------------
 
     def _kernel_proc(self, ordinal):
+        if ordinal == 518:
+            return self._call_proc_ex32()
         if ordinal != 513:
             return super()._kernel_proc(ordinal)
         # LoadLibraryEx32W(lpszLibFile, hFile, dwFlags), Pascal, pops 12.
@@ -232,6 +234,32 @@ class Win32:
 
         self._call32(mod["entry"], [mod["base"], DLL_PROCESS_ATTACH, 0], attached)
         return True
+
+    def _call_proc_ex32(self):
+        # CallProcEx32W(nParams, fAddressConvert, lpProc32, p1, ..., pn).
+        # Wine's spec line is `518 varargs -register CallProcEx32W()`: it is
+        # cdecl, so it pops nothing and the caller cleans up. Its
+        # CallProcEx32W16 reads the parameters left to right, maps p(i+1)
+        # with MapSL when bit i of the mask is set, calls lpProc32 (stdcall,
+        # or cdecl with CPEX_DEST_CDECL, the top bit of nParams) and
+        # returns EAX in DX:AX.
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        sp = self.uc.reg_read(UC_X86_REG_SP)
+        n, convert, proc = struct.unpack("<III", self.arena.read(ss, (sp + 4) & 0xFFFF, 12))
+        n &= 0x7FFFFFFF
+        params = list(struct.unpack(f"<{n}I", self.arena.read(ss, (sp + 16) & 0xFFFF, 4 * n)))
+        for i in range(n):
+            if convert & (1 << i):
+                params[i] = self._linear(params[i])
+        self._call32(proc, params, self._dx_ax)
+        return True
+
+    def _linear(self, far):
+        """MapSL: a 16:16 pointer's linear address. NULL stays NULL."""
+        if not far:
+            return 0
+        info = self.arena.segs.get(far >> 16)
+        return (info["base"] if info else 0) + (far & 0xFFFF)
 
     def _dx_ax(self, value):
         self.uc.reg_write(UC_X86_REG_AX, value & 0xFFFF)
