@@ -13,7 +13,8 @@ class Import:
 
 
 def load(path):
-    data = open(path, "rb").read()
+    with open(path, "rb") as fh:
+        data = fh.read()
     if data[:2] != b"MZ":
         raise ValueError(f"not an NE file: {path}")
     ne = struct.unpack_from("<I", data, 0x3C)[0]

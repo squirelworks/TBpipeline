@@ -56,11 +56,27 @@ TABLES = {"KERNEL": KERNEL, "USER": USER, "WIN87EM": WIN87EM}
 
 
 class Gap(Exception):
-    def __init__(self, module, ordinal, name):
+    """module.ordinal, the name if there is one, and where the far call was.
+
+    at is (cs, ip, how): "call" when the far call itself was found, "return"
+    when only the return address on the stack is known.
+    """
+
+    def __init__(self, module, ordinal, name="", at=None):
         self.module = module
         self.ordinal = ordinal
         self.name = name
-        super().__init__(f"{module}.{ordinal} {name}".strip())
+        self.at = at
+        super().__init__(self.text())
+
+    def text(self):
+        out = f"gap {self.module}.{self.ordinal}"
+        if self.name:
+            out += f" {self.name}"
+        if self.at:
+            cs, ip, how = self.at
+            out += f" far call at {cs:#x}:{ip:#x}" if how == "call" else f" returning to {cs:#x}:{ip:#x}"
+        return out
 
 
 class Layer:
@@ -104,19 +120,25 @@ class Layer:
             return True
         return False
 
-    def call(self, module, ordinal, args=()):
+    def call(self, module, ordinal, args=(), at=None):
         module = module.upper()
         label = self.name_of(module, ordinal)
-        if not self.knows(module, ordinal):
+        try:
+            if not self.knows(module, ordinal):
+                raise Gap(module, ordinal, label)
+            self.trace.append((module, ordinal, label, tuple(args)))
+            if module == "KERNEL":
+                return self._kernel(ordinal, args)
+            if module == "USER":
+                return self._user(ordinal, args)
+            if module == "WIN87EM":
+                return 0
             raise Gap(module, ordinal, label)
-        self.trace.append((module, ordinal, label, tuple(args)))
-        if module == "KERNEL":
-            return self._kernel(ordinal, args)
-        if module == "USER":
-            return self._user(ordinal, args)
-        if module == "WIN87EM":
-            return 0
-        raise Gap(module, ordinal, label)
+        except Gap as gap:
+            if at and not gap.at:
+                gap.at = at
+                gap.args = (gap.text(),)
+            raise
 
     def _kernel(self, ordinal, args):
         if ordinal == 3:

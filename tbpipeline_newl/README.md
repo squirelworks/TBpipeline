@@ -2,7 +2,7 @@
 
 Bare Windows, with a CPU.
 
-ToolBook modules are loaded and call each other. `KERNEL` and `USER` are not. Those calls go to the layer. A call the layer does not know stops the run.
+ToolBook modules are loaded and call each other. `KERNEL` and `USER` are not. Those calls go to the layer. A call the layer does not know stops the run. The stop reads `gap KERNEL.999 far call at 0x8:0x5`: module, ordinal, the name when the layer or the import has one, and the CS:IP of the `call far`. When the call is not a direct `9A` call, the stop gives the return address instead and says `returning to`.
 
 ```
 python3 -m tbpipeline_newl --b ~/TBK/bin
