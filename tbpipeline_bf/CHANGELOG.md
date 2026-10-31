@@ -11,6 +11,7 @@ Not a release. `1.0.0r6` stays the version.
 - A status line under every page says compressed ToolBook pictures are not drawn, that the decoder is `TB80BMP` ordinal 3, and that the host stops at `0x1FCD`. The reader does not decode them.
 - `--open`'s `click` lines name the handler that ran and its offset, then the page it landed on: `P20000 buttonClick 0x… -> P20001`. A page whose click ran nothing says `no buttonClick`.
 - `--open` lists `unread` handlers: ones whose expansion copied bytes from outside the book. Each line gives the page, the handler, its offset, and how many bytes were written as `?` for that reason. A real `?` in the source is not counted.
+- `next` and `back` run the page's `to handle next` or `to handle previous` / `back` when it has a jump the engine can compile, in `engine.py` and in `render.html`. Without one they use the page list, as before.
 
 ## 1.0.0r6
 

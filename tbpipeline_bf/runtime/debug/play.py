@@ -12,7 +12,7 @@ import html
 import json
 from pathlib import Path
 
-from ..engine import Engine, compile_handler
+from ..engine import MOVES, Engine, compile_handler
 from ..tbk import Book
 from .shapes import polygons
 
@@ -272,10 +272,20 @@ function go(id) {
   engine.index = n;
   enter(id);
 }
+function move(verb) {
+  const page = book.pages[engine.index];
+  const steps = page.moves && page.moves[verb];
+  if (!steps) return false;
+  engine.log.push([verb, page.id]);
+  runSteps(steps);
+  return true;
+}
 function next() {
+  if (move("next")) return;
   if (engine.index + 1 < book.pages.length) go(book.pages[engine.index + 1].id);
 }
 function back() {
+  if (move("back")) return;
   if (engine.index > 0) go(book.pages[engine.index - 1].id);
 }
 function runSteps(steps) {
@@ -380,6 +390,18 @@ def placed(blob: bytes) -> list[dict]:
     ]
 
 
+def _moves(handlers) -> dict:
+    moves = {}
+    for handler in handlers or []:
+        verb = MOVES.get(handler.name.lower())
+        if not verb:
+            continue
+        steps = compile_handler(handler.source)
+        if any(s["op"] == "goto" for s in steps):
+            moves.setdefault(verb, steps)
+    return moves
+
+
 def walked(book: Book, handlers: dict | None = None, resources: dict | None = None) -> list[dict]:
     """Pages in the order engine.py walks them. Works for a .tbk or a .sbk."""
     engine = Engine(book)
@@ -398,6 +420,7 @@ def walked(book: Book, handlers: dict | None = None, resources: dict | None = No
             "jumps": page.quoted_jumps[:16],
             "handlers": _clicks((handlers or {}).get(page.name)),
             "shapes": placed(page.blob),
+            "moves": _moves((handlers or {}).get(page.name)),
             "textAt": None,
             "pictures": ((resources or {}).get("pages") or {}).get(page.name, []),
         })

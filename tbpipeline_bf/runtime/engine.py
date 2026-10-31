@@ -20,6 +20,10 @@ _GOTO = re.compile(
 )
 
 
+# Handler names that move the reader. ToolBook sends previous; back is the button.
+MOVES = {"next": "next", "back": "back", "previous": "back"}
+
+
 def compile_handler(source: str) -> list[dict]:
     """The navigation subset of one handler. Anything else is ignored."""
     steps = []
@@ -88,6 +92,7 @@ class Engine:
     variables: dict = field(default_factory=dict)
     scripts: dict = field(default_factory=dict)
     followed: dict | None = None
+    moves: dict = field(default_factory=dict)
 
     @property
     def page(self) -> Page | None:
@@ -96,11 +101,18 @@ class Engine:
         return self.book.pages[self.index]
 
     def load_scripts(self, handlers: dict) -> None:
-        """buttonClick handlers, compiled, keyed by page name."""
+        """buttonClick, next, and back handlers, compiled, keyed by page name."""
         self.scripts = {}
+        self.moves = {}
         for name, found in handlers.items():
             clicks = []
             for handler in found:
+                verb = MOVES.get(handler.name.lower())
+                if verb:
+                    steps = compile_handler(handler.source)
+                    if any(s["op"] == "goto" for s in steps):
+                        self.moves.setdefault(name, {}).setdefault(verb, steps)
+                    continue
                 if handler.name.lower() != "buttonclick":
                     continue
                 steps = compile_handler(handler.source)
@@ -122,7 +134,27 @@ class Engine:
                 return page
         raise KeyError(name)
 
+    def _move(self, verb: str) -> Page | None:
+        """Run this page's next or back handler. None when it has none."""
+        page = self.page
+        steps = (self.moves.get(page.name) or {}).get(verb) if page else None
+        if not steps:
+            return None
+        self.log.append(Notify(verb, (page.name,)))
+        dest, other = run_steps(steps, self.variables, Path(self.book.path).name, page.name)
+        if other and Path(other).name.lower() != Path(self.book.path).name.lower():
+            self.log.append(Notify("otherBook", (other, dest or "")))
+            return page
+        try:
+            return self.go(dest)
+        except KeyError:
+            self.log.append(Notify("missing", (dest,)))
+            return page
+
     def next(self) -> Page:
+        moved = self._move("next")
+        if moved is not None:
+            return moved
         if self.index + 1 >= len(self.book.pages):
             raise IndexError("last page")
         self.index += 1
@@ -131,6 +163,9 @@ class Engine:
         return page
 
     def back(self) -> Page:
+        moved = self._move("back")
+        if moved is not None:
+            return moved
         if self.index == 0:
             raise IndexError("first page")
         self.index -= 1
