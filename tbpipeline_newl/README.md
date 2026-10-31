@@ -15,3 +15,5 @@ When the guest calls `OpenFile` or `_lopen` on a path ending in `.tbk` or `.sbk`
 Running the CPU needs `unicorn`. `--list` does not.
 
 A run that ends without a gap says how it ended. `hlt at CS:IP` means a halt. `instruction cap 1000000 reached at CS:IP` and `time cap 15 s reached at CS:IP` mean the run hit one of the caps. A cap stop also says how many Windows calls were taken and which was last, or says `no Windows call taken`. The caps stay where they are. On a cap, the CLI also prints `last blocks`: the CS:IP of the last 20 basic blocks the CPU entered, oldest first.
+
+An ordinal is added to `layer.py` only when a `Gap` from a real run names it. The pull request that adds it quotes that stop line. `LocalInit`, `GlobalReAlloc`, and `MakeProcInstance` are not in the table, and `tests/test_newl_no_guessed_ordinals.py` keeps it that way until a stop names one of them.
