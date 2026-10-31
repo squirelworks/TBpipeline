@@ -245,14 +245,18 @@ class Win32:
         # Wine's spec line (dlls/krnl386.exe16/krnl386.exe16.spec:426) is
         # `518 varargs _CallProcEx32W(long long long) CallProcEx32W16`: it is
         # cdecl, so it pops nothing and the caller cleans up. Its
-        # CallProcEx32W16 reads the parameters left to right, maps p(i+1)
-        # with MapSL when bit i of the mask is set, calls lpProc32 (stdcall,
-        # or cdecl with CPEX_DEST_CDECL, the top bit of nParams) and
-        # returns EAX in DX:AX.
+        # CallProcEx32W16 (dlls/krnl386.exe16/thunk.c:2609) reads at most 32
+        # parameters left to right, maps p(i+1) with MapSL when bit i of the
+        # mask is set, and WOW_CallProc32W16 calls lpProc32 (stdcall, or
+        # cdecl with CPEX_DEST_CDECL, the top bit of nParams) and returns
+        # EAX in DX:AX. A NULL lpProc32 returns 0.
         ss = self.uc.reg_read(UC_X86_REG_SS)
         sp = self.uc.reg_read(UC_X86_REG_SP)
         n, convert, proc = struct.unpack("<III", self.arena.read(ss, (sp + 4) & 0xFFFF, 12))
-        n &= 0x7FFFFFFF
+        n = min(32, n & 0x7FFFFFFF)
+        if not proc:
+            self._dx_ax(0)
+            return True
         params = list(struct.unpack(f"<{n}I", self.arena.read(ss, (sp + 16) & 0xFFFF, 4 * n)))
         for i in range(n):
             if convert & (1 << i):
