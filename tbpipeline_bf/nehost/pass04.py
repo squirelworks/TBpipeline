@@ -15,7 +15,7 @@ from .unfold import AHINCR, Arena, _u16
 from .win16stack import POP
 
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16
-from unicorn import UC_HOOK_INSN, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED
+from unicorn import UC_HOOK_INSN, UC_HOOK_INTR, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
@@ -1044,13 +1044,32 @@ class Pass04:
     def _clear(self):
         self.uc.reg_write(UC_X86_REG_EFLAGS, self.uc.reg_read(UC_X86_REG_EFLAGS) & ~1)
 
-    def run(self):
-        self.build()
+    def _make_psp(self):
+        """The fake PSP. The book name is the command tail at 0x80, the way
+        DOS hands WinExec arguments across. Every guest read of the tail is
+        recorded in tail_reads as (cs, ip, offset), so a run says whether
+        the entry ever looked at the book name.
+        """
         tail = (" " + os.path.basename(self.book)).encode("ascii") + b"\r"
         psp = bytearray(0x100)
         psp[0x80] = len(tail) - 1
         psp[0x81:0x81 + len(tail)] = tail
         self.psp = self.arena.alloc_selector(0x100, 0x92, bytes(psp))
+        self.tail_reads = []
+        base = self.arena.segs[self.psp]["base"]
+        self.uc.hook_add(UC_HOOK_MEM_READ, self._on_tail, None, base + 0x80, base + 0xFF)
+        return self.psp
+
+    def _on_tail(self, uc, access, address, size, value, user):
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        offset = address - self.arena.segs[self.psp]["base"]
+        if len(self.tail_reads) < 64:
+            self.tail_reads.append((cs, ip, offset))
+
+    def run(self):
+        self.build()
+        self._make_psp()
         dgroup = self.segs[139]
         code = self.segs[2]
         # The GDT lives at linear 0 and selector 0x80 is segment 14.

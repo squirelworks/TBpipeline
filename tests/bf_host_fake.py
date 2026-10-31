@@ -9,7 +9,9 @@ thunk reaches. No DLL is read.
 import struct
 
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_16
-from unicorn.x86_const import UC_X86_REG_DX, UC_X86_REG_SP, UC_X86_REG_SS, UC_X86_REG_DS
+from unicorn.x86_const import (
+    UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_DX, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
+)
 
 from tbpipeline_bf.nedllhost.pass06 import Pass06
 from tbpipeline_bf.nehost.pass04 import API_PORT
@@ -68,3 +70,28 @@ def far_call(host, module, ordinal, words, ret_ip=0x105, pop=None):
     host.uc.reg_write(UC_X86_REG_DX, ordinal)
     host._on_out(host.uc, API_PORT, 1, 0, None)
     return host
+
+
+def run_guest(host, code):
+    """Enter protected mode the way Pass04.run does and run code from the flat
+    selector at 0xF020, with DS and SS on the fake data and stack selectors.
+    Stops at the end of code.
+    """
+    gdtr_at = 0xF0E0
+    host.uc.mem_write(gdtr_at, struct.pack("<HI", 0xFFFF, 0))
+    host.uc.mem_write(0xF000, bytes([
+        0x0F, 0x01, 0x16, gdtr_at & 0xFF, (gdtr_at >> 8) & 0xFF,
+        0x66, 0x0F, 0x20, 0xC0, 0x66, 0x83, 0xC8, 0x01, 0x66, 0x0F, 0x22, 0xC0,
+        0xEA, 0x20, 0xF0, host.flat & 0xFF, (host.flat >> 8) & 0xFF,
+    ]))
+    prefix = bytes([
+        0xB8, host.data & 0xFF, host.data >> 8, 0x8E, 0xD8,
+        0xB8, host.stack & 0xFF, host.stack >> 8, 0x8E, 0xD0,
+        0xBC, STACK_TOP & 0xFF, STACK_TOP >> 8,
+    ])
+    body = prefix + code
+    host.uc.mem_write(0xF020, body)
+    for reg in (UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_SS):
+        host.uc.reg_write(reg, 0)
+    host.uc.reg_write(UC_X86_REG_IP, 0xF000)
+    host.uc.emu_start(0xF000, 0xF020 + len(body), count=1000)
