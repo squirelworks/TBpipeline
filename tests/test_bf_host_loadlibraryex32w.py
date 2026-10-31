@@ -62,7 +62,8 @@ def guest(h):
     return code
 
 
-def run(h):
+def run(h, code=None):
+    """Run code (the LoadLibraryEx32W guest by default); return OUT's dword and word."""
     gdtr_at = 0xF0E0
     h.uc.mem_write(gdtr_at, struct.pack("<HI", 0xFFFF, 0))
     h.uc.mem_write(0xF000, bytes([
@@ -74,10 +75,14 @@ def run(h):
         0xB8, h.data & 0xFF, h.data >> 8, 0x8E, 0xD8,
         0xB8, h.stack & 0xFF, h.stack >> 8, 0x8E, 0xD0,
         0xBC, STACK_TOP & 0xFF, STACK_TOP >> 8,
-    ]) + guest(h))
+    ]) + (guest(h) if code is None else code))
     for reg in (UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_SS):
         h.uc.reg_write(reg, 0)
     h.uc.reg_write(UC_X86_REG_IP, 0xF000)
+    # A second run writes new code where the first ran; drop what the CPU
+    # translated from the old bytes.
+    h.uc.ctl_flush_tb()
+    h.fault = ""
     h._run_from(0xF000)
     hinst, sp = struct.unpack("<IH", h.arena.read(h.data, OUT, 6))
     return hinst, sp
