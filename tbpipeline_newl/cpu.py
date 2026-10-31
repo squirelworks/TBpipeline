@@ -493,8 +493,8 @@ class Cpu:
             if seg is not None:
                 uc.mem_write(seg["base"] + args[1], self.layer.last_read)
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
-        if module == "KERNEL" and ordinal in (20, 84):
-            # DWORD answers: GlobalSize and _llseek return DX:AX.
+        if (module, ordinal) in (("KERNEL", 20), ("KERNEL", 84), ("USER", 291)):
+            # DWORD answers in DX:AX: GlobalSize, _llseek, SetWindowsHookEx.
             uc.reg_write(UC_X86_REG_DX, (ax >> 16) & 0xFFFF)
         elif not (module == "KERNEL" and ordinal in (18, 91, 131)):
             uc.reg_write(UC_X86_REG_DX, 0)
