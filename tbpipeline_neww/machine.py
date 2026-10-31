@@ -61,7 +61,7 @@ class Args:
         return self.machine.string(self(n + 1), self(n))
 
     def regs(self, name):
-        # DX holds the ordinal here: the gate stub loaded it.
+        # A register contract's stub leaves DX alone. Other stubs load the ordinal into DX.
         return self.machine.uc.reg_read(REGISTERS[name])
 
     def word(self, sel, offset):
@@ -375,10 +375,14 @@ class Machine:
             self.stop = f"not linked: {text}. A ToolBook call with no target is a stop, not a gate"
             uc.emu_stop()
             return
-        if port != 0xE4:
+        if port not in (0xE4, 0xE7):
             return
         cs = uc.reg_read(UC_X86_REG_CS)
-        ordinal = uc.reg_read(UC_X86_REG_DX)
+        if port == 0xE7:
+            # A register contract's stub: the OUT is the stub's first instruction.
+            ordinal = uc.reg_read(UC_X86_REG_IP) // 8
+        else:
+            ordinal = uc.reg_read(UC_X86_REG_DX)
         module = self.box.gates.get((cs, ordinal))
         if module is None:
             self.stop = f"out {cs:#x} dx={ordinal:#x}"
@@ -398,10 +402,12 @@ class Machine:
             uc.emu_stop()
             return
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
-        uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
         registers = dict(self.box.wine.registers or {})
         slot = self.box.slots.get((module, ordinal))
+        if slot is None:
+            uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
         if slot is not None:
+            # A register contract sets DX only when it names it.
             # The stub's tail loads ES and DS from these words. Unchanged unless the contract sets them.
             es = registers.pop("es", uc.reg_read(UC_X86_REG_ES))
             ds = registers.pop("ds", uc.reg_read(UC_X86_REG_DS))
