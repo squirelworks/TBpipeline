@@ -13,7 +13,7 @@ from unicorn.x86_const import (
 
 REGISTERS = {
     "ax": UC_X86_REG_AX, "bx": UC_X86_REG_BX, "cx": UC_X86_REG_CX, "dx": UC_X86_REG_DX,
-    "si": UC_X86_REG_SI, "di": UC_X86_REG_DI, "sp": UC_X86_REG_SP,
+    "si": UC_X86_REG_SI, "di": UC_X86_REG_DI, "sp": UC_X86_REG_SP, "bp": UC_X86_REG_BP,
     "ds": UC_X86_REG_DS, "es": UC_X86_REG_ES, "ss": UC_X86_REG_SS,
     "fpcw": UC_X86_REG_FPCW, "fpsw": UC_X86_REG_FPSW, "fptag": UC_X86_REG_FPTAG,
 }
