@@ -790,7 +790,8 @@ class Pass04:
             return True
         # WinExec(cmdline, show). TB80BAS starts the book file manager,
         # TB80NET.EXE, a second Win16 task that calls back into TB80BAS with
-        # its window. This host runs one task, so the call is the wall.
+        # its window. Pass 06 runs an EXE it can find as a second task; here
+        # the call is the wall.
         if ordinal == 166:
             cmd = self._string(self._word(2), self._word(1))
             self.fault = f"winexec {cmd!r} show {self._word(0)}"
