@@ -125,6 +125,8 @@ INITTASK_STOP = (
     "in the PSP, and pushes one zero word. neww has no PSP. Pop size 0 from the spec, nothing guessed"
 )
 
+GMEM_MOVEABLE = 0x0002
+
 SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
 
 
@@ -133,8 +135,10 @@ class Wine:
         self.root = root
         self.files = {}
         self.next_file = 1
+        # handle -> (first selector, size, flags)
         self.heap = {}
-        self.next_heap = 1
+        # Set by the machine: size -> first selector of a mapped block.
+        self.allocate = None
         self.trace = []
         self.exit = None
         # Wine ne_module.c NE_CreateThread posts one event before the task runs.
@@ -196,11 +200,7 @@ class Wine:
                 return 0, 0, None
             return 0, 0, "KERNEL.30 WaitEvent would block: no event is posted and there is no other task"
         if ordinal == 15:
-            handle = self.next_heap
-            self.next_heap += 1
-            size = arg(2) or 1
-            self.heap[handle] = bytearray(size)
-            return handle, 0, None
+            return self._global_alloc(arg(2), arg(0) | (arg(1) << 16))
         if ordinal == 18:
             return arg(0), 0, None
         if ordinal == 17:
@@ -223,6 +223,20 @@ class Wine:
                 return ax, 0, f"dos exit {ax & 0xFF:#x}"
             return 0, 0, None
         return 0, 0, f"unimplemented KERNEL.{ordinal}"
+
+    def _global_alloc(self, flags, size):
+        """Wine global.c GlobalAlloc16 / GLOBAL_Alloc. size is the whole dword."""
+        if size == 0:
+            return 0, 0, f"KERNEL.15 GlobalAlloc flags={flags:#x} size 0: Wine makes a discarded block, neww does not have one"
+        if size > 0x100000:
+            return 0, 0, f"KERNEL.15 GlobalAlloc size {size:#x}: over 1M needs page-granular selectors, neww has none"
+        if self.allocate is None:
+            return 0, 0, "KERNEL.15 GlobalAlloc with no CPU to map the block"
+        size = (size + 0x1F) & ~0x1F
+        sel = self.allocate(size)
+        handle = sel - 1 if flags & GMEM_MOVEABLE else sel
+        self.heap[handle] = (sel, size, flags)
+        return handle, 0, None
 
     def _user(self, ordinal, arg):
         if ordinal == 266:
