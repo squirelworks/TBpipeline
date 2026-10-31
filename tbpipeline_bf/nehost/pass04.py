@@ -900,6 +900,18 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, self.task_handle)
             uc.reg_write(UC_X86_REG_DX, self.task_handle)
             return True
+        # GetDOSEnvironment(). Wine's GetDOSEnvironment16 copies the
+        # environment strings, then the WORD 1 and the program name
+        # "C:\\WINDOWS\\SYSTEM\\KRNL386.EXE", into one fixed block and returns
+        # it as a SEGPTR in DX:AX. This host gives the guest no variables, so
+        # the strings are the one empty terminator. AX = 1 was 0000:0001.
+        if ordinal == 131:
+            if not getattr(self, "dos_environment", 0):
+                block = b"\x00" + struct.pack("<H", 1) + b"C:\\WINDOWS\\SYSTEM\\KRNL386.EXE\x00"
+                self.dos_environment = self.arena.alloc_selector(len(block), 0x92, block)
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, self.dos_environment)
+            return True
         # GetVDMPointer32W(vp, fMode), a generic thunk, pops 6. Wine's
         # GetVDMPointer32W16 is K32WOWGetVDMPointer: with fMode set, the
         # selector's descriptor base plus the offset; with fMode 0, the
