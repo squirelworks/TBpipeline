@@ -81,7 +81,7 @@ class OpenBookFromGuest(unittest.TestCase):
             _rtm(root, "C:\\BOOKS\\LESSON.TBK")
             host = Cpu(root, book=book)
             host.run(limit=1000)
-        self.assertEqual(host.stop, "returned")
+        self.assertTrue(host.stop.startswith("hlt at "), host.stop)
         dgroup = host.selectors[host.dgroup]
         got = host.uc.mem_read(dgroup["base"] + 0x300, 4)
         self.assertEqual(struct.unpack("<I", got)[0], MAGIC)
