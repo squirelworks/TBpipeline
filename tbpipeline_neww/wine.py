@@ -236,7 +236,12 @@ LOCAL_HEAP_MAGIC = 0x484C
 HFILE_ERROR = 0xFFFF
 OF_SHARE_MASK = 0x0070
 
-SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
+# The Windows modules ToolBook imports. Wine builds each as a 16-bit DLL with a spec file in
+# dlls/<name>.dll16 or .exe16, so each is a gate, and an ordinal with no contract stops by name.
+SYSTEM = (
+    "KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2",
+    "MMSYSTEM", "DDEML", "OLE2DISP", "VER",
+)
 
 
 def moveable_handle(sel):
