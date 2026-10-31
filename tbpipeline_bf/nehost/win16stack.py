@@ -141,6 +141,10 @@ POP = {
         35: 16,  # RegisterActiveObject(ptr ptr long ptr)
         36: 8,   # RevokeActiveObject(long ptr)
     },
+    # shell.dll16.spec. The registry calls are pascal with long keys.
+    'SHELL': {
+        1: 12,   # RegOpenKey(long str ptr)
+    },
     # GETSTRMGRSTRING(max, far buf, keylo, keyhi). The reloc at RTM
     # segment 22:0x8AA is this, not KERNEL.3 GetVersion.
     'TB80UTL': {
