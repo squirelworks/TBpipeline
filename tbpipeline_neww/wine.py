@@ -100,6 +100,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "17  pascal -ret16 GlobalFree(word) GlobalFree16",
     "18  pascal GlobalLock(word) WIN16_GlobalLock16",
     "23  pascal -ret16 LockSegment(word) LockSegment16",
+    "24  pascal -ret16 UnlockSegment(word) UnlockSegment16",
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
     "74  pascal -ret16 OpenFile(str ptr word) OpenFile16",
@@ -248,6 +249,15 @@ class Wine:
                 return 0, 0, None
             self.locks[sel] = self.locks.get(sel, 0) + 1
             return handle, 0, None
+        if ordinal == 24:
+            # Wine global.c UnlockSegment16 is void: lockCount goes down, AX is left as it was.
+            handle = arg(0)
+            if handle == 0xFFFF:
+                handle = arg.regs("ds")
+            sel = self.selector_of(handle)
+            if sel is not None:
+                self.locks[sel] = self.locks.get(sel, 0) - 1
+            return arg.regs("ax"), 0, None
         if ordinal == 131:
             # Wine task.c GetDOSEnvironment16: WOWGlobalLock16 of the block, a SEGPTR in DX:AX.
             if self.environment is None:
