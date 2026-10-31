@@ -763,3 +763,27 @@ def _get_startup_info_a(host, args):
         raise Unanswered(f"info {args[0]:#x} not writable")
     return 0
 WIN32[("KERNEL32", "GetStartupInfoA")] = (4, _get_startup_info_a)
+
+
+STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE = 0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4
+ERROR_INVALID_HANDLE = 6
+
+
+def _get_std_handle(host, args):
+    # GetStdHandle(DWORD), stdcall, pops 4 (kernelbase.spec:712, imported by
+    # kernel32.spec:838). Wine's (dlls/kernelbase/process.c:1400) returns the
+    # process parameters' hStdInput, hStdOutput or hStdError, and for any
+    # other value sets ERROR_INVALID_HANDLE and returns INVALID_HANDLE_VALUE.
+    #
+    # Those parameters are NULL here. `wine PROGRAM.EXE` from a terminal runs
+    # start.exe, a console program, whose tty std handles init_console
+    # (dlls/kernelbase/console.c:2357) swaps for console handles. start.exe
+    # creates winevdm, a GUI program (programs/winevdm/Makefile.in,
+    # -mwindows), without STARTF_USESTDHANDLES, and create_startup_info
+    # (dlls/ntdll/unix/env.c:2160) gives a GUI child none of its parent's
+    # console handles.
+    if args[0] in (STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE):
+        return 0
+    host.uc.mem_write(TEB + TEB_LAST_ERROR, struct.pack("<I", ERROR_INVALID_HANDLE))
+    return INVALID_HANDLE_VALUE
+WIN32[("KERNEL32", "GetStdHandle")] = (4, _get_std_handle)
