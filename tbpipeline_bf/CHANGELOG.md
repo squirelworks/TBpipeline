@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Not a release. `1.0.0r6` stays the version.
+
+- Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files, drawn and not placed`. The known bug that they disagreed without saying why is gone.
+
 ## 1.0.0r6
 
 The reader is opt-in.
