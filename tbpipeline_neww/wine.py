@@ -121,6 +121,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
 
 USER = _table("USER", USER_SPEC, [
     "1   pascal -ret16 MessageBox(word str str word) MessageBox16",
+    "66  pascal -ret16 GetDC(word) GetDC16",
     "108 pascal -ret16 GetMessage(ptr word word word) GetMessage16",
     "111 pascal   SendMessage(word word word long) SendMessage16",
     "118 pascal -ret16 RegisterWindowMessage(str) RegisterWindowMessageA",
@@ -225,6 +226,7 @@ class Wine:
         self.owner = None
         # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
         self.hooks = {}
+        self.dcs = {}
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
         self.messages = {}
         # selector -> lockCount, Wine's GLOBALARENA field, for LockSegment.
@@ -588,6 +590,19 @@ class Wine:
         self.hooks[index] = (hook, proc)
         return hook & 0xFFFF, hook >> 16, None
 
+    def _get_dc(self, hwnd):
+        """Wine user.exe16/window.c GetDC16: HDC_16 of user32 GetDC. Returns (ax, dx, stop).
+
+        hwnd 0 is the screen. Wine takes a free DCE from its cache, so each GetDC without a
+        ReleaseDC is a new DC. Wine's HDC is a win32u GDI handle. neww numbers its own from
+        0x1004 by 4, which is never a selector.
+        """
+        if hwnd:
+            return 0, 0, f"USER.66 GetDC({hwnd:#x}): Wine gets a DC for that window, and neww has no windows"
+        hdc = 0x1004 + 4 * len(self.dcs)
+        self.dcs[hdc] = hwnd
+        return hdc, 0, None
+
     def _register_window_message(self, name):
         """RegisterWindowMessageA: a string atom, 0xC000 to 0xFFFF, the same for the same name.
 
@@ -694,6 +709,8 @@ class Wine:
     def _user(self, ordinal, arg):
         if ordinal == 118:
             return self._register_window_message(arg.string(0)), 0, None
+        if ordinal == 66:
+            return self._get_dc(arg(0))
         if ordinal == 179:
             index = arg(0) - 0x10000 if arg(0) & 0x8000 else arg(0)
             return self._system_metrics(index)
