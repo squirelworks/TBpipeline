@@ -20,7 +20,7 @@ from unicorn import UC_HOOK_INSN, UC_HOOK_INTR, UC_HOOK_MEM_READ, UC_HOOK_MEM_UN
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
-    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP,
+    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP, UC_X86_REG_BP,
     UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS,
 )
 
@@ -921,9 +921,74 @@ class Pass04:
             return True
         return False
 
+    def _catch(self):
+        """KERNEL.55 Catch(lpbuf), Wine thunk.c Catch16, spec `55 pascal -register Catch(ptr)`.
+
+        The caller's IP, CS, SP, BP, SI, DI, DS, 0 and SS go into the 9-word
+        CATCHBUF, and AX is 0. SP is the one winebuild's register relay hands
+        Catch16 as Esp, the SP at the far return address before the 4 argument
+        bytes are popped, less 4 words, as Windows saves it. AX = 1 told the
+        caller that a Throw had come back to it.
+        """
+        uc = self.uc
+        ss = uc.reg_read(UC_X86_REG_SS)
+        # _fix_ret already moved the return address up past the 4 argument bytes.
+        esp = (uc.reg_read(UC_X86_REG_SP) - 4) & 0xFFFF
+        off, sel = self._word(0), self._word(1)
+        if sel not in self.arena.segs or off + 18 > self.arena.segs[sel]["size"]:
+            self.fault = f"KERNEL.55 Catch({sel:#x}:{off:#x}): the CATCHBUF is not in a block this host has"
+            uc.emu_stop()
+            return True
+        ip, cs = struct.unpack("<HH", self.arena.read(ss, (esp + 4) & 0xFFFF, 4))
+        words = (
+            ip, cs, (esp - 8) & 0xFFFF, uc.reg_read(UC_X86_REG_BP), uc.reg_read(UC_X86_REG_SI),
+            uc.reg_read(UC_X86_REG_DI), uc.reg_read(UC_X86_REG_DS), 0, ss,
+        )
+        self.arena.write(sel, off, struct.pack("<9H", *words))
+        uc.reg_write(UC_X86_REG_AX, 0)
+        return True
+
+    def _throw(self):
+        """KERNEL.56 Throw(lpbuf, retval), Wine thunk.c Throw16, spec `56 pascal -register Throw(ptr word)`.
+
+        AX is retval and BP, SI, DI and SP come back from the CATCHBUF, so the
+        thunk's retf lands on Catch's return address with SP where Catch's own
+        return left it, saved SP + 4 words + Catch's 4 argument bytes. A
+        CATCHBUF from another stack or data segment stops the run: Wine does
+        not switch stacks, and a DS written from here keeps its old base.
+        """
+        uc = self.uc
+        retval = self._word(0)
+        off, sel = self._word(1), self._word(2)
+        if sel not in self.arena.segs or off + 18 > self.arena.segs[sel]["size"]:
+            self.fault = f"KERNEL.56 Throw({sel:#x}:{off:#x}): the CATCHBUF is not in a block this host has"
+            uc.emu_stop()
+            return True
+        buf = struct.unpack("<9H", self.arena.read(sel, off, 18))
+        ss = uc.reg_read(UC_X86_REG_SS)
+        if buf[8] != ss or buf[6] != uc.reg_read(UC_X86_REG_DS):
+            self.fault = (f"KERNEL.56 Throw: CATCHBUF SS:DS {buf[8]:#x}:{buf[6]:#x} is not "
+                          f"{ss:#x}:{uc.reg_read(UC_X86_REG_DS):#x}")
+            uc.emu_stop()
+            return True
+        # Catch returned with SP = Esp + 8. The thunk's retf 0 pops 4 bytes, so
+        # the far return goes 4 bytes below that, over Catch's dead arguments.
+        sp = (buf[2] + 8 + 4) & 0xFFFF
+        self.arena.write(ss, sp, struct.pack("<HH", buf[0], buf[1]))
+        uc.reg_write(UC_X86_REG_SP, sp)
+        uc.reg_write(UC_X86_REG_BP, buf[3])
+        uc.reg_write(UC_X86_REG_SI, buf[4])
+        uc.reg_write(UC_X86_REG_DI, buf[5])
+        uc.reg_write(UC_X86_REG_AX, retval)
+        return True
+
     def _kernel_proc(self, ordinal):
         """Pointers must be null or a real thunk. AX=1 was called as 0000:0001."""
         uc = self.uc
+        if ordinal == 55:
+            return self._catch()
+        if ordinal == 56:
+            return self._throw()
         # GetCurrentTask. Wine's WIN16_GetCurrentTask returns the current
         # task in AX and the first task in DX; this host runs one task. The
         # handle is a zeroed block the host keeps. TB80UTL and TB80LNL key
