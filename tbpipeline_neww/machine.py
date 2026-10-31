@@ -135,6 +135,7 @@ class Machine:
         data = exe.segments[exe.auto - 1]
         psp = self._psp()
         self._modules()
+        self._task()
         # Wine ne_module.c NE_StartTask: the handle of a moveable DGROUP is selector - 1.
         instance = data.selector - 1 if data.flags & 0x0010 else data.selector
         names, rows, why = self._dlls_to_init()
@@ -266,6 +267,26 @@ class Machine:
             self.uc.hook_add(UC_HOOK_MEM_READ, self._module_read, (image.name, base), base, base + 0x5F)
         # NE_RegisterModule puts each new module at the head of the list.
         self.box.wine.first_module = self.box.wine.modules[order[-1].name]
+
+    def _task(self):
+        """The task handle: Wine TASK_Create's GlobalAlloc16(GMEM_FIXED, sizeof(TDB)), 0x200 bytes.
+
+        The exe's task is linked after the main task at the same priority, so TASK_LinkTask
+        puts it first, and it is hFirstTask too. neww makes the block but not the TDB in it.
+        """
+        sel = self._allocate(0x200)
+        self.box.wine.htask = sel
+        base = self.box.selectors[sel].base
+        self.uc.hook_add(UC_HOOK_MEM_READ, self._task_read, base, base, base + 0x1FF)
+
+    def _task_read(self, uc, access, address, size, value, base):
+        if self.stop:
+            return
+        self.stop = (
+            f"task database read at +{address - base:#x} {self.where()}: "
+            "Wine's TDB is filled by TASK_Create, and neww has only the handle"
+        )
+        uc.emu_stop()
 
     def _size(self, sel):
         """GlobalSize16 of the block behind a selector."""
