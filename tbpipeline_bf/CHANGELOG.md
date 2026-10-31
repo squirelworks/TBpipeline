@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `KEYBOARD.6` `OemToAnsi` is the other half: OEM (437) to ANSI (1252), pop 8, returns `-1`. With both answered, the open TB80BAS makes is `fixture.tbk\r`: the name, with the command tail's carriage return still on it.
 - `KEYBOARD.5` `AnsiToOem` copies the string into the destination, ANSI (1252) to OEM (437), and returns `-1`. Its pop, 8, is in the table. `AX = 1` copied nothing, so the book's path was whatever TB80BAS's stack buffer held.
 - Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files`. The known bug that they disagreed without saying why is gone.
 - Every far call that falls through to `AX = 1` is a line in the debug folder's `02_launch.txt`: module, ordinal, call site, and the first four argument words. It is written on every launch, not only when the run dies.
