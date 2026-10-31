@@ -247,6 +247,10 @@ def local_realloc(wine, arg):
             return handle, 0, None
         if (heap.w(nxt) & 3) == 0 and nextarena <= heap.w(nxt + 2):
             heap.grow_arena_upward(arena, nextarena - arena)
+            if flags & LMEM_ZEROINIT:
+                # local.c: clear from the old end to the arena's new next.
+                oldend = block + oldsize
+                wine.write(heap.ds, oldend, bytes(heap.w(arena + 2) - oldend))
             return handle, 0, None
         if not flags & LMEM_MOVEABLE:
             if not moveable or arg.word(heap.ds, handle + 2) >> 8:
