@@ -8,7 +8,7 @@ from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DS,
-    UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
+    UC_X86_REG_BP, UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
 REGISTERS = {
@@ -75,6 +75,8 @@ class Machine:
         self.uc = None
         self.stop = ""
         self.calls = 0
+        self.trampoline = None
+        self.pending = None
 
     def _read(self, seg, offset, size):
         # Once the CPU runs, the guest's memory is the truth, not the loaded image.
@@ -129,7 +131,13 @@ class Machine:
         psp = self._psp()
         # Wine ne_module.c NE_StartTask: the handle of a moveable DGROUP is selector - 1.
         instance = data.selector - 1 if data.flags & 0x0010 else data.selector
-        self.box.wine.task = {"psp": psp, "instance": instance, "dgroup": data.selector, "dlls": self._dlls_to_init()}
+        names, rows, why = self._dlls_to_init()
+        self.box.wine.task = {
+            "psp": psp, "instance": instance, "dgroup": data.selector,
+            "dlls": names, "dll_init": rows, "dll_stop": why,
+        }
+        self.trampoline = self._trampoline(rows) if rows else None
+        self.pending = None
         gdtr_at = 0xF0E0
         self.uc.mem_write(gdtr_at, struct.pack("<HI", 0xFFFF, 0))
         self.uc.mem_write(0xF000, bytes([
@@ -242,8 +250,12 @@ class Machine:
         return first
 
     def _dlls_to_init(self):
-        """ToolBook DLLs the executable loads, with init code, in Wine NE_InitializeDLLs order."""
-        out, seen = [], set()
+        """ToolBook DLLs the executable loads, with init code, in Wine NE_InitializeDLLs order.
+
+        Returns (names, rows, stop). A row is (name, cs, ip, ds, heap, instance), the
+        registers ne_segment.c NE_InitDLL and NE_GetDLLInitParams give LibMain.
+        """
+        names, seen = [], set()
 
         def walk(image):
             for name in image.modules:
@@ -253,11 +265,72 @@ class Machine:
                     continue
                 seen.add(name)
                 walk(dll)
-                if dll.entry_seg:
-                    out.append(name)
+                # NE_InitDLL: only a library with an entry point is called.
+                if dll.entry_seg and dll.flags & 0x8000:
+                    names.append(name)
 
         walk(self.box.exe)
-        return out
+        rows = []
+        for name in names:
+            dll = self.box.images[name]
+            if not (dll.flags & 0x0001 and dll.auto):
+                return names, [], (
+                    f"KERNEL.91 InitTask: {name} has no SINGLEDATA DGROUP, so Wine NE_GetDLLInitParams "
+                    "passes its module handle in DI. neww has no module handles"
+                )
+            seg = dll.segments[dll.auto - 1]
+            instance = seg.selector - 1 if seg.flags & 0x0010 else seg.selector
+            code = dll.segments[dll.entry_seg - 1]
+            rows.append((name, code.selector, dll.entry_ip, seg.selector, dll.heap, instance))
+        return names, rows, None
+
+    def _trampoline(self, rows):
+        """Code that calls each LibMain with Wine NE_InitDLL's registers, then OUT 0xE6.
+
+        CX heap, DI instance, DS = ES = the DLL's DGROUP, the rest 0. Wine points BP at
+        the saved BP in its relay frame. Here BP points at the caller's BP, pushed.
+        """
+        code = bytearray()
+        for _name, cs, ip, ds, heap, instance in rows:
+            code += bytes([0xB9, heap & 0xFF, heap >> 8, 0xBF, instance & 0xFF, instance >> 8])
+            code += bytes([0xB8, ds & 0xFF, ds >> 8, 0x8E, 0xD8, 0x8E, 0xC0])
+            code += bytes([0x31, 0xC0, 0x31, 0xDB, 0x31, 0xD2, 0x31, 0xF6])
+            code += bytes([0x55, 0x89, 0xE5, 0x9A, ip & 0xFF, ip >> 8, cs & 0xFF, cs >> 8, 0x5D])
+        # OUT 0xE6, then pop es ; pop ds ; retf from the frame _dlls_done builds.
+        code += bytes([0xE6, 0xE6, 0x07, 0x1F, 0xCB])
+        base = self.box.linear
+        self.box.linear += 0x1000
+        self.uc.mem_map(base, 0x1000)
+        self.uc.mem_write(base, bytes(code))
+        return self._selector(base, len(code) - 1, 0x9A)
+
+    def _dlls_done(self, uc):
+        """OUT 0xE6: every LibMain returned. Answer InitTask and return to its caller."""
+        saved = self.pending
+        self.pending = None
+        if saved is None:
+            self.stop = f"out 0xe6 with no InitTask pending {self.where()}"
+            uc.emu_stop()
+            return
+        if uc.reg_read(UC_X86_REG_SS) != saved["ss"]:
+            self.stop = f"LibMain returned on another stack segment {self.where()}"
+            uc.emu_stop()
+            return
+        ax, dx, _why = self.box.wine.init_task_answer(self.word)
+        registers = dict(self.box.wine.registers)
+        registers.pop("push")
+        es = registers.pop("es")
+        uc.reg_write(UC_X86_REG_AX, ax)
+        uc.reg_write(UC_X86_REG_DX, dx)
+        for name, value in registers.items():
+            uc.reg_write(REGISTERS[name], value & 0xFFFF)
+        uc.reg_write(UC_X86_REG_BP, saved["bp"])
+        # The guest pops ES and the caller's DS, then the retf returns to the caller with
+        # one zero word pushed, as InitTask16's stack16_push leaves it.
+        sp = saved["sp"]
+        frame = struct.pack("<HH", es, saved["ds"]) + saved["ret"] + b"\x00\x00"
+        self._write_guest(saved["ss"], sp - 6, frame)
+        uc.reg_write(UC_X86_REG_SP, sp - 6)
 
     def _psp(self):
         """The task's PDB16, as Wine task.c TASK_Create fills it. Returns its selector."""
@@ -292,6 +365,9 @@ class Machine:
         return sel
 
     def _out(self, uc, port, size, value, user):
+        if port == 0xE6:
+            self._dlls_done(uc)
+            return
         if port == 0xE5:
             slot = uc.reg_read(UC_X86_REG_DX)
             traps = self.box.traps
@@ -330,6 +406,16 @@ class Machine:
             es = registers.pop("es", uc.reg_read(UC_X86_REG_ES))
             ds = registers.pop("ds", uc.reg_read(UC_X86_REG_DS))
             self._write_guest(cs, slot, struct.pack("<HH", es, ds))
+        if "init_dlls" in registers:
+            # The gate's retf goes to the trampoline instead of the caller.
+            ss = uc.reg_read(UC_X86_REG_SS)
+            sp = uc.reg_read(UC_X86_REG_SP)
+            self.pending = {
+                "ss": ss, "sp": sp, "ds": uc.reg_read(UC_X86_REG_DS), "bp": uc.reg_read(UC_X86_REG_BP),
+                "ret": self._read(self.box.selectors[ss], sp, 4),
+            }
+            self._write_guest(ss, sp, struct.pack("<HH", 0, self.trampoline))
+            registers = {}
         for name, value in registers.items():
             if name != "push":
                 uc.reg_write(REGISTERS[name], value & 0xFFFF)
