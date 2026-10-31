@@ -388,7 +388,7 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
         at = (heap["next"] + 3) & ~3
-        if at + size > heap["end"]:
+        if at + size > heap["end"] and not self._local_grow(ds, heap, at + size):
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
         if flags & 0x40:
@@ -397,6 +397,24 @@ class Pass04:
         heap["next"] = at + size
         uc.reg_write(UC_X86_REG_AX, at)
         uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
+    def _local_grow(self, seg, heap, need):
+        """Windows grows a full DGROUP up to 64K before LocalAlloc fails.
+
+        TB80BAS's NE header asks for a small heap. Without the grow it fell
+        back to the task's DS, wrote its record there, and read it back
+        through its own DS as zeros.
+        """
+        info = self.arena.segs[seg]
+        if heap["end"] != info["size"] or need > 0x10000:
+            return False
+        self.arena.grow(seg, (need + 0xFFF) & ~0xFFF)
+        heap["end"] = self.arena.segs[seg]["size"]
+        # The descriptor moved. Reload any segment register holding it.
+        for reg in (UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS):
+            if self.uc.reg_read(reg) == seg:
+                self.uc.reg_write(reg, seg)
         return True
 
     def _local_realloc(self, handle, size, flags):

@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `KERNEL.5` `LocalAlloc` grows a full automatic data segment toward 64K, the way Windows does, instead of returning 0. The segment keeps its selector and its bytes; `Arena.grow` moves it to new memory and rewrites the descriptor. TB80BAS's small heap filled during the book open, and its fallback put a record in the task's DS that it then read through its own DS as zeros.
 - Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files`. The known bug that they disagreed without saying why is gone.
 - Every far call that falls through to `AX = 1` is a line in the debug folder's `02_launch.txt`: module, ordinal, call site, and the first four argument words. It is written on every launch, not only when the run dies.
 - Kind-04 polygons are placed in `render.html` as SVG, at the record's twips / 15 from the page's top-left corner. Stage 2b says how many. Curve runs are still only files.

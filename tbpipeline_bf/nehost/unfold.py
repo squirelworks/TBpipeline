@@ -153,6 +153,21 @@ class Arena:
         info = self.segs[selector]
         return self.alloc_selector(info["size"], access, fixed_base=info["base"])
 
+    def grow(self, selector, size):
+        """GlobalReAlloc of a moveable segment: same selector, new base, bytes kept."""
+        info = self.segs[selector]
+        size = min(0x10000, size)
+        if size <= info["size"]:
+            return True
+        keep = bytes(self.uc.mem_read(info["base"], info["size"]))
+        base = self.linear
+        self.linear += (size + 0xFFF) & ~0xFFF
+        self.map(base, size, keep)
+        info["base"], info["size"] = base, size
+        info["limit"] = 0xFFFF if size >= 0x10000 else size - 1
+        self._write_descriptor(selector // AHINCR, base, info["limit"], info["access"])
+        return True
+
     def read(self, selector, offset, size):
         info = self.segs[selector]
         return bytes(self.uc.mem_read(info["base"] + offset, size))
