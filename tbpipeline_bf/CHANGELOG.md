@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `_lwrite` (`KERNEL.86`) writes to a file the guest created, and `_lread` reads it back through any handle. The book and the INI files stay read-only: `_lwrite` to them returns `0xFFFF`.
 - `OpenFile` with `OF_CREATE` creates or truncates a file the host keeps, never on disk. Later opens of the same path find it, and every handle shares its bytes.
 - `KERNEL.21` `GlobalHandle` returns the handle in AX and the selector in DX; in this host they are the same value. TB80UTL's heap maker keeps DX as the new heap's selector, and DX = 0 gave TB80BAS a heap at selector 0.
 - `USER.420` `wsprintf` formats into the caller's buffer, and its pop size is 0: it is cdecl, and the caller does `add sp, 0xE`. The table had 8. The message box the book open stops on now reads "A internal error has occurred in File 'Unknown' line 629." The `TB80enu` open was the unformatted buffer: the entry asks for `C:\TOOLBOOK\TB80enu1.DLL`.

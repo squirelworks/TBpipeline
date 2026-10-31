@@ -497,7 +497,7 @@ class Pass04:
             count = self._word(0)
             blob = self.files.get(handle, b"")
             pos = self.pos.get(handle, 0)
-            chunk = blob[pos:pos + count]
+            chunk = bytes(blob[pos:pos + count])
             self.pos[handle] = pos + len(chunk)
             if chunk:
                 self.arena.write(self._word(2), self._word(1), chunk)
@@ -521,6 +521,22 @@ class Pass04:
             return True
         if ordinal == 81:
             uc.reg_write(UC_X86_REG_AX, 0)
+            return True
+        if ordinal == 86:
+            # _lwrite(hFile, lpBuffer, cbWrite). Only a file the guest created
+            # takes writes; the book and the INI files are read-only here.
+            handle, count = self._word(3), self._word(0)
+            blob = self.files.get(handle)
+            if not isinstance(blob, bytearray):
+                uc.reg_write(UC_X86_REG_AX, 0xFFFF)
+                return True
+            pos = self.pos.get(handle, 0)
+            data = self.arena.read(self._word(2), self._word(1), count) if count else b""
+            if pos > len(blob):
+                blob.extend(bytes(pos - len(blob)))
+            blob[pos:pos + len(data)] = data
+            self.pos[handle] = pos + len(data)
+            uc.reg_write(UC_X86_REG_AX, len(data))
             return True
         return False
 
