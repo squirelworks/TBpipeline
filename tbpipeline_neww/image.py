@@ -119,6 +119,11 @@ class Sandbox:
         stack = self.exe.stack if self.exe else 0
         for image in self.images.values():
             for seg in image.segments:
+                if image is not self.exe and not image.synthetic and seg.index == image.auto and image.heap:
+                    # A DLL's DGROUP gets its NE heap too (NE_CreateSegment), rounded as GLOBAL_Alloc rounds.
+                    size = (len(seg.data) + image.heap + 0x1F) & ~0x1F
+                    if size <= 0x10000:
+                        seg.data.extend(b"\x00" * (size - len(seg.data)))
                 if image is self.exe and seg.index == auto:
                     # Wine ne_segment.c NE_CreateSegment: minsize + stack + heap, and
                     # global.c GLOBAL_Alloc rounds a block up to 32 bytes.
