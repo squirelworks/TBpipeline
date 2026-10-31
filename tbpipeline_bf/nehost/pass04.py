@@ -25,6 +25,8 @@ from unicorn.x86_const import (
 )
 
 API_PORT = 0xE0
+# Modules that are part of Windows itself. LoadLibrary finds them loaded.
+SYSTEM_MODULES = {"KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND", "DISPLAY", "MOUSE"}
 INITTASK = 91
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
@@ -683,7 +685,29 @@ class Pass04:
             return None, ""
         return open(path, "rb").read(), filename
 
+    def _system_module(self, name):
+        """The handle of a module Windows has loaded before any task runs.
+
+        LoadLibrary("KERNEL") returns KERNEL's handle in Windows. There is
+        no file behind these here, so the handle is a small selector and the
+        module has no exports: GetProcAddress on it returns 0, the answer
+        for the WOW thunk calls TB80W16 looks for on Windows 3.1.
+        """
+        stem = name.replace("/", "\\").split("\\")[-1].upper()
+        stem = stem[:-4] if stem.endswith((".DLL", ".EXE")) else stem
+        if stem not in SYSTEM_MODULES:
+            return None
+        for handle, mod in self.mods.items():
+            if mod["name"] == stem:
+                return handle
+        handle = self.arena.alloc_selector(16, 0x92, b"\x00" * 16)
+        self.mods[handle] = {"name": stem, "resources": [], "procs": {}, "ords": {}}
+        return handle
+
     def _load_library(self, name):
+        system = self._system_module(name)
+        if system:
+            return system
         for mod in self.mods.values():
             if mod["name"].lower() == name.lower():
                 return next(h for h, m in self.mods.items() if m is mod)

@@ -77,6 +77,9 @@ class Pass06(Pass04):
         return procs, ords
 
     def _load_library(self, name):
+        system = self._system_module(name)
+        if system:
+            return system
         data, filename = self._library_bytes(name)
         if not data:
             return 2
