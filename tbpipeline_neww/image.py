@@ -92,16 +92,18 @@ class Sandbox:
                 stub = bytearray(8)
                 stub[0:5] = bytes([0xBA, ordinal & 0xFF, (ordinal >> 8) & 0xFF, 0xE6, 0xE4])
                 if spec and spec.ret == "register":
-                    # A register contract may set ES and DS. Unicorn's register write does not load
-                    # a protected-mode descriptor, so the guest loads them: the stub jumps to a tail
-                    # that does mov es, cs:[slot] ; mov ds, cs:[slot + 2] ; retf pop.
+                    # A register contract reads and sets registers, DX among them, so its stub
+                    # does not load DX: OUT 0E7h, and the gate finds the ordinal from IP / 8.
+                    # It may set ES and DS. Unicorn's register write does not load a
+                    # protected-mode descriptor, so the guest loads them: the stub jumps to a
+                    # tail that does mov es, cs:[slot] ; mov ds, cs:[slot + 2] ; retf pop.
                     tail = len(blob)
                     slot = tail + 13
                     blob += bytes([0x2E, 0x8E, 0x06, slot & 0xFF, slot >> 8,
                                    0x2E, 0x8E, 0x1E, (slot + 2) & 0xFF, (slot + 2) >> 8,
                                    0xCA, pop & 0xFF, (pop >> 8) & 0xFF, 0, 0, 0, 0])
-                    rel = (tail - (ordinal * 8 + 8)) & 0xFFFF
-                    stub[5:8] = bytes([0xE9, rel & 0xFF, rel >> 8])
+                    rel = (tail - (ordinal * 8 + 5)) & 0xFFFF
+                    stub[0:5] = bytes([0xE6, 0xE7, 0xE9, rel & 0xFF, rel >> 8])
                     self.slots[(module, ordinal)] = slot
                 elif spec:
                     stub[5:8] = bytes([0xCA, pop & 0xFF, (pop >> 8) & 0xFF])
@@ -134,7 +136,8 @@ class Sandbox:
             if image.synthetic and image.segments:
                 sel = image.segments[0].selector
                 for ordinal in range(len(image.segments[0].data) // 8):
-                    if image.segments[0].data[ordinal * 8] == 0xBA and image.segments[0].data[ordinal * 8 + 3] == 0xE6:
+                    stub = image.segments[0].data[ordinal * 8:ordinal * 8 + 4]
+                    if (stub[0] == 0xBA and stub[3] == 0xE6) or stub[:2] == b"\xE6\xE7":
                         self.gates[(sel, ordinal)] = image.name
 
     def _link(self):

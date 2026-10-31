@@ -365,7 +365,10 @@ class Wine:
             while word(psp, p) & 0xFF in (0x20, 0x09):
                 p += 1
             bx = p
-        self.registers = {"bx": bx, "cx": task["stacktop"], "si": 0, "di": task["instance"], "es": psp, "push": 0}
+        self.registers = {
+            "bx": bx, "cx": task["stacktop"], "dx": SW_SHOWNORMAL, "si": 0, "di": task["instance"],
+            "es": psp, "push": 0,
+        }
         return 1, SW_SHOWNORMAL, None
 
     def local_init(self, selector, start, end, ds):
