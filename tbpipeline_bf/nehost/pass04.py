@@ -561,6 +561,30 @@ class Pass04:
                 return open(os.path.join(root, entry), "rb").read()
         return None
 
+    def _profile_value(self, path, app, key):
+        """A key's value from the INI TBK_INI supplies, or None.
+
+        Sections and keys match without case, as in Windows. With app or
+        key NULL, Windows lists the names; that is not answered here and
+        the caller gets the default.
+        """
+        if app is None or key is None:
+            return None
+        base = path.replace("/", "\\").split("\\")[-1].lower()
+        raw = self._ini_bytes(base if "." in base else base + ".ini")
+        if raw is None:
+            return None
+        section = None
+        for line in raw.decode("latin1").splitlines():
+            line = line.strip()
+            if line.startswith("[") and "]" in line:
+                section = line[1:line.index("]")].strip().lower()
+            elif section == app.lower() and "=" in line and not line.startswith(";"):
+                name, _, value = line.partition("=")
+                if name.strip().lower() == key.lower():
+                    return value.strip()
+        return None
+
     def _copy_to(self, seg, offset, text, limit):
         raw = text.encode("latin1", "replace")[: max(limit - 1, 0)] + b"\x00"
         if seg in self.arena.segs and raw:
@@ -941,6 +965,21 @@ class Pass04:
     def _kernel_string(self, ordinal):
         """Far-string helpers. A stub return of 1 was loaded as a selector."""
         uc = self.uc
+        if ordinal == 128:
+            # GetPrivateProfileString(app, key, default, buf, size, file).
+            # AX = 1 left the buffer as it was and said one character came
+            # back. The value is the key's from the INI TBK_INI supplies,
+            # else the default, cut to size - 1 and NUL-terminated.
+            size = self._word(2)
+            path = self._string(self._word(1), self._word(0))
+            app = self._string(self._word(10), self._word(9)) if self._word(10) else None
+            key = self._string(self._word(8), self._word(7)) if self._word(8) else None
+            default = self._string(self._word(6), self._word(5)) if self._word(6) else ""
+            value = self._profile_value(path, app, key)
+            text = default.rstrip(" ") if value is None else value
+            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(4), self._word(3), text, size) if size else 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         if ordinal == 88:
             dst_seg, dst_off = self._word(3), self._word(2)
             src = self._string(self._word(1), self._word(0))
