@@ -15,6 +15,8 @@ KERNEL = {
     15: ("GlobalAlloc", 6),
     17: ("GlobalFree", 2),
     18: ("GlobalLock", 2),
+    # pascal -ret16 GlobalUnlock(word). Added for "gap KERNEL.19 far call at 0x218:0x1ed5".
+    19: ("GlobalUnlock", 2),
     20: ("GlobalSize", 2),
     36: ("GetCurrentTask", 0),
     49: ("GetModuleFileName", 8),
@@ -46,6 +48,9 @@ USER = {
     111: ("SendMessage", 10),
     176: ("LoadString", 10),
     266: ("SetMessageQueue", 2),
+    # pascal SetWindowsHookEx(s_word segptr word word): returns HHOOK in DX:AX.
+    # Added for "gap USER.291 far call at 0x1428:0xc9a0" (TB80RCR segment 3).
+    291: ("SetWindowsHookEx", 10),
 }
 
 WIN87EM = {
@@ -104,6 +109,7 @@ class Layer:
         self.module_name_len = len(self.module_name)
         self.task = 0
         self.gsizes = {}
+        self.hooks = []  # (idHook, proc seg, proc off, hinst, htask); never called
         self.capped = []  # (handle, size asked) for GlobalAlloc over 64K
 
     def name_of(self, module, ordinal, name=""):
@@ -199,6 +205,9 @@ class Layer:
             return handle
         if ordinal == 18:
             return args[0] if args else 0
+        if ordinal == 19:
+            # No lock counts here, and no block ever moves: FALSE, "not still locked".
+            return 0
         if ordinal == 17:
             self.heap.pop(args[0] if args else 0, None)
             return 0
@@ -242,6 +251,11 @@ class Layer:
         raise Gap("KERNEL", ordinal, self.name_of("KERNEL", ordinal))
 
     def _user(self, ordinal, args):
+        if ordinal == 291:
+            # Pushed first is deepest: idHook, lpfn seg:off, hInstance, hTask.
+            hook_id = args[4] - 0x10000 if args[4] & 0x8000 else args[4]
+            self.hooks.append((hook_id, args[3], args[2], args[1], args[0]))
+            return 0x00010000 | len(self.hooks)  # HHOOK: opaque, nonzero, one per call
         if ordinal in (5, 266):
             return 1
         if ordinal == 108:

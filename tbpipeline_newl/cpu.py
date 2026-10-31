@@ -10,7 +10,7 @@ from unicorn import (
     UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE,
 )
 from unicorn.x86_const import (
-    UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS,
+    UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_DS,
     UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DX, UC_X86_REG_ES,
     UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
@@ -54,6 +54,7 @@ class Cpu:
         self.stop = ""
         self.exe = None
         self.glock = {}
+        self.packed = []  # self-loading files in --b whose segments are still packed
         self.ignored = []  # system-module files found in --b and not loaded
         self.recent = deque(maxlen=20)  # (cs, ip) of the last basic blocks
         self.blocks = {}  # linear base -> {"handle", "selector", "size", "written"}
@@ -84,6 +85,9 @@ class Cpu:
             exes = [img for img in images.values() if img["path"].upper().endswith(".EXE")]
             self.exe = exes[0] if exes else None
         self.images = by_name
+        # A self-loading image (NE flag 0x0800) keeps its segments packed until
+        # its own loader runs. newl does not run it, so those bytes are not code.
+        self.packed = sorted(Path(img["path"]).name for img in by_name.values() if img["ne_flags"] & 0x0800)
         self._gates()
         self._place()
         self._link()
@@ -123,7 +127,7 @@ class Cpu:
         return {
             "path": str(path), "name": name or path.stem.upper(), "data": data, "ne": ne,
             "entry_seg": (csip >> 16) & 0xFFFF, "entry_ip": csip & 0xFFFF,
-            "auto": _u16(data, ne + 0x0E), "heap": _u16(data, ne + 0x10), "stack": _u16(data, ne + 0x12),
+            "ne_flags": _u16(data, ne + 0x0C), "auto": _u16(data, ne + 0x0E), "heap": _u16(data, ne + 0x10), "stack": _u16(data, ne + 0x12),
             "modules": [m.upper() for m in imported_modules(data, ne)],
             "entries": entries, "names": names, "segments": segments, "fixups": fixups,
         }
@@ -312,6 +316,10 @@ class Cpu:
         if exe is None:
             self.stop = "no executable"
             return self
+        if self.packed:
+            self.stop = (f"packed {', '.join(self.packed)}: self-loading (NE flag 0x0800), and newl does not "
+                         f"unpack. Unpack first: python3 -m tbpipeline_bf.nehost --unpack FILE -o FILE")
+            return self
         self.uc = Uc(UC_ARCH_X86, UC_MODE_16)
         self.uc.mem_map(0, 0x100000)
         flat = self._map_selector(0, 0xFFFF, 0x9A)
@@ -370,7 +378,7 @@ class Cpu:
             self.uc.emu_start(0xF000, 0, timeout=TIMEOUT_US, count=limit)
         except UcError as exc:
             if not self.stop:
-                self.stop = str(exc)
+                self.stop = self._fault(exc)
         else:
             if not self.stop:
                 self.stop = self._ended(limit, time.monotonic() - began)
@@ -380,6 +388,29 @@ class Cpu:
         cs = uc.reg_read(UC_X86_REG_CS)
         seg = self.selectors.get(cs)
         self.recent.append((cs, address - seg["base"] if seg else address))
+
+    def _where(self, sel):
+        for image in self.images.values():
+            for seg in image["segments"]:
+                if seg["selector"] == sel:
+                    return f"{image['name']} segment {seg['index']}"
+        return ""
+
+    def _fault(self, exc):
+        """A CPU exception, named: where, the bytes there, and any null data selector."""
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        ip = self.uc.reg_read(UC_X86_REG_IP)
+        out = f"fault at {cs:#x}:{ip:#x}"
+        where = self._where(cs)
+        if where:
+            out += f" ({where})"
+        raw = self._code(cs, ip, 4)
+        if raw:
+            out += " bytes " + " ".join(f"{b:02x}" for b in raw)
+        nulls = [name for name, reg in (("DS", UC_X86_REG_DS), ("ES", UC_X86_REG_ES)) if self.uc.reg_read(reg) == 0]
+        if nulls:
+            out += ", null " + " and ".join(nulls)
+        return out + f": {exc}"
 
     def _ended(self, limit, elapsed):
         """emu_start came back on its own: a hlt, or one of the two caps."""
@@ -464,6 +495,8 @@ class Cpu:
             uc.hook_add(UC_HOOK_MEM_WRITE, self._block_write, base, base, base + size - 1)
             uc.hook_add(UC_HOOK_MEM_READ, self._block_read, base, base, base + size - 1)
             self.layer.gsizes[ax] = size
+            # GlobalSize takes the selector GlobalLock returned as well as the handle.
+            self.layer.gsizes[self.glock[ax]] = size
         if module == "KERNEL" and ordinal == 18:
             uc.reg_write(UC_X86_REG_DX, self.glock.get(args[0] if args else 0, 0))
             ax = 0
@@ -483,7 +516,8 @@ class Cpu:
             if seg is not None:
                 uc.mem_write(seg["base"] + args[1], self.layer.last_read)
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
-        if module == "KERNEL" and ordinal == 84:
+        if (module, ordinal) in (("KERNEL", 20), ("KERNEL", 84), ("USER", 291)):
+            # DWORD answers in DX:AX: GlobalSize, _llseek, SetWindowsHookEx.
             uc.reg_write(UC_X86_REG_DX, (ax >> 16) & 0xFFFF)
         elif not (module == "KERNEL" and ordinal in (18, 91, 131)):
             uc.reg_write(UC_X86_REG_DX, 0)
@@ -576,7 +610,10 @@ class Cpu:
         return None
 
     def _unmapped(self, uc, access, address, size, value, user):
-        self.stop = f"unmapped {address:#x}"
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        where = self._where(cs)
+        self.stop = f"unmapped {address:#x} at {cs:#x}:{ip:#x}" + (f" ({where})" if where else "")
         return False
 
     def _task_selector(self, data):
