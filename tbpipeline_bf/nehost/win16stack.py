@@ -144,6 +144,7 @@ POP = {
     # shell.dll16.spec. The registry calls are pascal with long keys.
     'SHELL': {
         1: 12,   # RegOpenKey(long str ptr)
+        3: 4,    # RegCloseKey(long)
     },
     # GETSTRMGRSTRING(max, far buf, keylo, keyhi). The reloc at RTM
     # segment 22:0x8AA is this, not KERNEL.3 GetVersion.
