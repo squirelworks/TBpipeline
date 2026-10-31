@@ -236,6 +236,16 @@ OF_SHARE_MASK = 0x0070
 SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
 
 
+def moveable_handle(sel):
+    """A moveable block's handle: its selector with the table bit set.
+
+    Wine's handle is the selector - 1, the same LDT entry at RPL 2, so a guest can load the
+    handle as a selector. neww's selectors are GDT entries at RPL 0, and Machine copies each
+    one into the LDT at the same index, so the selector with TI set loads the same block.
+    """
+    return sel | 4
+
+
 class Wine:
     def __init__(self, root):
         self.root = root
@@ -737,8 +747,8 @@ class Wine:
         return self.size(sel)
 
     def selector_of(self, handle):
-        """GlobalHandleToSel16 in neww's numbering: a moveable handle is selector - 1. None if no block."""
-        sel = handle + 1 if handle & 7 == 7 else handle & ~7
+        """GlobalHandleToSel16 in neww's numbering, moveable_handle's inverse. None if no block."""
+        sel = handle & ~7
         return sel if self.size(sel) is not None else None
 
     def local_init(self, selector, start, end, ds):
@@ -790,7 +800,7 @@ class Wine:
             return 0, 0, "KERNEL.15 GlobalAlloc with no CPU to map the block"
         size = (size + 0x1F) & ~0x1F
         sel = self.allocate(size)
-        handle = sel - 1 if flags & GMEM_MOVEABLE else sel
+        handle = moveable_handle(sel) if flags & GMEM_MOVEABLE else sel
         self.heap[handle] = (sel, size, flags)
         return handle, 0, None
 
