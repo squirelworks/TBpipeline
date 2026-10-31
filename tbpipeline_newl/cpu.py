@@ -466,14 +466,16 @@ class Cpu:
             uc.emu_stop()
             return
         if module == "KERNEL" and ordinal == 49 and len(args) >= 4:
-            off, sel, count = args[1], args[2], args[3]
-            raw = self.layer.module_name + b"\x00"
-            count = max(count, 1)
-            raw = raw[:count]
+            # pascal -ret16 GetModuleFileName(word ptr s_word): nSize was pushed
+            # last, so it is on top, then the buffer's offset and selector.
+            count, off, sel = args[0], args[1], args[2]
+            # lstrcpynA, as Wine GetModuleFileName16 copies: at most nSize - 1
+            # characters, then a NUL, and the length copied.
+            name = self.layer.module_name[:max(count - 1, 0)]
             seg = self.selectors.get(sel)
             if seg is not None and count:
-                uc.mem_write(seg["base"] + (off & 0xFFFF), raw)
-                ax = len(raw.rstrip(b"\x00"))
+                uc.mem_write(seg["base"] + (off & 0xFFFF), name + b"\x00")
+                ax = len(name)
         if module == "KERNEL" and ordinal == 15:
             # pascal16 GlobalAlloc(word long): flags is pushed first, so the
             # dword size is on top, low word nearest SP.

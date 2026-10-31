@@ -53,9 +53,9 @@ Every run ends on one of these lines. A line that matches none of them is an ano
 | `instruction cap 1000000 reached at CS:IP, ...` | The cap. The line says how many Windows calls were taken and the last one, or `no Windows call taken`. The CLI then prints the last 20 basic blocks |
 | `time cap 15 s reached at CS:IP, ...` | The timeout, with the same detail |
 
-### Seen and not changed
+### Read in Wine's order
 
-`LocalAlloc` is `pascal16 LocalAlloc(word word)`, so its size is the word on top of the stack. The layer reads the other word. `GetModuleFileName`'s count has the same swap. Neither one has been the stop in a run, so neither one was changed. If either one turns into the wall, this is where to look first.
+`LocalAlloc` is `pascal -ret16 LocalAlloc(word word)`, so its size is the word on top of the stack. `GetModuleFileName` is `pascal -ret16 GetModuleFileName(word ptr s_word)`, so `nSize` is on top, then the buffer's offset and selector. The layer used to read the flags as the size and `hModule` as the count, and it copied `count` bytes with no NUL. It now reads both in the spec's order, as neww does, and copies at most `nSize - 1` characters and a NUL, as Wine's `lstrcpynA` does. `tests/test_newl_spec_arg_order.py`. On the unpacked binaries the run still ends at the `TB80W16` segment 8 null `ES` fault, so neither read was that wall.
 
 ## neww
 

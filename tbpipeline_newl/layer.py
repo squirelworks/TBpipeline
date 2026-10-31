@@ -182,7 +182,9 @@ class Layer:
         if ordinal == 36:
             return self.task or 1
         if ordinal == 5:
-            size = args[1] if len(args) > 1 else 0
+            # pascal -ret16 LocalAlloc(word word): flags is pushed first, so
+            # the size is the word on top of the stack.
+            size = args[0] if args else 0
             if size == 0 or self.heap_brk == 0:
                 return 0
             size = (size + 1) & ~1
