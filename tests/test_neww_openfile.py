@@ -104,9 +104,16 @@ class OpenFileTable(unittest.TestCase):
         self.assertEqual(bx, 0xFFFF)
         self.assertEqual(struct.unpack_from("<H", mem, OFS + 2)[0], 2)
 
-    def test_write_mode_stops(self):
-        host, *_ = run("A.TBK", mode=0x0002)
-        self.assertIn("KERNEL.74 OpenFile 'A.TBK' mode 0x0002", host.stop)
+    def test_read_write_mode_opens_the_book(self):
+        # OF_READWRITE opens as OF_READ does: TB80NET opens the book so. A write to it stops
+        # (write_file), since neww never writes the host.
+        host, mem, _ax, bx = run("A.TBK", mode=0x0002)
+        self.assertNotEqual(bx, 0xFFFF)
+        self.assertEqual(mem[BUF:BUF + 4], b"\x22\x22\x22\x22")
+
+    def test_access_mode_3_stops(self):
+        host, *_ = run("A.TBK", mode=0x0003)
+        self.assertIn("KERNEL.74 OpenFile 'A.TBK' mode 0x0003", host.stop)
 
 
 if __name__ == "__main__":
