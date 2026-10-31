@@ -14,6 +14,12 @@ from pathlib import Path
 
 from ..engine import Engine, compile_handler
 from ..tbk import Book
+from .shapes import polygons
+
+COMPRESSED = (
+    "Compressed ToolBook pictures are not drawn: the decoder is TB80BMP ordinal 3, "
+    "and the host stops at its far call 0x1FCD. Only Windows bitmaps are shown."
+)
 
 THEMES = {
     "default": """
@@ -79,6 +85,9 @@ def document(title, payload, theme, script, extra=""):
 {css}
   .extra {{ max-width: 760px; margin: 8px auto 24px; text-align: center; }}
   .extra button {{ font: 13px Tahoma, "MS Sans Serif", sans-serif; padding: 4px 12px; }}
+  main {{ position: relative; }}
+  #status {{ margin: 0 8px 4px; font-size: 12px; }}
+  svg.placed {{ position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }}
   #files {{ margin-top: 10px; }}
   #files img {{ max-width: 100%; background: #fff; border: 1px solid #404040; }}
   #files p {{ color: inherit; }}
@@ -88,6 +97,7 @@ def document(title, payload, theme, script, extra=""):
 <div class="window">
 <header><b id="title"></b><select id="pages"></select><span id="count"></span></header>
 <main id="stage"></main>
+<p id="status" class="empty"></p>
 <footer>
   <span>
     <button id="back" type="button">Back</button>
@@ -191,6 +201,43 @@ function show() {
     p.textContent = line;
     stage.appendChild(p);
   }
+  if (page.text.length && !page.textAt) {
+    const p = document.createElement("p");
+    p.className = "empty unplaced";
+    p.textContent = "Text position unknown: the field record's coordinates are not decoded, so this text is listed, not placed.";
+    stage.appendChild(p);
+  }
+  if (page.pictures && page.pictures.length) {
+    for (const src of page.pictures) {
+      const img = document.createElement("img");
+      img.className = "picture";
+      img.src = src;
+      img.alt = src;
+      stage.appendChild(img);
+    }
+    const p = document.createElement("p");
+    p.className = "empty unplaced";
+    p.textContent = "Picture position unknown: Windows bitmaps from this page are drawn in book order, not placed.";
+    stage.appendChild(p);
+  }
+  if (page.shapes && page.shapes.length) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "placed");
+    let w = 1, h = 1;
+    for (const shape of page.shapes) {
+      for (const [x, y] of shape.points) { w = Math.max(w, x); h = Math.max(h, y); }
+    }
+    svg.setAttribute("width", Math.ceil(w));
+    svg.setAttribute("height", Math.ceil(h));
+    for (const shape of page.shapes) {
+      const poly = document.createElementNS(ns, "polygon");
+      poly.setAttribute("points", shape.points.map(p => p[0] + "," + p[1]).join(" "));
+      poly.setAttribute("fill", shape.fill);
+      svg.appendChild(poly);
+    }
+    stage.appendChild(svg);
+  }
   if (page.handlers && page.handlers.length) {
     const box = document.createElement("div");
     box.className = "jumps";
@@ -252,6 +299,7 @@ function buttonClick(n) {
   engine.log.push(["buttonClick", handler ? handler.label : n]);
   if (handler) runSteps(handler.steps);
 }
+document.getElementById("status").textContent = book.compressed || "";
 document.getElementById("next").addEventListener("click", next);
 document.getElementById("back").addEventListener("click", back);
 menu.addEventListener("change", () => go(menu.value));
@@ -324,7 +372,15 @@ def _clicks(handlers) -> list[dict]:
     return clicks
 
 
-def walked(book: Book, handlers: dict | None = None) -> list[dict]:
+def placed(blob: bytes) -> list[dict]:
+    """Kind-04 polygons at the twips the record names, divided by 15."""
+    return [
+        {"points": [[x, y] for x, y in points], "fill": "#%02x%02x%02x" % color}
+        for points, color in polygons(blob)
+    ]
+
+
+def walked(book: Book, handlers: dict | None = None, resources: dict | None = None) -> list[dict]:
     """Pages in the order engine.py walks them. Works for a .tbk or a .sbk."""
     engine = Engine(book)
     pages = []
@@ -341,6 +397,9 @@ def walked(book: Book, handlers: dict | None = None) -> list[dict]:
             "text": prose[:12],
             "jumps": page.quoted_jumps[:16],
             "handlers": _clicks((handlers or {}).get(page.name)),
+            "shapes": placed(page.blob),
+            "textAt": None,
+            "pictures": ((resources or {}).get("pages") or {}).get(page.name, []),
         })
         try:
             engine.next()
@@ -353,8 +412,9 @@ def render_new(book: Book, theme="default", files=None, resources=None, handlers
     payload = json.dumps({
         "title": book.path.stem,
         "file": Path(book.path).name,
-        "pages": walked(book, handlers),
+        "pages": walked(book, handlers, resources),
         "files": files or {},
         "resources": resources or {"book": [], "pages": {}},
+        "compressed": COMPRESSED,
     })
     return document(html.escape(book.path.stem), payload, theme, NEW_SCRIPT)
