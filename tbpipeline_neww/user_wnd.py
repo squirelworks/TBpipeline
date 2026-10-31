@@ -16,8 +16,9 @@ are written to a scratch block, released when the message returns, where
 Wine writes them on the 16-bit stack.
 
 Where Wine needs input, a display or a real clock, the docstring says what
-neww does instead: there is no input, the screen is 1024x768, and time is a
-counter that moves only when the task waits for a message.
+neww does instead: input comes from a script (input16), the screen is
+1024x768, and time is a counter that moves only when the task waits for a
+message.
 """
 
 import struct
@@ -45,6 +46,12 @@ WM_SHOWWINDOW, WM_CTLCOLOR, WM_ACTIVATEAPP, WM_CANCELMODE, WM_SETCURSOR = 0x18, 
 WM_MOUSEACTIVATE, WM_CHILDACTIVATE, WM_GETMINMAXINFO, WM_ICONERASEBKGND = 0x21, 0x22, 0x24, 0x27
 WM_SETFONT, WM_GETFONT, WM_WINDOWPOSCHANGING, WM_WINDOWPOSCHANGED = 0x30, 0x31, 0x46, 0x47
 WM_NCCREATE, WM_NCDESTROY, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCPAINT, WM_NCACTIVATE = 0x81, 0x82, 0x83, 0x84, 0x85, 0x86
+WM_NCMOUSEMOVE, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCLBUTTONDBLCLK = 0xA0, 0xA1, 0xA2, 0xA3
+WM_NCRBUTTONDOWN, WM_NCRBUTTONUP, WM_NCRBUTTONDBLCLK = 0xA4, 0xA5, 0xA6
+WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_SYSCHAR = 0x100, 0x101, 0x102, 0x104, 0x105, 0x106
+WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK = 0x200, 0x201, 0x202, 0x203
+WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK = 0x204, 0x205, 0x206
+WM_KEYF1 = 0x4D
 WM_TIMER, WM_SYSTIMER, WM_PARENTNOTIFY, WM_QUERYNEWPALETTE = 0x113, 0x118, 0x210, 0x30F
 WM_PAINTICON, WM_SYNCPAINT = 0x26, 0x88
 
@@ -118,6 +125,10 @@ class TaskQueue:
         self.queue = []          # posted messages: (hwnd, msg, wp, lp)
         self.quit = None
         self.timers = {}         # (hwnd, id) -> [interval, proc, due]
+        self.input = []          # cooked hardware messages: (hwnd, msg, wp, lp), input16
+        self.peek = None         # (raw, message or None) cooked for a peek that leaves it queued
+        self.peek_fresh = False
+        self.after = {}          # cooked message -> a message posted once it is read (WM_KEYF1)
 
 
 class WM:
@@ -324,14 +335,28 @@ def adjust_window_rect(rect, style, menu, ex):
     return l, t, r, b
 
 
+def menu_bar_height(wine, w):
+    """The menu bar's height, its bottom line included. A menu with no items has no bar here.
+    Wine's NtUserDrawMenuBarTemp answers SM_CYMENU for an empty menu; neww acts as the
+    Windows the books were made on: Nida's Logic Families sets an empty menu on a window
+    sized for its page alone, and with Wine's bar its bottom row (the page buttons) is cut."""
+    if not w.menu:
+        return 0
+    from .user_res import menu_items
+    items = menu_items(wine, w.menu)
+    if items is not None and not items:
+        return 0
+    return MENU_HEIGHT + 1
+
+
 def nc_calc_size(wine, w, rect):
     """win32u defwnd.c handle_nc_calc_size: the client rectangle inside rect."""
     if w.style & WS_MINIMIZE:
         return rect[0], rect[1], rect[0], rect[1]
     al, at, ar, ab = adjust_window_rect((0, 0, 0, 0), w.style, False, w.exstyle & ~WS_EX_CLIENTEDGE)
     l, t, r, b = rect[0] - al, rect[1] - at, rect[2] - ar, rect[3] - ab
-    if (w.style & (WS_CHILD | WS_POPUP)) != WS_CHILD and w.menu:
-        t += MENU_HEIGHT + 1
+    if (w.style & (WS_CHILD | WS_POPUP)) != WS_CHILD:
+        t += menu_bar_height(wine, w)
     if w.exstyle & WS_EX_CLIENTEDGE and r - l > 2 * CXEDGE and b - t > 2 * CXEDGE:
         l, t, r, b = l + CXEDGE, t + CXEDGE, r - CXEDGE, b - CXEDGE
     if w.style & WS_VSCROLL and r - l >= SCROLL:
@@ -624,11 +649,11 @@ def draw_frame(wine, w, active=None):
     if (w.style & WS_CAPTION) == WS_CAPTION:
         adjust = adjust_window_rect((0, 0, 0, 0), w.style & ~WS_CAPTION | WS_BORDER, False, w.exstyle & ~WS_EX_CLIENTEDGE)
         top = oy - adjust[1]
-        bar = (ox - adjust[0], top, ox + r - 1 + adjust[2], top + CAPTION_HEIGHT - 1)
+        bar = (ox - adjust[0], top, ox + r - 1 - adjust[2], top + CAPTION_HEIGHT - 1)
         draw.rectangle(bar, fill=gdi16.SYS_COLORS[2 if active else 3])
         if w.text:
             dc_text(wine, (bar[0] + 4, bar[1] + 2), w.text, gdi16.SYS_COLORS[9 if active else 19], bold=True)
-        if w.menu:
+        if menu_bar_height(wine, w):
             mtop = top + CAPTION_HEIGHT + 1
             draw.rectangle((bar[0], mtop, bar[2], mtop + MENU_HEIGHT - 1), fill=gdi16.SYS_COLORS[4])
             draw_menu_bar(wine, w, bar[0], mtop)
@@ -2372,8 +2397,8 @@ def _paint_window(wine, hwnd_filter, task=None):
 
 
 def next_message(wine, hwnd, first, last, remove, task=None, advance=True):
-    """get_message's order: posted messages, the quit message, (no input), WM_PAINT, then
-    timers. With advance, and nothing else, the clock moves to the task's next timer; without,
+    """get_message's order: posted messages, the quit message, hardware input (cooked by
+    input16), WM_PAINT, then timers. With advance, and nothing else, the clock moves to the task's next timer; without,
     only a timer already due counts. Returns the message as (hwnd, msg, wp, lp) or None."""
     m = wm(wine)
     q = m.queue_of(wine.htask if task is None else task)
@@ -2387,6 +2412,21 @@ def next_message(wine, hwnd, first, last, remove, task=None, advance=True):
         if remove:
             q.quit = None
         return (0, WM_QUIT, code, 0)
+    for i, entry in enumerate(q.input):
+        if _matches(m, entry, hwnd, first, last):
+            if remove:
+                del q.input[i]
+                from .input16 import retrieved
+                retrieved(wine, entry)
+                post = q.after.pop(entry, None)
+                if post is not None:
+                    q.queue.append(post)
+            return entry
+    if q.peek is not None and q.peek[1] is not None and _matches(m, q.peek[1], hwnd, first, last):
+        entry = q.peek[1]
+        if remove:
+            q.peek = None
+        return entry
     if not first and not last or first <= WM_PAINT <= last:
         h = _paint_window(wine, hwnd, task)
         if h:
@@ -2405,13 +2445,20 @@ def next_message(wine, hwnd, first, last, remove, task=None, advance=True):
 
 
 def message_waiting(wine, task):
-    """A message the task's GetMessage would return now, without moving the clock."""
-    return next_message(wine, 0, 0, 0, False, task=task, advance=False) is not None
+    """A message the task's GetMessage would return now, without moving the clock, or hardware
+    input for it that is due."""
+    from .input16 import ready
+    return next_message(wine, 0, 0, 0, False, task=task, advance=False) is not None or ready(wine, task)
 
 
 def write_msg(wine, ptr, msg):
+    """MSG16 {hwnd, message, wParam, lParam, time, pt}. pt is the cursor's position, as the
+    server stamps each message; GetMessagePos and GetMessageTime answer the last one read."""
     h, message, wp, lp = msg
-    gdi16.write(wine, ptr, struct.pack("<HHHIIhh", h, message, wp & 0xFFFF, lp & 0xFFFFFFFF, m_time(wine), 0, 0))
+    m = wm(wine)
+    x, y = getattr(m, "cursor_pos", (SCREEN_W // 2, SCREEN_H // 2))
+    m.msg_pos, m.msg_time = (x, y), m_time(wine)
+    gdi16.write(wine, ptr, struct.pack("<HHHIIhh", h, message, wp & 0xFFFF, lp & 0xFFFFFFFF, m_time(wine), x, y))
 
 
 def m_time(wine):
@@ -2448,8 +2495,45 @@ def _mm_callback(wine, hwnd, first, last, polling=False):
     return callback_due(wine, waiting)
 
 
+def _input_clock(wine, hwnd, first, last, polling=False):
+    """The clock moves to the task's next hardware input when the task has nothing else and
+    the input comes before every timer."""
+    from .input16 import due_time
+    from .tasks import next_ready, earliest_timer
+    m = wm(wine)
+    due = due_time(wine, wine.htask)
+    if due is not None and due > m.clock and next_message(wine, hwnd, first, last, False, advance=False) is None \
+            and (polling or next_ready(wine) is None):
+        timer = earliest_timer(wine)
+        own = min((t[2] for t in m.timers.values()), default=None)
+        if (timer is None or due <= timer[0]) and (own is None or due <= own):
+            m.clock = due
+
+
+def _input(wine, hwnd, first, last, polling=False, remove=True):
+    """Hardware input for the task (input16.cook_calls), after _input_clock. A GuestCalls that
+    looks again, a stop, or None when GetMessage goes on as before."""
+    from .input16 import cook_calls
+    m = wm(wine)
+    _input_clock(wine, hwnd, first, last, polling)
+    q = m.queue_of(wine.htask)
+    # A peek's cooking holds only for the call that made it (it runs again after its guest
+    # calls); the next call cooks the raw message afresh, as Wine processes it each time.
+    if q.peek is not None and not q.peek_fresh:
+        q.peek = None
+    q.peek_fresh = False
+    while True:
+        if any(_matches(m, entry, hwnd, first, last) for entry in q.input):
+            return None     # one cooked message at a time, as the server hands them out
+        if q.peek is not None:
+            return None
+        r = cook_calls(wine, first, last, remove)
+        if r != "cooked":
+            return r
+
+
 NO_INPUT = ("the queue is empty, no window needs painting and no timer is set; "
-            "the task waits for input, and neww has none")
+            "the task waits for input, and the input script has no more for it")
 
 
 @api("USER", "GetMessage")
@@ -2461,6 +2545,8 @@ def get_message(wine, arg, ptr, hwnd, first, last):
     that is due runs first, and GetMessage looks again (mmsystem16.callback_due)."""
     from .tasks import Switch
     calls = _mm_callback(wine, hwnd, first, last)
+    if calls is None:
+        calls = _input(wine, hwnd, first, last)
     if calls is not None:
         return calls
     msg, nxt = _next_or_wait(wine, hwnd, first, last, True)
@@ -2487,6 +2573,8 @@ def peek_message(wine, arg, ptr, hwnd, first, last, flags):
     from .tasks import Switch
     m = wm(wine)
     calls = _mm_callback(wine, hwnd, first, last, polling=True)
+    if calls is None:
+        calls = _input(wine, hwnd, first, last, polling=True, remove=bool(flags & PM_REMOVE))
     if calls is not None:
         return calls
     msg, nxt = _next_or_wait(wine, hwnd, first, last, bool(flags & PM_REMOVE))
@@ -2509,6 +2597,11 @@ def wait_message(wine, arg):
     calls = _mm_callback(wine, 0, 0, 0)
     if calls is not None:
         return calls
+    # Hardware input that is due ends the wait; WaitMessage itself does not process it.
+    from .input16 import ready
+    _input_clock(wine, 0, 0, 0)
+    if ready(wine, wine.htask):
+        return arg.regs("ax"), 0
     msg, nxt = _next_or_wait(wine, 0, 0, 0, False)
     if nxt is not None:
         wine.trace[-1] += f" (waits) -> {nxt.exe_name}"
@@ -2529,19 +2622,49 @@ def get_queue_status(wine, arg, flags):
         status |= 0x20  # QS_PAINT
     if m.timers:
         status |= 0x10  # QS_TIMER
+    from .input16 import ready, head_for, MOUSE_FIRST, MOUSE_LAST
+    q = m.queue_of(wine.htask)
+    pending = [e[1] for e in q.input]
+    if ready(wine, wine.htask):
+        pending.append(head_for(wine, wine.htask).msg)
+    for msg in pending:
+        if msg in (WM_MOUSEMOVE, 0xA0):
+            status |= 0x02  # QS_MOUSEMOVE
+        elif MOUSE_FIRST <= msg <= MOUSE_LAST or 0xA0 <= msg <= 0xA9:
+            status |= 0x04  # QS_MOUSEBUTTON
+        else:
+            status |= 0x01  # QS_KEY
     return (status & flags) << 16 | (status & flags)
 
 
 @api("USER", "GetInputState")
 def get_input_state(wine, arg):
-    return 0
+    """GetInputState16: TRUE when mouse buttons or keys wait in the task's queue (QS_KEY |
+    QS_MOUSEBUTTON), cooked or raw and due."""
+    from .input16 import head_for, MOUSE_FIRST
+    m = wm(wine)
+    q = m.queue_of(wine.htask)
+    if any(e[1] != WM_MOUSEMOVE and e[1] != 0xA0 for e in q.input):
+        return 1
+    raw = head_for(wine, wine.htask)
+    return int(raw is not None and raw.due <= m.clock and raw.msg != MOUSE_FIRST)
 
 
 @api("USER", "TranslateMessage")
 def translate_message(wine, arg, ptr):
-    """TranslateMessage16: only key messages are translated, and neww has no input."""
-    msg = struct.unpack("<H", gdi16.read(wine, ptr + 2, 2))[0]
-    return 1 if 0x100 <= msg <= 0x108 else 0
+    """TranslateMessage16 -> TranslateMessage: WM_KEYDOWN or WM_SYSKEYDOWN of a key that makes
+    a character posts WM_CHAR or WM_SYSCHAR (ToUnicode on a US layout) and answers TRUE; other
+    key messages answer TRUE, the rest FALSE."""
+    from .input16 import char_for, state
+    h, msg, wp, lp = struct.unpack("<HHHI", gdi16.read(wine, ptr, 10))
+    if not 0x100 <= msg <= 0x108:
+        return 0
+    if msg in (0x100, 0x104):
+        ch = char_for(wp, state(wine).keys)
+        if ch is not None:
+            m = wm(wine)
+            m.queue_of(m.task_of(h) if h else wine.htask).queue.append((h, msg + 2, ch, lp))
+    return 1
 
 
 @api("USER", "DispatchMessage")
@@ -2624,20 +2747,64 @@ def get_cursor(wine, arg):
 @api("USER", "SetCursorPos")
 def set_cursor_pos(wine, arg, x, y):
     """SetCursorPos16 -> NtUserSetCursorPos: the desktop's cursor moves (clipped to the screen),
-    and GetCursorPos answers the new position. Void.
-
-    Not yet done: the server's set_cursor_pos also queues a WM_MOUSEMOVE hardware message for
-    the window under the cursor, whether or not the position changes. neww has no hardware
-    input queue yet; the trace line says so each time, so the gap is never silent."""
+    and GetCursorPos answers the new position. The server's set_cursor_pos also queues a
+    WM_MOUSEMOVE hardware message, whether or not the position changes. Void."""
+    from .input16 import queue_raw, Raw, WM_MOUSEMOVE as MOVE
     m = wm(wine)
     m.cursor_pos = (max(0, min(x, SCREEN_W - 1)), max(0, min(y, SCREEN_H - 1)))
-    wine.trace[-1] += f" ({x}, {y}); no WM_MOUSEMOVE queued: neww has no hardware input queue yet"
+    queue_raw(wine, Raw(MOVE, *m.cursor_pos))
     return arg.regs("ax"), 0
 
 
-@api("USER", "GetKeyState", "GetAsyncKeyState")
+@api("USER", "GetKeyState")
 def get_key_state(wine, arg, key):
-    return 0
+    """NtUserGetKeyState: (signed char)(state & 0x81): 0xFF80 while the key is down, bit 0 its
+    toggle. neww keeps one key state, set as each hardware message is cooked."""
+    from .input16 import state
+    st = state(wine)
+    key &= 0xFF
+    return (0xFF80 if key in st.keys else 0) | (1 if key in st.toggled else 0)
+
+
+@api("USER", "GetAsyncKeyState")
+def get_async_key_state(wine, arg, key):
+    """NtUserGetAsyncKeyState: 0x8000 while the key is down, 1 when it was pressed since the
+    last call."""
+    from .input16 import state
+    st = state(wine)
+    key &= 0xFF
+    result = (0x8000 if key in st.down else 0) | (1 if key in st.pressed else 0)
+    st.pressed.discard(key)
+    return result
+
+
+@api("USER", "GetKeyboardState")
+def get_keyboard_state(wine, arg, ptr):
+    """GetKeyboardState16: 256 bytes, 0x80 for a key down, 0x01 for its toggle. Void."""
+    from .input16 import state
+    st = state(wine)
+    gdi16.write(wine, ptr, bytes((0x80 if k in st.keys else 0) | (1 if k in st.toggled else 0)
+                                 for k in range(256)))
+    return arg.regs("ax"), 0
+
+
+@api("USER", "GetMessagePos")
+def get_message_pos(wine, arg):
+    """The cursor's position when the last message GetMessage or PeekMessage read was queued."""
+    m = wm(wine)
+    x, y = getattr(m, "msg_pos", getattr(m, "cursor_pos", (SCREEN_W // 2, SCREEN_H // 2)))
+    return (y & 0xFFFF) << 16 | (x & 0xFFFF)
+
+
+@api("USER", "GetMessageTime")
+def get_message_time(wine, arg):
+    return getattr(wm(wine), "msg_time", 0) & 0xFFFFFFFF
+
+
+@api("USER", "GetDoubleClickTime")
+def get_double_click_time(wine, arg):
+    from .input16 import DOUBLE_CLICK_TIME
+    return DOUBLE_CLICK_TIME
 
 
 @api("USER", "MessageBeep")

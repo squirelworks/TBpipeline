@@ -1,7 +1,9 @@
-"""python3 -m tbpipeline_neww --b ~/TBK/bin [--c book.tbk] [--cap N]
+"""python3 -m tbpipeline_neww --b ~/TBK/bin [--c book.tbk] [--cap N] [--input SCRIPT] [--png FILE]
 
 Links every NE module in the directory, then enters TB80RTM.
 Windows ordinals are gates. ToolBook calls land in the other DLL.
+--input is mouse and keyboard input, e.g. "click 400,300; wait 500; key ctrl+right"
+(see input16). --png saves the screen when the run stops.
 """
 
 import sys
@@ -25,7 +27,13 @@ def main(argv=None):
         return 2
     from .machine import Machine
 
-    host = Machine(root, book)
+    script = png = None
+    for i, a in enumerate(argv):
+        if a == "--input" and i + 1 < len(argv):
+            script = argv[i + 1]
+        if a == "--png" and i + 1 < len(argv):
+            png = argv[i + 1]
+    host = Machine(root, book, input_script=script)
     box = host.box
     if box.exe is None:
         print(f"no NE executable in {root}", file=sys.stderr)
@@ -46,6 +54,7 @@ def main(argv=None):
             cap = int(argv[i + 1])
     if cap:
         host.call_limit = cap
+        host.timeout_us = max(host.timeout_us, cap * 1000)
         host.run(limit=cap * 1000)
     else:
         host.run()
@@ -54,6 +63,9 @@ def main(argv=None):
     ip = host.uc.reg_read(UC_X86_REG_IP) if host.uc else 0
     print(f"  stopped {cs:#x}:{ip:#x} {host.stop}")
     print(f"  calls {host.calls}")
+    if png:
+        host.box.wine.gdi.screen.save(png)
+        print(f"  screen saved to {png}")
     for text, caption, kind in host.box.wine.messageboxes:
         print(f"  MessageBox {text!r} caption {caption!r} type {kind:#x}")
     defaults = host.box.wine.defaults

@@ -309,7 +309,9 @@ class Windows(unittest.TestCase):
         by_name(self.w, "USER", "SetCursorPos", 2000, 7)
         by_name(self.w, "USER", "GetCursorPos", (DATA, 0x300))
         self.assertEqual(struct.unpack("<hh", self.w.memory.read(DATA, 0x300, 4)), (1023, 7))
-        self.assertIn("no WM_MOUSEMOVE queued", self.w.trace[-2])
+        # set_cursor_pos queues a WM_MOUSEMOVE hardware message at the clipped position.
+        raw = self.w.input.raw[-1]
+        self.assertEqual((raw.msg, raw.x, raw.y), (0x200, 1023, 7))
 
     def test_activate_app_goes_to_the_new_tasks_windows_only(self):
         # set_active_window: from no active window, WM_ACTIVATEAPP (TRUE, old thread 0) goes to
