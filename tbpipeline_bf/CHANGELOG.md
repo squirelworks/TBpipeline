@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `KERNEL.166` `WinExec` of an EXE found in the unpacked directory loads it as a second Win16 task in the same CPU and returns its instance once that task yields (`GetMessage`, `PeekMessage`, `WaitMessage`, or `Yield`). A missing EXE is still the wall: the run stops and the command line is quoted.
 - `USER.266` `SetMessageQueue` returns TRUE, as Wine's `SetMessageQueue` does for any size.
 - `KERNEL.30` `WaitEvent` takes the start event Wine posts and returns FALSE. A wait with nothing pending stops the run.
 - `GDI.87` `GetStockObject` returns `index + 32`, Wine's stock handle, and 0 for a bad index.
