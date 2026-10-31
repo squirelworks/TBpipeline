@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `USER.471` `lstrcmpi` compares the two strings without case and returns -1, 0 or 1. `AX = 1` said "greater" for every pair, so TB80NET never matched its command line `ToolBook` and exited. It now creates its window and blocks in `GetMessage`, and WinExec returns to TB80BAS. The runtime called it 11,926 times before the wall; the run's `AX = 1` lines go from 12,202 to 312.
 - `WinExec` of an EXE in `TBK_UNPACKED` runs it as a second task in the same CPU. Its imports bind to the DLLs already loaded, `InitTask` answers with its own instance, PSP and stack, and the caller gets the instance when the new task first blocks in `GetMessage`, `PeekMessage`, `WaitMessage` or `Yield`. The instruction cap and the timeout are one budget for both tasks. An EXE that is not there is still the stop. `TB80NET.EXE` now runs its startup and exits; `known-bugs.md` says why.
 - `KERNEL.166` `WinExec` stops the run and quotes the command line. It is the wall of item 27: TB80BAS starts its book file manager, `TB80NET.EXE`, as a second task, and `known-bugs.md` says what the way past would take.
 - `KERNEL.21` `GlobalHandle` returns the handle in AX and the selector in DX; in this host they are the same value. TB80UTL's heap maker keeps DX as the new heap's selector, and DX = 0 gave TB80BAS a heap at selector 0.
