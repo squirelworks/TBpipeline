@@ -249,6 +249,25 @@ def screen_origin(wine, hwnd):
     return x, y
 
 
+HTNOWHERE, HTCLIENT, HTTRANSPARENT = 0, 1, 0xFFFF
+
+
+def nc_hit_test(wine, w, x, y):
+    """defwnd.c handle_nc_hit_test, its first two tests: outside the window is HTNOWHERE,
+    inside the client is HTCLIENT. The frame's parts (borders, caption, menu, scroll bars)
+    stop for now. Returns (hit, stop)."""
+    m = wm(wine)
+    px, py = screen_origin(wine, w.parent) if w.parent and w.parent != m.desktop else (0, 0)
+    l, t, r, b = w.rect
+    if not (l + px <= x < r + px and t + py <= y < b + py):
+        return HTNOWHERE, None
+    cl, ct, cr, cb = w.client
+    if cl + px <= x < cr + px and ct + py <= y < cb + py:
+        return HTCLIENT, None
+    return 0, (f"WM_NCHITTEST at ({x}, {y}) on the frame of {w.hwnd:#x}: Wine tells the border, caption, "
+               "menu and scroll bars apart, and neww does not yet")
+
+
 def window_origin(wine, hwnd):
     """Where a window's (0, 0) — its window rectangle's corner — is on the screen."""
     w = wm(wine).windows[hwnd]
@@ -363,6 +382,12 @@ def send(wine, hwnd, msg, wp=0, lp=0):
     if proc_is_def(wine, w.proc):
         result = yield from def_window_proc(wine, hwnd, msg, wp, lp)
         return result
+    from .user_controls import host_index, call_host
+    index = host_index(wine, w.proc)
+    if index is not None:
+        # A thunk of Wine's own procedure: CallWindowProc16 calls it without 16-bit code.
+        result = yield from call_host(wine, index, hwnd, msg, wp, lp)
+        return result
     ax, dx = yield from call_proc(wine, w.proc, hwnd, msg, wp, lp)
     return ax | dx << 16
 
@@ -413,6 +438,12 @@ def def_window_proc(wine, hwnd, msg, wp, lp):
     if msg == WM_NCDESTROY:
         w.text = None
         return 0
+    if msg == WM_NCHITTEST:
+        x, y = signed(lp & 0xFFFF), signed(lp >> 16 & 0xFFFF)
+        hit, why = nc_hit_test(wine, w, x, y)
+        if why:
+            yield why
+        return hit
     if msg == WM_NCCALCSIZE:
         if lp:
             if wp:
@@ -690,14 +721,17 @@ def find_class(wine, name, inst):
     module = exe_ptr(wine, inst) if inst != user_module(wine) else 0
     atom = name if isinstance(name, int) else wine.messages.get(name.lower())
     if not atom:
-        return None
+        from .user_controls import builtin_class
+        return builtin_class(wine, name)
     for cls in m.classes:
         if cls.atom == atom and cls.module == module and module:
             return cls
     for cls in m.classes:
-        if cls.atom == atom and cls.style & CS_GLOBALCLASS:
+        if cls.atom == atom and cls.style & CS_GLOBALCLASS and not getattr(cls, "builtin", False):
             return cls
-    return None
+    # The system classes come last: Wine's built-in controls.
+    from .user_controls import builtin_class
+    return builtin_class(wine, name)
 
 
 def class_name_arg(wine, ptr):
@@ -924,9 +958,41 @@ def get_window_long(wine, arg, hwnd, index):
     return v or 0
 
 
+def fix_exstyle(style, ex):
+    """win32u window.c fix_exstyle."""
+    if (ex & WS_EX_DLGMODALFRAME) or (not ex & WS_EX_STATICEDGE and style & (WS_DLGFRAME | WS_THICKFRAME)):
+        return ex | WS_EX_WINDOWEDGE
+    return ex & ~WS_EX_WINDOWEDGE
+
+
+def _set_style(wine, w, index, value):
+    """win32u set_window_long for GWL_STYLE and GWL_EXSTYLE. WM_STYLECHANGING and
+    WM_STYLECHANGED are not sent to a 16-bit procedure (user.exe16 message.c drops them in
+    WINPROC_CallProc32ATo16), and DefWindowProc does nothing with them, so a guest or default
+    procedure sees no message. Wine's own control procedures do get them; neww stops there."""
+    from .user_controls import host_index
+    m = wm(wine)
+    if host_index(wine, w.proc) is not None:
+        return 0, f"SetWindowLong({w.hwnd:#x}, {index}) on a Wine control: its procedure gets WM_STYLECHANGING and WM_STYLECHANGED"
+    if index == GWL_STYLE:
+        old = w.style
+        if w.parent == m.desktop:
+            value |= WS_CLIPSIBLINGS      # WS_CLIPSIBLINGS can't be reset on top-level windows
+        if old & WS_MINIMIZE:
+            value |= WS_MINIMIZE          # WS_MINIMIZE can't be reset
+        if (old ^ value) & WS_VISIBLE:
+            return 0, (f"SetWindowLong({w.hwnd:#x}, GWL_STYLE) changes WS_VISIBLE: Wine invalidates the "
+                       "window's DCs and updates its state, which neww does not yet")
+        w.style = value
+        w.exstyle = fix_exstyle(w.style, w.exstyle)
+        return old, None
+    old = w.exstyle
+    w.exstyle = fix_exstyle(w.style, (value & ~WS_EX_TOPMOST) | (old & WS_EX_TOPMOST))
+    return old, None
+
+
 def _set_window(wine, hwnd, index, value, size):
-    """SetWindowLong16 / SetWindowWord16. A style change does not send WM_STYLECHANGING here:
-    win32u sends it, and neww stops when a guest procedure would get it."""
+    """SetWindowLong16 / SetWindowWord16, as win32u set_window_long."""
     w = wm(wine).get(hwnd)
     if w is None:
         return 0, None
@@ -947,12 +1013,7 @@ def _set_window(wine, hwnd, index, value, size):
         old, w.id = w.id, value & 0xFFFF
         return old, None
     if index in (GWL_STYLE, GWL_EXSTYLE):
-        if not proc_is_def(wine, w.proc):
-            return 0, f"SetWindowLong({hwnd:#x}, {index}) on a window with a guest procedure: Wine sends WM_STYLECHANGING and WM_STYLECHANGED, which neww does not yet"
-        attr = "style" if index == GWL_STYLE else "exstyle"
-        old = getattr(w, attr)
-        setattr(w, attr, value)
-        return old, None
+        return _set_style(wine, w, index, value & 0xFFFFFFFF)
     if index == GWW_HWNDPARENT:
         return 0, f"SetWindowWord({hwnd:#x}, GWW_HWNDPARENT): Wine changes the owner or the parent"
     return 0, None
@@ -1516,11 +1577,19 @@ def set_active(wine, hwnd, focus=True):
         yield from send(wine, hwnd, WM_QUERYNEWPALETTE, 0, 0)
         if m.get(hwnd) is None:
             return previous
-    if bool(previous) != bool(hwnd):
-        # One task: WM_ACTIVATEAPP goes to its top-level windows when it gains or loses activation.
-        for top in list(m.children.get(m.desktop, [])):
-            if m.get(top) is not None:
-                yield from send(wine, top, 0x1C, 1 if hwnd else 0, 0)
+    old_task = m.task_of(previous) if previous else 0
+    new_task = m.task_of(hwnd) if hwnd else 0
+    if old_task != new_task:
+        # set_active_window: WM_ACTIVATEAPP (FALSE, the new thread) to the old thread's top-level
+        # windows, then (TRUE, the old thread) to the new thread's. user.exe16 gives a 16-bit
+        # procedure the thread as its HTASK16 (HTASK_16).
+        tops = list(m.children.get(m.desktop, []))
+        for task, active, other in ((old_task, 0, new_task), (new_task, 1, old_task)):
+            if not task:
+                continue
+            for top in tops:
+                if m.get(top) is not None and m.task_of(top) == task:
+                    yield from send(wine, top, WM_ACTIVATEAPP, active, other)
     if m.get(hwnd) is not None:
         yield from send(wine, hwnd, WM_NCACTIVATE, int(hwnd == m.foreground), previous)
         yield from send(wine, hwnd, WM_ACTIVATE, 1, previous)
@@ -2221,6 +2290,11 @@ def call_window_proc16(wine, arg, proc, hwnd, msg, wp, lp):
     if proc_is_def(wine, proc):
         result = yield from def_window_proc(wine, hwnd, msg, wp, lp)
         return result
+    from .user_controls import host_index, call_host
+    index = host_index(wine, proc)
+    if index is not None:
+        result = yield from call_host(wine, index, hwnd, msg, wp, lp)
+        return result
     ax, dx = yield from call_proc(wine, proc, hwnd, msg, wp, lp)
     return ax | dx << 16
 
@@ -2501,7 +2575,8 @@ def get_tick_count(wine, arg):
 
 @api("USER", "GetCursorPos")
 def get_cursor_pos(wine, arg, ptr):
-    gdi16.write(wine, ptr, struct.pack("<hh", SCREEN_W // 2, SCREEN_H // 2))
+    x, y = getattr(wm(wine), "cursor_pos", (SCREEN_W // 2, SCREEN_H // 2))
+    gdi16.write(wine, ptr, struct.pack("<hh", x, y))
     return 1
 
 
@@ -2509,7 +2584,33 @@ def get_cursor_pos(wine, arg, ptr):
 def set_cursor(wine, arg, hcursor):
     m = wm(wine)
     old, m.cursor = m.cursor, hcursor
+    m.cursor_set = True
     return old
+
+
+@api("USER", "GetCursor")
+def get_cursor(wine, arg):
+    """GetCursor16 -> NtUserGetCursor: the cursor SetCursor set; before any SetCursor in the
+    process, the shared IDC_WAIT cursor (LoadImageW LR_SHARED)."""
+    m = wm(wine)
+    if not getattr(m, "cursor_set", False):
+        from .user_controls import system_cursor
+        return system_cursor(wine, 32514)
+    return m.cursor or 0
+
+
+@api("USER", "SetCursorPos")
+def set_cursor_pos(wine, arg, x, y):
+    """SetCursorPos16 -> NtUserSetCursorPos: the desktop's cursor moves (clipped to the screen),
+    and GetCursorPos answers the new position. Void.
+
+    Not yet done: the server's set_cursor_pos also queues a WM_MOUSEMOVE hardware message for
+    the window under the cursor, whether or not the position changes. neww has no hardware
+    input queue yet; the trace line says so each time, so the gap is never silent."""
+    m = wm(wine)
+    m.cursor_pos = (max(0, min(x, SCREEN_W - 1)), max(0, min(y, SCREEN_H - 1)))
+    wine.trace[-1] += f" ({x}, {y}); no WM_MOUSEMOVE queued: neww has no hardware input queue yet"
+    return arg.regs("ax"), 0
 
 
 @api("USER", "GetKeyState", "GetAsyncKeyState")
@@ -2582,4 +2683,55 @@ def unhook_windows_hook_ex(wine, arg, hhook):
         if hook[0] == hhook:
             del wine.hooks[index]
             return 1
+    return 0
+
+
+def _windows_from_point(wine, parent, x, y, out):
+    """server window.c get_window_children_from_point: each child (top of the z order first)
+    that the point is in, its own children first, then itself. x, y are in parent's client
+    coordinates."""
+    m = wm(wine)
+    for hwnd in m.children.get(parent, []):
+        w = m.get(hwnd)
+        if w is None or not _point_in_window(w, x, y):
+            continue
+        cl, ct, cr, cb = w.client
+        if not w.style & (WS_MINIMIZE | WS_DISABLED) and cl <= x < cr and ct <= y < cb:
+            _windows_from_point(wine, hwnd, x - cl, y - ct, out)
+        out.append(hwnd)
+
+
+def _point_in_window(w, x, y):
+    """server is_point_in_window: visible, not a disabled child, not layered and transparent,
+    and in the window's rectangle (neww keeps no window regions)."""
+    WS_EX_TRANSPARENT, WS_EX_LAYERED = 0x20, 0x80000
+    if not w.style & WS_VISIBLE:
+        return False
+    if w.style & (WS_POPUP | WS_CHILD | WS_DISABLED) == WS_CHILD | WS_DISABLED:
+        return False
+    if w.exstyle & (WS_EX_LAYERED | WS_EX_TRANSPARENT) == WS_EX_LAYERED | WS_EX_TRANSPARENT:
+        return False
+    l, t, r, b = w.rect
+    return l <= x < r and t <= y < b
+
+
+@api("USER", "WindowFromPoint")
+def window_from_point16(wine, arg, point):
+    """WindowFromPoint16 -> NtUserWindowFromPoint -> window_from_point(desktop, pt, TRUE): the
+    server's list of windows under the point (all_windows_from_point, the desktop last); the
+    first that is disabled, or of another thread, or whose WM_NCHITTEST is not HTTRANSPARENT."""
+    m = wm(wine)
+    x, y = signed(point & 0xFFFF), signed(point >> 16 & 0xFFFF)
+    found = []
+    _windows_from_point(wine, m.desktop, x, y, found)
+    found.append(m.desktop)
+    for hwnd in found:
+        w = m.get(hwnd)
+        if w.style & WS_DISABLED:
+            return hwnd
+        if hwnd == m.desktop or m.task_of(hwnd) != wine.htask:
+            return hwnd
+        hit = yield from send(wine, hwnd, WM_NCHITTEST, 0, (y & 0xFFFF) << 16 | (x & 0xFFFF))
+        if hit & 0xFFFF != HTTRANSPARENT:
+            return hwnd
     return 0

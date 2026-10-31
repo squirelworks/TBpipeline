@@ -48,14 +48,33 @@ class GetSystemMetrics(unittest.TestCase):
             host, ax = run(index)
             self.assertEqual((host.stop, ax), ("dos exit 0x0", value), index)
 
-    def test_font_metric_stops(self):
-        # SM_CXMIN needs the caption font's average width.
-        host, ax = run(28)
+    def test_minimum_track_width_from_wines_caption_font(self):
+        # SM_CXMIN and SM_CXMINTRACK: 3 * 18 + 18 + 4 * 7 + 2 * 4 + 4, the 7 from Wine's Tahoma Bold.
+        for index in (28, 34):
+            host, ax = run(index)
+            self.assertEqual((host.stop, ax), ("dos exit 0x0", 112), index)
+
+    def test_menu_check_size_stops(self):
+        # SM_CXMENUCHECK needs the menu check bitmap, which neww does not have.
+        host, ax = run(71)
         self.assertEqual(
             host.stop,
-            "USER.179 GetSystemMetrics(28): Wine reads it from the registry, fonts, or display, and neww has none of them",
+            "USER.179 GetSystemMetrics(71): Wine reads it from the registry, fonts, or display, and neww has none of them",
         )
         self.assertEqual(ax, 0xFFFF)
+
+    def test_caption_font_width_is_seven(self):
+        # The 374 behind the 7, measured from Wine's own font when WINE_SRC has it.
+        import os
+        root = os.environ.get("WINE_SRC")
+        font = os.path.join(root or "", "fonts", "tahomabd.ttf")
+        if not root or not os.path.exists(font):
+            raise unittest.SkipTest("WINE_SRC with fonts/tahomabd.ttf is not available")
+        from PIL import ImageFont
+        face = ImageFont.truetype(font, 11, layout_engine=ImageFont.Layout.BASIC)
+        cx = int(face.getlength("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+        self.assertEqual(cx, 374)
+        self.assertEqual((cx // 26 + 1) // 2, 7)
 
 
 if __name__ == "__main__":

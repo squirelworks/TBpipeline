@@ -32,7 +32,7 @@ def signed(word):
 import re as _re
 import types as _types
 
-_ENTRY = _re.compile(r"(\d+)\s+pascal\s+(?:-\S+\s+)*(\w+)\((.*?)\)")
+_ENTRY = _re.compile(r"(\d+)\s+pascal\s+(?:-\S+\s+)*(\w+)\s*\((.*?)\)")
 
 
 def _spec_index(module):

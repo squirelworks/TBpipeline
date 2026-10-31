@@ -918,6 +918,11 @@ def combine_rgn(wine, arg, dest, src1, src2, mode):
             d.rect = b.rect
         elif _empty(b.rect) and mode in (2, 3, 4):
             d.rect = a.rect
+        elif _empty(a.rect) and mode in (2, 3):
+            # REGION_UnionRegion / REGION_XorRegion with an empty first region: the second.
+            d.rect = b.rect
+        elif _empty(a.rect) and mode == 4:
+            d.rect = (0, 0, 0, 0)
         else:
             return 0, 0, f"GDI CombineRgn mode {mode} of {a.rect} and {b.rect}: the result is not one rectangle, and neww keeps rectangles only"
     return 1 if _empty(d.rect) else 2
@@ -1499,3 +1504,130 @@ def set_bitmap_bits(wine, arg, hbitmap, count, ptr):
     if why:
         return 0, 0, f"GDI SetBitmapBits: {why}"
     return count
+
+
+@api("GDI", "StretchDIBits")
+def stretch_di_bits(wine, arg, hdc, x, y, w, h, sx, sy, sw, sh, bits, info, usage, rop):
+    """StretchDIBits16 as Wine's nulldrv_StretchDIBits: source rows count from the DIB's bottom
+    unless it is top-down (and, for a SRCCOPY that is not a plain copy from the origin, then too),
+    the source is scaled to the destination (nearest pixel) and drawn with the rop. The answer is
+    the DIB's height for SRCCOPY, its biHeight otherwise, and 0 when the source rectangle misses
+    the DIB."""
+    from PIL import Image
+    dc = _dc(wine, hdc)
+    if dc is None or not bits:
+        return 0
+    got, why = dib_image(wine, info, bits, usage)
+    if why:
+        return 0, 0, f"GDI StretchDIBits: {why}"
+    img, dw, height, _bpp = got
+    size = struct.unpack("<I", read(wine, info, 4))[0]
+    bi_height = struct.unpack("<h" if size == 12 else "<i", read(wine, info + 8, 2 if size == 12 else 4))[0]
+    top_down = bi_height < 0
+    plain = sx == 0 and sy == 0 and sw == w and sh == h
+    if not top_down or (rop == 0xCC0020 and not plain):
+        sy = height - sy - sh
+    l, r = sorted((sx, sx + sw))
+    t, b = sorted((sy, sy + sh))
+    if _empty(_intersect((l, t, r, b), (0, 0, dw, height))):
+        return 0
+    if not w or not h or not sw or not sh:
+        return 0
+    crop = img.crop((l, t, r, b))
+    if (sw < 0) != (w < 0):
+        crop = crop.transpose(Image.FLIP_LEFT_RIGHT)
+    if (sh < 0) != (h < 0):
+        crop = crop.transpose(Image.FLIP_TOP_BOTTOM)
+    if crop.size != (abs(w), abs(h)):
+        crop = crop.resize((abs(w), abs(h)), Image.NEAREST)
+    color = brush_color(wine, dc, dc.brush)
+    blit(wine, dc, device_rect(dc, x, y, x + w, y + h), rop, src=(crop, False), src_xy=(0, 0),
+         pattern=color or (0, 0, 0))
+    return height if rop == 0xCC0020 else bi_height
+
+
+@api("GDI", "MulDiv")
+def mul_div(wine, arg, a, b, d):
+    """gdi.c MulDiv16: rounded half away from zero (C division truncates toward zero), and
+    -32768 for a zero divisor or a result outside -32767..32767."""
+    if not d:
+        return 0x8000
+    if d < 0:
+        a, d = -a, -d
+    p = a * b
+    if (a < 0 and b < 0) or (a >= 0 and b >= 0):
+        ret = _cdiv(p + d // 2, d)
+    else:
+        ret = _cdiv(p - d // 2, d)
+    if ret > 32767 or ret < -32767:
+        return 0x8000
+    return ret & 0xFFFF
+
+
+def _cdiv(n, d):
+    """C integer division: truncates toward zero."""
+    q = abs(n) // abs(d)
+    return q if (n < 0) == (d < 0) else -q
+
+
+# ------------------------------------------------------------------ batch 6: mapping, regions, palette
+
+def _map_points(wine, hdc, ptr, count, inverse, name):
+    """LPtoDP16 / DPtoLP16: count POINT16s in place. MM_TEXT only: the other modes go through
+    Wine's floating transform (GDI_ROUND), which neww does not keep."""
+    dc = _dc(wine, hdc)
+    if dc is None:
+        return 0
+    if dc.map_mode != MM_TEXT:
+        return 0, 0, f"GDI {name} in map mode {dc.map_mode}: neww maps MM_TEXT only here"
+    if count <= 0:
+        return 1
+    (wx, wy), (vx, vy) = dc.wnd_org, dc.vp_org
+    dx, dy = (wx - vx, wy - vy) if inverse else (vx - wx, vy - wy)
+    pts = list(struct.unpack(f"<{2 * count}h", read(wine, ptr, 4 * count)))
+    out = []
+    for i in range(0, len(pts), 2):
+        out += [(pts[i] + dx) & 0xFFFF, (pts[i + 1] + dy) & 0xFFFF]
+    write(wine, ptr, struct.pack(f"<{2 * count}H", *out))
+    return 1
+
+
+@api("GDI", "LPtoDP")
+def lp_to_dp16(wine, arg, hdc, ptr, count):
+    """gdi.c LPtoDP16 -> LPtoDP: (x - window origin) + viewport origin in MM_TEXT."""
+    return _map_points(wine, hdc, ptr, count, False, "LPtoDP")
+
+
+@api("GDI", "DPtoLP")
+def dp_to_lp16(wine, arg, hdc, ptr, count):
+    """gdi.c DPtoLP16 -> DPtoLP: the inverse, (x - viewport origin) + window origin."""
+    return _map_points(wine, hdc, ptr, count, True, "DPtoLP")
+
+
+@api("GDI", "FillRgn")
+def fill_rgn(wine, arg, hdc, hrgn, hbrush):
+    """nulldrv_FillRgn: select the brush, dibdrv_PaintRgn (each rectangle in logical units,
+    to the device, filled with the brush, clipped), select the old brush back."""
+    g = gdi(wine)
+    dc = _dc(wine, hdc)
+    rgn = g.get(hrgn, OBJ_REGION)
+    if dc is None or rgn is None or g.get(hbrush, OBJ_BRUSH) is None:
+        return 0
+    if not _empty(rgn.rect):
+        fill(wine, dc, rgn.rect, hbrush)
+    return 1
+
+
+@api("GDI", "RectInRegionOld", "RectInRegion")
+def rect_in_region(wine, arg, hrgn, ptr):
+    """region.c NtGdiRectInRegion: the rectangle, ordered, overlaps one of the region's."""
+    rgn = gdi(wine).get(hrgn, OBJ_REGION)
+    if rgn is None:
+        return 0
+    l, t, r, b = struct.unpack("<hhhh", read(wine, ptr, 8))
+    l, r = sorted((l, r))
+    t, b = sorted((t, b))
+    rl, rt, rr, rb = rgn.rect
+    if _empty(rgn.rect):
+        return 0
+    return 1 if rr > l and rl < r and rb > t and rt < b else 0

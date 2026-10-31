@@ -607,3 +607,9 @@ def get_dialog_base_units(wine, arg):
         release_dc(wine, 0, hdc)
     cx, cy = m.base_units
     return cx | cy << 16
+
+
+@api("USER", "IsMenu")
+def is_menu(wine, arg, hmenu):
+    """user32 IsMenu: TRUE when GetMenuInfo finds the menu."""
+    return 1 if hmenu in _menus(wine) else 0
