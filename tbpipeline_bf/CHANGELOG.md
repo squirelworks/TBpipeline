@@ -4,6 +4,11 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `USER.420` `wsprintf` formats into the caller's buffer, and its pop size is 0: it is cdecl, and the caller does `add sp, 0xE`. The table had 8. The message box the book open stops on now reads "A internal error has occurred in File 'Unknown' line 629." The `TB80enu` open was the unformatted buffer: the entry asks for `C:\TOOLBOOK\TB80enu1.DLL`.
+- `USER.1` `MessageBox` stops the run, and the stop quotes the caption, the type and the text. It used to return `AX = 1`, which is `IDOK`: TB80UTL's internal-error box says "Press OK to continue", so the runtime ran past its own assertion and exited 0 without asking for the book.
+- The compressed-picture status line under every page says the host probe stops at its first import, `KERNEL.36`, not at `0x1FCD`. The far call there is bound now (#42), and the stop is from the bf host's run (#75).
+- `KERNEL.5` `LocalAlloc` grows a full automatic data segment toward 64K, the way Windows does, instead of returning 0. The segment keeps its selector and its bytes; `Arena.grow` moves it to new memory and rewrites the descriptor, and the call returns through a stub that reloads `DS` and `ES`. TB80BAS's small heap filled during the book open, and its fallback put a record in the task's DS that it then read through its own DS as zeros.
+- `KERNEL.336` `IsBadCodePtr` answers from the descriptor: 0 for an offset inside a code segment the arena knows, 1 otherwise. `AX = 1` said every pointer was bad, so TB80BAS never called its file manager's handler and the runtime said "Failed initializing the book file manager".
 - `KEYBOARD.6` `OemToAnsi` is the other half: OEM (437) to ANSI (1252), pop 8, returns `-1`. With both answered, the open TB80BAS makes is `fixture.tbk\r`: the name, with the command tail's carriage return still on it.
 - `KEYBOARD.5` `AnsiToOem` copies the string into the destination, ANSI (1252) to OEM (437), and returns `-1`. Its pop, 8, is in the table. `AX = 1` copied nothing, so the book's path was whatever TB80BAS's stack buffer held.
 - Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files`. The known bug that they disagreed without saying why is gone.
