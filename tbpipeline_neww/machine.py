@@ -127,8 +127,8 @@ class Machine:
             return
         self.calls += 1
         ax, dx, why = self.box.wine.answer(module, ordinal, Args(self))
-        if self.box.wine.contract(module, ordinal) is None:
-            # No contract: stop on the OUT. Nothing is popped, AX and DX keep the guest's values.
+        if self.box.wine.usable(module, ordinal) is None:
+            # No usable contract: stop on the OUT. Nothing is popped, AX and DX keep the guest's values.
             self.stop = why
             uc.emu_stop()
             return

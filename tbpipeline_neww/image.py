@@ -79,7 +79,7 @@ class Sandbox:
             hi = max(ordinals)
             blob = bytearray((hi + 1) * 8)
             for ordinal in ordinals:
-                spec = self.wine.contract(module, ordinal)
+                spec = self.wine.usable(module, ordinal)
                 pop = spec.pop if spec else 0
                 stub = bytearray(8)
                 stub[0:5] = bytes([0xBA, ordinal & 0xFF, (ordinal >> 8) & 0xFF, 0xE6, 0xE4])
