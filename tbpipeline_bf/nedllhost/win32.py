@@ -207,6 +207,8 @@ class Win32:
     # -- KERNEL.513 ----------------------------------------------------
 
     def _kernel_proc(self, ordinal):
+        if ordinal == 517:
+            return self._call_proc32()
         if ordinal == 518:
             return self._call_proc_ex32()
         if ordinal == 515:
@@ -243,19 +245,55 @@ class Win32:
         # Wine's spec line (dlls/krnl386.exe16/krnl386.exe16.spec:426) is
         # `518 varargs _CallProcEx32W(long long long) CallProcEx32W16`: it is
         # cdecl, so it pops nothing and the caller cleans up. Its
-        # CallProcEx32W16 reads the parameters left to right, maps p(i+1)
-        # with MapSL when bit i of the mask is set, calls lpProc32 (stdcall,
-        # or cdecl with CPEX_DEST_CDECL, the top bit of nParams) and
-        # returns EAX in DX:AX.
+        # CallProcEx32W16 (dlls/krnl386.exe16/thunk.c:2609) reads at most 32
+        # parameters left to right, maps p(i+1) with MapSL when bit i of the
+        # mask is set, and WOW_CallProc32W16 calls lpProc32 (stdcall, or
+        # cdecl with CPEX_DEST_CDECL, the top bit of nParams) and returns
+        # EAX in DX:AX. A NULL lpProc32 returns 0.
         ss = self.uc.reg_read(UC_X86_REG_SS)
         sp = self.uc.reg_read(UC_X86_REG_SP)
         n, convert, proc = struct.unpack("<III", self.arena.read(ss, (sp + 4) & 0xFFFF, 12))
-        n &= 0x7FFFFFFF
+        n = min(32, n & 0x7FFFFFFF)
+        if not proc:
+            self._dx_ax(0)
+            return True
         params = list(struct.unpack(f"<{n}I", self.arena.read(ss, (sp + 16) & 0xFFFF, 4 * n)))
         for i in range(n):
             if convert & (1 << i):
                 params[i] = self._linear(params[i])
         self._call32(proc, params, self._dx_ax)
+        return True
+
+    def _call_proc32(self):
+        # CallProc32W(p1, ..., pn, lpProc32, fAddressConvert, nParams).
+        # Wine's spec line (dlls/krnl386.exe16/krnl386.exe16.spec:425, Wine
+        # commit 2528aff2) is
+        # `517 varargs CallProc32W(long long long) CallProc32W16`, but
+        # CallProc32W16 (dlls/krnl386.exe16/thunk.c:2574) pops for the
+        # caller: stack16_pop((3 + nrofargs) * sizeof(DWORD)). The pop table
+        # says 0 and the pop happens here, because the size depends on
+        # nParams. The caller pushed p1 first, so the list starts at pn: it
+        # reads it upwards, maps the i-th one with MapSL when bit i of the
+        # mask is set, and stores it at args[n - i - 1] to undo the Pascal
+        # order. WOW_CallProc32W16 (thunk.c:2557) returns 0 for a NULL
+        # lpProc32, or calls it and returns EAX in DX:AX. At most 32
+        # parameters are read, the size of Wine's args array.
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        sp = self.uc.reg_read(UC_X86_REG_SP)
+        n, convert, proc = struct.unpack("<III", self.arena.read(ss, (sp + 4) & 0xFFFF, 12))
+        n = min(32, n & 0x7FFFFFFF)
+        raw = struct.unpack(f"<{n}I", self.arena.read(ss, (sp + 16) & 0xFFFF, 4 * n))
+        args = [0] * n
+        for i, value in enumerate(raw):
+            args[n - i - 1] = self._linear(value) if convert & (1 << i) else value
+        ret = self.arena.read(ss, sp, 4)
+        dest = (sp + 4 * (3 + n)) & 0xFFFF
+        self.arena.write(ss, dest, ret)
+        self.uc.reg_write(UC_X86_REG_SP, dest)
+        if not proc:
+            self._dx_ax(0)
+            return True
+        self._call32(proc, args, self._dx_ax)
         return True
 
     def _linear(self, far):
