@@ -42,7 +42,7 @@ class GetDC(unittest.TestCase):
         host, first, second = run(0)
         self.assertEqual(host.stop, "dos exit 0x0")
         self.assertEqual((first, second), (0x1004, 0x1008))
-        self.assertEqual(host.box.wine.dcs, {0x1004: 0, 0x1008: 0})
+        self.assertEqual(host.box.wine.dcs, {0x1004: True, 0x1008: True})
 
     def test_window_dc_stops(self):
         host, _first, _second = run(0x2000)
