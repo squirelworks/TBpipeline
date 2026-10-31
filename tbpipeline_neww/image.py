@@ -4,7 +4,7 @@ import struct
 from pathlib import Path
 
 from .ne import Image, Segment, import_name, parse
-from .wine import GDI, KERNEL, SYSTEM, USER, WIN87EM, Wine
+from .wine import GDI, KERNEL, MMSYSTEM, SYSTEM, USER, WIN87EM, Wine
 
 
 class Selectors(dict):
@@ -96,7 +96,7 @@ class Sandbox:
                 if module in wanted and self.wine.equate(module, fix.target2) is None:
                     wanted[module].add(fix.target2)
         for module, ordinals in wanted.items():
-            tables = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "WIN87EM": WIN87EM}
+            tables = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "MMSYSTEM": MMSYSTEM, "WIN87EM": WIN87EM}
             for ordinal in tables.get(module, {}):
                 ordinals.add(ordinal)
             if not ordinals:

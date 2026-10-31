@@ -21,7 +21,7 @@ class WineBuiltinModules(unittest.TestCase):
 
     def test_call_with_no_contract_stops_as_unimplemented(self):
         from tbpipeline_neww.machine import Machine
-        for name, ordinal in (("MMSYSTEM", 401), ("VER", 2)):
+        for name, ordinal in (("MMSYSTEM", 402), ("VER", 2)):
             with tempfile.TemporaryDirectory() as d:
                 code = neww_ne.call_far()
                 neww_ne.exit_program_with(d, code, [(3, 1, 1, 1, ordinal)], modules=(name, "KERNEL"))
