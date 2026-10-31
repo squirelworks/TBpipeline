@@ -212,6 +212,11 @@ SCREEN_CAPS = {
 }
 
 MMSYSTEM = _table("MMSYSTEM", MMSYSTEM_SPEC, [
+    # winmm.c midiOutGetNumDevs is lolvldrv.c MMDRV_GetNum(MMDRV_MIDIOUT), the devices of the
+    # drivers MMDRV_Init installed; the midimapper is a mapper and adds none. mmdevapi's
+    # modMessage calls the MIDI driver, which init_driver loads only with an audio driver.
+    # neww has none, so the count is 0.
+    ("201 pascal midiOutGetNumDevs() midiOutGetNumDevs16", (0, 0)),
     # winmm waveform.c waveOutGetNumDevs is g_outmmdevices_count, mmdevapi's render endpoints.
     # neww has no audio driver. With none of pulse, alsa, oss or coreaudio loaded, mmdevapi
     # init_driver loads no devices, so the count is 0.
