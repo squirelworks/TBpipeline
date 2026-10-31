@@ -1,7 +1,8 @@
 """Shapes we can draw but cannot place yet.
 
 A polygon on disk is a 14 00 00 record with +0x0c = 04 00. Fill color
-is the dword at +4. Point count is the word at +0x1a. x,y twip pairs
+is the dword at +4. Bounds are four words at +0x12: left, top, right,
+bottom, in twips. Point count is the word at +0x1a. x,y twip pairs
 start at +0x22. Screen is twips / 15. One PNG per page that has any.
 """
 
@@ -21,7 +22,17 @@ def word(rec, off):
     return int.from_bytes(rec[off:off + 2], "little")
 
 
+def bounds(rec: bytes) -> tuple[int, int, int, int]:
+    """left, top, right, bottom in twips, as a kind-04 record names them."""
+    return tuple(word(rec, off) for off in (0x12, 0x14, 0x16, 0x18))
+
+
 def polygons(blob: bytes):
+    return [(points, color) for _rec, points, color in polygon_records(blob)]
+
+
+def polygon_records(blob: bytes):
+    """(record, screen points, fill) for each kind-04 polygon in a page."""
     hits = []
     start = 0
     while True:
@@ -56,7 +67,7 @@ def polygons(blob: bytes):
         ys = [p[1] for p in points]
         if max(xs) - min(xs) < 1 or max(ys) - min(ys) < 1:
             continue
-        shapes.append((points, tuple(rec[5:8])))
+        shapes.append((rec, points, tuple(rec[5:8])))
     return shapes
 
 
