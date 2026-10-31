@@ -578,6 +578,10 @@ class Machine:
         image = self.box.images.get(module)
         if image is None or not image.synthetic:
             return None
+        offset = getattr(image, "variables", {}).get(ordinal)
+        if offset is not None:
+            # A variable export: GetProcAddress16 answers its address in the module's data.
+            return image.segments[1].selector, offset
         seg = image.segments[0]
         if (seg.selector, ordinal) not in self.box.gates:
             return None

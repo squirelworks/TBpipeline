@@ -4,7 +4,7 @@ import struct
 from pathlib import Path
 
 from .ne import Image, Segment, import_name, parse
-from .wine import HAND, LOADED, SYSTEM, Wine
+from .wine import HAND, LOADED, SYSTEM, VARIABLES, Wine
 
 
 class Selectors(dict):
@@ -129,7 +129,8 @@ class Sandbox:
                 if (fix.flags & 3) == 3 or not 1 <= fix.target1 <= len(image.modules):
                     continue
                 module = image.modules[fix.target1 - 1]
-                if module in wanted and self.wine.equate(module, fix.target2) is None:
+                if module in wanted and self.wine.equate(module, fix.target2) is None \
+                        and self.wine.variable(module, fix.target2) is None:
                     wanted[module].add(fix.target2)
         for module, ordinals in wanted.items():
             for ordinal in HAND.get(module, {}):
@@ -137,9 +138,14 @@ class Sandbox:
             # Every loaded spec row gets its stub too, so GetProcAddress can hand out any of them.
             for ordinal in LOADED.get(module, {}):
                 ordinals.add(ordinal)
-            if not ordinals:
+            data = bytearray()
+            variables = {}
+            for ordinal, (_name, value) in sorted(VARIABLES.get(module, {}).items()):
+                variables[ordinal] = len(data)
+                data += value
+            if not ordinals and not variables:
                 continue
-            hi = max(ordinals)
+            hi = max(ordinals, default=0)
             blob = bytearray((hi + 1) * 8)
             for ordinal in ordinals:
                 spec = self.wine.usable(module, ordinal)
@@ -163,11 +169,15 @@ class Sandbox:
                 elif spec:
                     stub[5:8] = bytes([0xCA, pop & 0xFF, (pop >> 8) & 0xFF])
                 blob[ordinal * 8:(ordinal + 1) * 8] = stub
-            seg = Segment(1, 0, blob)
+            segments = [Segment(1, 0, blob)]
+            if variables:
+                # The module's data segment, as winebuild lays out a 16-bit builtin's variables.
+                segments.append(Segment(2, 0x0001, data))
             image = Image(
                 path="", name=module, entry_seg=1, entry_ip=0, auto=0, heap=0, stack=0,
-                modules=[], entries={}, names={}, segments=[seg], synthetic=True,
+                modules=[], entries={}, names={}, segments=segments, synthetic=True,
             )
+            image.variables = variables
             self.images[module] = image
 
     def _place(self):
@@ -278,6 +288,9 @@ class Sandbox:
                 return ("code", other, ent.segment, ent.offset)
             return ("gap", module, fix.target2)
         if other and other.synthetic:
+            offset = getattr(other, "variables", {}).get(fix.target2)
+            if offset is not None:
+                return ("code", other, 2, offset)
             return ("gate", module, fix.target2)
         return ("gap", module, fix.target2)
 
