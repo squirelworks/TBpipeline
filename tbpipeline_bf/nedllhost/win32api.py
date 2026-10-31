@@ -448,6 +448,9 @@ def _get_temp_file_name(host, args):
         folder += "\\"
     name = f"{folder}{_cstr(host, prefix).decode('latin1')[:3]}{unique & 0xFFFF:X}.TMP"
     host.uc.mem_write(buf, name.encode("latin1") + b"\x00")
+    if not args[2]:
+        # uUnique 0: Windows creates the file, empty, to reserve the name.
+        host.create_file(name)
     host.task_log.append(f"temp file {name}")
     return unique & 0xFFFF
 

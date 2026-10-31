@@ -4,7 +4,7 @@
 
 The entry asks for `TB80.INI` and `TB80enu1.DLL`, then parses the book name with `OpenFile(..., OF_PARSE)`. Every open is logged in `opens`. Only a `.tbk` or `.sbk` gets a handle. Nothing is rendered unless you pass `--dbgrender`.
 
-## The wall: TB80NET reopens a temp file that was never created
+## The wall: the runtime's "Initialization failed" box after TB80NET's checks
 
 This is where the bf host sequence of item 27 stops. TB80BAS segment 45 `0x32` starts the book file manager with `WinExec("TB80NET.exe ToolBook", 2)`, checks the result is above 32, and then requires the word at its `DS:0x37C` to be non-zero. That word is written only by TB80BAS segment 45 `0x68`, an entry the new task calls with its window. So the book file manager is a second Win16 task talking to the runtime through a shared DLL and window messages.
 
@@ -16,10 +16,16 @@ Pass 06 runs it (`nedllhost/win32.py`). `LoadLibraryEx32W` maps the PE at its im
 
 `nedllhost/win32api.py` answers the start-up and the calls after it the way Windows 98 does: the C runtime's heap, environment, command line, code pages and locale, the `WOW32` pointer and handle maps, the string calls, the temp-file name, and the mutexes (one thread, so a wait is satisfied at once). An unknown locale type stops the run. The runtime goes on past the `TB80enu1.DLL` and `fixture.tbk` opens, starts TB80NET, and used to stop at `win32 USER32.SendMessageTimeoutA`.
 
-`nedllhost/windows.py` keeps a window table. A class keeps its procedure and instance. `CreateWindow` sends `WM_NCCREATE` and `WM_CREATE`. A registered message is an atom from `0xC000`. A send calls the window procedure with `DS` = the window's instance. A send to another task's window runs on that task's stack, with its context restored, and returns to the sender. TB80NET registers `TbkNet3TB80` and creates window `0x100`, and TB80W32's `SendMessageTimeoutA(0x100, 0xC01D, 0xA, …)` now reaches it. With the unpacked binaries, pass 06 stops on the runtime's own message box:
+`nedllhost/windows.py` keeps a window table. A class keeps its procedure and instance. `CreateWindow` sends `WM_NCCREATE` and `WM_CREATE`. A registered message is an atom from `0xC000`. A send calls the window procedure with `DS` = the window's instance. A send to another task's window runs on that task's stack, with its context restored, and returns to the sender. TB80NET registers `TbkNet3TB80` and creates window `0x100`, and TB80W32's `SendMessageTimeoutA(0x100, 0xC01D, 0xA, …)` now reaches it. With the unpacked binaries, pass 06 used to stop on the runtime's own message box:
 
 ```
 message box 'Error' type 0x2025: 'This network book cannot be opened. Either another user is using it, or you do not have proper privileges for its network location. Try making the book read-only.'
 ```
 
-The request's `lParam` is an `OFSTRUCT` whose `szPathName` is the book. TB80NET opens it with `OpenFile(NULL, &ofs, OF_REOPEN | ...)` (`0x8022`). `OF_REOPEN` now opens that path, so TB80NET opens `C:\TOOLBOOK\fixture.tbk` and reads it. The next request names `C:\WINDOWS\TEMP\OBJ1.TMP`, the name TB80W32 got from `GetTempFileNameA` with `uUnique` 0. Windows creates that file empty. The host only made the name, so TB80NET's three reopens (`0x8012`, `0x8020`, `0x8022`) fail, its delete (`0x8200`, `OF_DELETE`) fails, and the runtime shows the same "network book" box. The next behavior is a file the host creates: `GetTempFileNameA` makes it empty, `OpenFile` and `_lread`/`_lwrite` work on it, and `OF_DELETE` removes it.
+The request's `lParam` is an `OFSTRUCT` whose `szPathName` is the book. TB80NET opens it with `OpenFile(NULL, &ofs, OF_REOPEN | ...)` (`0x8022`). `OF_REOPEN` now opens that path, so TB80NET opens `C:\TOOLBOOK\fixture.tbk` and reads it. The next request names `C:\WINDOWS\TEMP\OBJ1.TMP`, the name TB80W32 got from `GetTempFileNameA` with `uUnique` 0. Windows creates that file empty. The host now creates it: `GetTempFileNameA` with `uUnique` 0 makes it empty, `OpenFile` with `OF_CREATE` makes or truncates a file, `OpenFile` and `_lread` open and read a created file through any handle, `_lwrite` writes only to a created file (the book and the INI files stay read-only), and `OF_DELETE` removes it. Created files live in the host and never touch the disk. TB80NET reopens `OBJ1.TMP` (`0x8012`, `0x8022`, `0x8012`), reads its header words at offsets 0 and `0x18` (an empty file, as on Windows), closes it and deletes it (`OF_DELETE` returns 1). It writes nothing. The runtime then reads its DLL resources and stops on its own message box:
+
+```
+message box '' type 0x2030: 'Initialization failed. Not enough memory or the file is damaged.'
+```
+
+`USER.1` `MessageBox` is called from `0x0080:0x034f`. What the runtime checked before it is not known yet. That is the next behavior to find.

@@ -31,6 +31,8 @@ INITTASK = 91
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
 OF_REOPEN = 0x8000
+OF_DELETE = 0x0200
+OF_CREATE = 0x1000
 
 # Names other than *.ini the entry opens that TBK_INI may answer. The
 # pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
@@ -486,6 +488,13 @@ class Pass04:
                 self._ofstruct(full, 0)
                 uc.reg_write(UC_X86_REG_AX, 0)
                 return True
+            if style & OF_DELETE:
+                gone = self.created.pop(full.upper(), None) is not None
+                self._ofstruct(full, 0 if gone else 2)
+                uc.reg_write(UC_X86_REG_AX, 1 if gone else 0xFFFF)
+                return True
+            if style & OF_CREATE:
+                self.create_file(full)
             handle = self._take_file(path)
             self._ofstruct(full, 0 if handle is not None else 2)
             if handle is not None and style & OF_EXIST:
@@ -506,7 +515,7 @@ class Pass04:
             count = self._word(0)
             blob = self.files.get(handle, b"")
             pos = self.pos.get(handle, 0)
-            chunk = blob[pos:pos + count]
+            chunk = bytes(blob[pos:pos + count])
             self.pos[handle] = pos + len(chunk)
             if chunk:
                 self.arena.write(self._word(2), self._word(1), chunk)
@@ -531,6 +540,22 @@ class Pass04:
         if ordinal == 81:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
+        if ordinal == 86:
+            # _lwrite(hFile, lpBuffer, cbWrite). Only a file the guest created
+            # takes writes; the book and the INI files are read-only here.
+            handle, count = self._word(3), self._word(0)
+            blob = self.files.get(handle)
+            if not isinstance(blob, bytearray):
+                uc.reg_write(UC_X86_REG_AX, 0xFFFF)
+                return True
+            pos = self.pos.get(handle, 0)
+            data = self.arena.read(self._word(2), self._word(1), count) if count else b""
+            if pos > len(blob):
+                blob.extend(bytes(pos - len(blob)))
+            blob[pos:pos + len(data)] = data
+            self.pos[handle] = pos + len(data)
+            uc.reg_write(UC_X86_REG_AX, len(data))
+            return True
         return False
 
     def _ofstruct(self, full, error):
@@ -542,8 +567,27 @@ class Pass04:
         name = full.encode("latin1", "replace")[:127]
         self.arena.write(seg, off, struct.pack("<BBHI", 136, 1, error, 0) + name + b"\x00")
 
+    @property
+    def created(self):
+        """Files the guest created, by full upper-case path. Not on disk."""
+        if not hasattr(self, "_created"):
+            self._created = {}
+        return self._created
+
+    def create_file(self, full):
+        """Create or truncate a file the guest made, e.g. a temp file."""
+        self.created[full.upper()] = bytearray()
+
     def _take_file(self, path):
         low = path.lower().replace("/", "\\")
+        full = path if path[1:2] == ":" else "C:\\TOOLBOOK\\" + path.lstrip("\\")
+        if full.upper() in self.created:
+            # The same bytearray: what one handle writes, the next reads.
+            handle = self.next_handle
+            self.next_handle += 1
+            self.files[handle] = self.created[full.upper()]
+            self.pos[handle] = 0
+            return handle
         if low.endswith((".tbk", ".sbk")):
             blob = self.book_bytes
         else:
