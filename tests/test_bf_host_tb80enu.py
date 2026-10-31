@@ -38,10 +38,11 @@ class Tb80enuOpen(unittest.TestCase):
     def test_open_reads_the_supplied_file(self):
         host = fake_host()
         with mock.patch.dict(os.environ, {"TBK_INI": self.tmp.name}):
-            handle = open_file(host, style=0x4000)
+            # OF_READ. An OF_EXIST open (0x4000) is closed again, as on Windows.
+            handle = open_file(host, style=0)
         self.assertNotEqual(handle, 0xFFFF)
         self.assertEqual(host.files[handle], ENU)
-        self.assertEqual(host.open_styles, [("C:\\TOOLBOOK\\TB80enu", 0x4000)])
+        self.assertEqual(host.open_styles, [("C:\\TOOLBOOK\\TB80enu", 0)])
 
     def test_without_tbk_ini_the_open_still_refuses(self):
         host = fake_host()
