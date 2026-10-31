@@ -61,12 +61,16 @@ class KernelState:
                 return keys
         return None
 
-    def profile_string(self, section, entry, default, buf, length, filename):
-        """GetPrivateProfileString16 -> PROFILE_GetString. Returns (ax, dx, stop)."""
+    def profile_string(self, section, entry, default, buf, length, filename, put=None):
+        """GetPrivateProfileString16 -> PROFILE_GetString. Returns (ax, dx, stop). buf is
+        (selector, offset); put(data), when given, writes the buffer instead (a Win32 caller,
+        whose buf is (pointer, 0))."""
         sel, off = buf
+        if put is None:
+            put = lambda data: self.write(sel, off, data)
         if section is None:
             if sel and length:
-                self.write(sel, off, b"\x00")
+                put(b"\x00")
             return 0, 0, None
         _name, sections = self._profile(filename)
         keys = self._find(sections, section.decode("latin1"))
@@ -80,10 +84,10 @@ class KernelState:
             if not length:
                 return 0, 0, None
             if len(out) + 1 <= length:
-                self.write(sel, off, out + b"\x00")
+                put(out + b"\x00")
                 return len(out), 0, None
             if length > 2:
-                self.write(sel, off, out[:length - 2] + b"\x00\x00")
+                put(out[:length - 2] + b"\x00\x00")
                 return length - 2, 0, None
             return 0, 0, None
         value = None
@@ -101,11 +105,12 @@ class KernelState:
         if not sel or not length:
             return 0, 0, None
         text = text[:length - 1]
-        self.write(sel, off, text + b"\x00")
+        put(text + b"\x00")
         return len(text), 0, None
 
-    def profile_int(self, section, entry, default, filename):
-        """GetPrivateProfileIntA: the value as a number (RtlUnicodeStringToInteger), else the default."""
+    def profile_int(self, section, entry, default, filename, mask=0xFFFF):
+        """GetPrivateProfileIntA: the value as a number (RtlUnicodeStringToInteger), else the
+        default. mask is the answer's width: a word for the 16-bit call, 32 bits for Win32."""
         _name, sections = self._profile(filename)
         keys = self._find(sections, section.decode("latin1")) if section is not None else None
         value = None
@@ -115,7 +120,7 @@ class KernelState:
                     value = val
                     break
         if not value:
-            return default & 0xFFFF, 0, None
+            return default & mask, 0, None
         text = value.strip()
         sign = 1
         if text[:1] in "+-":
@@ -135,7 +140,7 @@ class KernelState:
             else:
                 break
         number = sign * int(digits, base) if digits else 0
-        return number & 0xFFFF, 0, None
+        return number & mask, 0, None
 
     def write_profile(self, section, entry, string, filename):
         """WritePrivateProfileStringA, into neww's copy of the file for the run. TRUE."""

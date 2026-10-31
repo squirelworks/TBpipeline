@@ -301,7 +301,7 @@ def command_line():
 def get_command_line_a(wine):
     line = command_line()
     if wine.book:
-        line += " " + wine.book.name
+        line += " " + wine.dos_name(wine.book)
     return _string(wine, "cmdline", line.encode("latin1"))
 
 
@@ -980,3 +980,371 @@ def get_temp_file_name_a(wine, path_ptr, prefix_ptr, unique, buf):
     _w(wine, buf, name.encode("latin1") + b"\x00")
     wine.trace[-1] += f" {name!r}"
     return unique
+
+
+@win32("KERNEL32", "WritePrivateProfileStringA")
+def write_private_profile_string_a(wine, section, entry, string, filename):
+    """profile.c WritePrivateProfileStringA -> W: the same profile cache the 16-bit calls use
+    (kstate write_profile), in neww's copy of the file for the run. A NULL file is win.ini."""
+    opt = lambda ptr: read_str(wine, ptr) if ptr else None
+    name = opt(filename) or b"win.ini"
+    ax, _dx, _why = wine.write_profile(opt(section), opt(entry), opt(string), name)
+    wine.trace[-1] += f" [{(opt(section) or b'').decode('latin1')}] {(opt(entry) or b'').decode('latin1')!r} in {name.decode('latin1')!r}"
+    return ax
+
+
+@win32("KERNEL32", "GetPrivateProfileIntA")
+def get_private_profile_int_a(wine, section, entry, default, filename):
+    """profile.c GetPrivateProfileIntA: the value as a number, else the default (INT). A NULL
+    file is win.ini."""
+    opt = lambda ptr: read_str(wine, ptr) if ptr else None
+    name = opt(filename) or b"win.ini"
+    if default & 0x80000000:
+        default -= 1 << 32
+    ax, _dx, _why = wine.profile_int(opt(section), opt(entry), default, name, mask=0xFFFFFFFF)
+    wine.trace[-1] += f" [{(opt(section) or b'').decode('latin1')}] {(opt(entry) or b'').decode('latin1')!r} in {name.decode('latin1')!r}"
+    return ax
+
+
+@win32("USER32", "GetSystemMetrics")
+def get_system_metrics(wine, index):
+    """win32u sysparams.c get_system_metrics, the same table GetSystemMetrics16 answers from."""
+    if index & 0x80000000:
+        index -= 1 << 32
+    ax, _dx, why = wine._system_metrics(index)
+    if why:
+        return why.replace("USER.179 GetSystemMetrics", "USER32!GetSystemMetrics")
+    value = ax - 0x10000 if ax & 0x8000 else ax
+    wine.trace[-1] += f" {index} -> {value}"
+    return value & 0xFFFFFFFF
+
+
+@win32("KERNEL32", "GetPrivateProfileStringA")
+def get_private_profile_string_a(wine, section, entry, default, buf, length, filename):
+    """profile.c GetPrivateProfileStringA -> W -> PROFILE_GetString, the same profile cache as
+    the 16-bit call; the answer is the length copied. A NULL file is win.ini."""
+    opt = lambda ptr: read_str(wine, ptr) if ptr else None
+    name = opt(filename) or b"win.ini"
+    ax, _dx, why = wine.profile_string(opt(section), opt(entry), opt(default), (buf, 0), length, name,
+                                       put=lambda data: _w(wine, buf, data))
+    if why:
+        return why
+    wine.trace[-1] += f" [{(opt(section) or b'').decode('latin1')}] {(opt(entry) or b'').decode('latin1')!r} in {name.decode('latin1')!r}"
+    return ax
+
+
+# ntdll unix/system.c get_cpuinfo fills user_shared_data->ProcessorFeatures from CPUID. The
+# CPU here is Unicorn's i386, and these are the answers for it: no FDIV errata, no x87
+# emulation, CMPXCHG8B, MMX, SSE, RDTSC and SSE2. Another feature stops until a run asks.
+PROCESSOR_FEATURES = {0: 0, 1: 0, 2: 1, 3: 1, 6: 1, 8: 1, 10: 1}
+
+
+@win32("KERNEL32", "IsProcessorFeaturePresent")
+def is_processor_feature_present(wine, feature):
+    """kernelbase IsProcessorFeaturePresent -> RtlIsProcessorFeaturePresent: the shared
+    data's ProcessorFeatures entry, FALSE past PROCESSOR_FEATURE_MAX (64)."""
+    if feature >= 64:
+        return 0
+    if feature not in PROCESSOR_FEATURES:
+        return f"KERNEL32!IsProcessorFeaturePresent({feature}): neww has no answer for this feature yet"
+    return PROCESSOR_FEATURES[feature]
+
+
+@win32("KERNEL32", "GetCurrentDirectoryA")
+def get_current_directory_a(wine, length, buf):
+    """kernelbase GetCurrentDirectoryA: neww's current directory, C:\\TBK (wine.BIN_DIR). The
+    length without the NUL when it fits, else the size needed with it."""
+    from .wine import BIN_DIR
+    text = BIN_DIR.encode("latin1")
+    if length <= len(text):
+        return len(text) + 1
+    _w(wine, buf, text + b"\x00")
+    wine.trace[-1] += f" {BIN_DIR!r}"
+    return len(text)
+
+
+@win32("KERNEL32", "GetLogicalDrives")
+def get_logical_drives(wine):
+    """kernelbase GetLogicalDrives: a bit per drive. neww's disk is drive C: alone."""
+    return 1 << 2
+
+
+def _upper_ansi(raw):
+    """CharUpperBuffA in code page 1252, a character for a character (ß and ÿ stay)."""
+    out = bytearray()
+    for b in raw:
+        ch = bytes([b]).decode("cp1252", "replace")
+        up = ch.upper()
+        try:
+            enc = up.encode("cp1252")
+        except UnicodeEncodeError:
+            enc = bytes([b])
+        out += enc if len(enc) == 1 and len(up) == 1 else bytes([b])
+    return bytes(out)
+
+
+@win32("USER32", "CharUpperA")
+def char_upper_a(wine, ptr):
+    """user32 CharUpperA: a pointer whose high word is 0 is one character, answered upper
+    case; else the string is made upper case in place and the pointer answered."""
+    if not ptr >> 16:
+        return _upper_ansi(bytes([ptr & 0xFF]))[0]
+    raw = read_str(wine, ptr, 0x100000)
+    _w(wine, ptr, _upper_ansi(raw))
+    return ptr
+
+
+@win32("KERNEL32", "GetDriveTypeA")
+def get_drive_type_a(wine, root):
+    """kernelbase GetDriveTypeW: DRIVE_FIXED (3) for C:, DRIVE_NO_ROOT_DIR (1) for a drive
+    neww does not have. NULL is the current drive, C:."""
+    path = read_str(wine, root).decode("latin1") if root else "C:\\"
+    wine.trace[-1] += f" {path!r}"
+    return 3 if path[:1].upper() == "C" and path[1:2] in (":", "") else 1
+
+
+@win32("KERNEL32", "GetFileAttributesA")
+def get_file_attributes_a(wine, name_ptr):
+    """kernelbase GetFileAttributesW: FILE_ATTRIBUTE_DIRECTORY (10h) for one of neww's
+    directories, FILE_ATTRIBUTE_ARCHIVE (20h) for a file neww's disk has, else
+    INVALID_FILE_ATTRIBUTES with ERROR_FILE_NOT_FOUND, or ERROR_PATH_NOT_FOUND when the
+    folder is not there either. The same answers as INT 21h 4300h."""
+    path = read_str(wine, name_ptr).decode("latin1")
+    wine.trace[-1] += f" {path!r}"
+    if directory_exists(wine, path):
+        return 0x10
+    if wine.file_exists(path):
+        return 0x20
+    folder = wine.full_path(path).rsplit("\\", 1)[0]
+    _error(wine, 2 if directory_exists(wine, folder or "C:\\") else 3)
+    return 0xFFFFFFFF
+
+
+# win32u sysparams.c: the first monitor added gets handle 1 (++monitor_count). neww has one,
+# 1024x768 at 0,0 (METRICS[0], METRICS[1]), with no taskbar, so its work area is all of it.
+PRIMARY_MONITOR = 1
+MONITOR_DEFAULTTOPRIMARY, MONITOR_DEFAULTTONEAREST = 1, 2
+
+
+@win32("USER32", "MonitorFromPoint")
+def monitor_from_point(wine, x, y, flags):
+    """NtUserMonitorFromPoint -> get_monitor_from_rect of a 1x1 rectangle: the monitor it is
+    on, else with MONITOR_DEFAULTTOPRIMARY or MONITOR_DEFAULTTONEAREST the only one, else 0."""
+    from .wine import METRICS
+    sx = x - (1 << 32) if x & 0x80000000 else x
+    sy = y - (1 << 32) if y & 0x80000000 else y
+    if 0 <= sx < METRICS[0] and 0 <= sy < METRICS[1]:
+        return PRIMARY_MONITOR
+    return PRIMARY_MONITOR if flags & (MONITOR_DEFAULTTOPRIMARY | MONITOR_DEFAULTTONEAREST) else 0
+
+
+@win32("USER32", "GetMonitorInfoA")
+def get_monitor_info_a(wine, monitor, info):
+    """user32 GetMonitorInfoA: cbSize must be MONITORINFO (40) or MONITORINFOEXA (72). The
+    monitor rectangle, the work area and MONITORINFOF_PRIMARY; the EX form adds the device
+    name, \\\\.\\DISPLAY1."""
+    from .wine import METRICS
+    if monitor != PRIMARY_MONITOR:
+        return 0
+    size = struct.unpack("<I", wine.read_linear(info, 4))[0]
+    if size not in (40, 72):
+        return 0
+    rect = struct.pack("<iiii", 0, 0, METRICS[0], METRICS[1])
+    _w(wine, info + 4, rect + rect + struct.pack("<I", 1))
+    if size == 72:
+        _w(wine, info + 40, b"\\\\.\\DISPLAY1".ljust(32, b"\x00"))
+    return 1
+
+
+# ---------------------------------------------------------------- Global / Local memory
+
+# kernelbase memory.c: a fixed block is a heap pointer; a moveable one is a handle, the
+# address of the ptr field of a mem_entry { WORD flags; BYTE lock; BYTE pad; void *ptr; },
+# so a handle is 4 mod 8 and a heap pointer (8-aligned) never is.
+LMEM_MOVEABLE, LMEM_ZEROINIT, LMEM_MODIFY, LMEM_DISCARDABLE = 0x2, 0x40, 0x80, 0xF00
+MEM_ENTRIES = 0x2000
+
+
+def _mem(wine):
+    st = _process(wine)
+    if not hasattr(st, "mem_entries"):
+        heap = _find_heap(wine, st.process_heap)
+        st.mem_entries = heap.alloc(MEM_ENTRIES * 8)
+        st.mem = {}          # handle -> [ptr, lock, size]
+        st.mem_free = []
+        st.mem_next = 0
+    return st
+
+
+def _is_handle(wine, h):
+    return h & 7 == 4 and h in _mem(wine).mem
+
+
+def _put_entry(wine, h, entry):
+    _w(wine, h - 4, struct.pack("<HBBI", 0x1 | 0x2, min(entry[1], 255), 0, entry[0]))
+
+
+def _local_alloc(wine, flags, size):
+    st = _mem(wine)
+    heap = _find_heap(wine, st.process_heap)
+    if not flags & LMEM_MOVEABLE:
+        ptr = heap.alloc(size)
+        if not ptr:
+            _error(wine, ERROR_NOT_ENOUGH_MEMORY)
+        return ptr
+    if st.mem_free:
+        index = st.mem_free.pop()
+    elif st.mem_next < MEM_ENTRIES:
+        index, st.mem_next = st.mem_next, st.mem_next + 1
+    else:
+        _error(wine, ERROR_NOT_ENOUGH_MEMORY)
+        return 0
+    h = st.mem_entries + 8 * index + 4
+    ptr = heap.alloc(size) if size else 0
+    st.mem[h] = [ptr, 0, size]
+    _put_entry(wine, h, st.mem[h])
+    return h
+
+
+@win32("KERNEL32", "GlobalAlloc")
+def global_alloc(wine, flags, size):
+    """GlobalAlloc -> LocalAlloc; a fixed block of 0 bytes is made 1 byte. neww's heap blocks
+    are always zero, which covers GMEM_ZEROINIT."""
+    if not flags & LMEM_MOVEABLE and not size:
+        size = 1
+    return _local_alloc(wine, flags, size)
+
+
+@win32("KERNEL32", "LocalAlloc")
+def local_alloc(wine, flags, size):
+    return _local_alloc(wine, flags, size)
+
+
+@win32("KERNEL32", "GlobalLock")
+def global_lock(wine, h):
+    """LocalLock: a pointer is itself; a handle's lock count goes up and its block is the
+    answer (NULL, ERROR_DISCARDED, for a discarded one)."""
+    if not h:
+        return 0
+    if _is_handle(wine, h):
+        entry = _mem(wine).mem[h]
+        if not entry[0]:
+            _error(wine, 0x10D)   # ERROR_DISCARDED
+            return 0
+        if entry[1] < 255:
+            entry[1] += 1
+        _put_entry(wine, h, entry)
+        return entry[0]
+    return h
+
+
+@win32("KERNEL32", "LocalLock")
+def local_lock(wine, h):
+    return global_lock(wine, h)
+
+
+@win32("KERNEL32", "GlobalUnlock")
+def global_unlock(wine, h):
+    """GlobalUnlock: TRUE for a pointer; for a handle LocalUnlock, the lock count down and
+    TRUE while it is still locked, else FALSE with ERROR_SUCCESS, or ERROR_NOT_LOCKED."""
+    if not _is_handle(wine, h):
+        return 1
+    entry = _mem(wine).mem[h]
+    if not entry[1]:
+        _error(wine, 158)   # ERROR_NOT_LOCKED
+        return 0
+    if entry[1] < 255:
+        entry[1] -= 1
+    _put_entry(wine, h, entry)
+    if entry[1]:
+        return 1
+    _error(wine, 0)
+    return 0
+
+
+@win32("KERNEL32", "LocalUnlock")
+def local_unlock(wine, h):
+    if not _is_handle(wine, h):
+        _error(wine, 158)
+        return 0
+    return global_unlock(wine, h)
+
+
+@win32("KERNEL32", "GlobalFree")
+def global_free(wine, h):
+    """LocalFree: NULL when freed, the handle back (ERROR_INVALID_HANDLE) when not."""
+    st = _mem(wine)
+    heap = _find_heap(wine, st.process_heap)
+    if _is_handle(wine, h):
+        entry = st.mem.pop(h)
+        if entry[0]:
+            heap.release(entry[0])
+        st.mem_free.append((h - 4 - st.mem_entries) // 8)
+        return 0
+    if h and heap.release(h):
+        return 0
+    if h:
+        _error(wine, ERROR_INVALID_HANDLE)
+    return h
+
+
+@win32("KERNEL32", "LocalFree")
+def local_free(wine, h):
+    return global_free(wine, h)
+
+
+@win32("KERNEL32", "GlobalSize")
+def global_size(wine, h):
+    """LocalSize: the block's size, 0 for a discarded one or a bad handle."""
+    st = _mem(wine)
+    if _is_handle(wine, h):
+        entry = st.mem[h]
+        return entry[2] if entry[0] else 0
+    size = _find_heap(wine, st.process_heap).size(h)
+    if size is None:
+        _error(wine, ERROR_INVALID_HANDLE)
+        return 0
+    return size
+
+
+@win32("KERNEL32", "LocalSize")
+def local_size(wine, h):
+    return global_size(wine, h)
+
+
+@win32("KERNEL32", "GlobalHandle")
+def global_handle(wine, ptr):
+    """LocalHandle: the handle a block belongs to, the pointer itself for a fixed block."""
+    st = _mem(wine)
+    if _is_handle(wine, ptr):
+        return ptr
+    for h, entry in st.mem.items():
+        if entry[0] == ptr:
+            return h
+    if _find_heap(wine, st.process_heap).size(ptr) is not None:
+        return ptr
+    _error(wine, ERROR_INVALID_HANDLE)
+    return 0
+
+
+@win32("KERNEL32", "GlobalReAlloc")
+def global_realloc(wine, h, size, flags):
+    """GlobalReAlloc -> LocalReAlloc for the cases a run reaches: a size change of a fixed
+    block (moving only with GMEM_MOVEABLE) or of a handle's block (in place while locked
+    unless GMEM_MOVEABLE). GMEM_MODIFY and discarding stop."""
+    if flags & (LMEM_MODIFY | LMEM_DISCARDABLE) or not size:
+        return f"KERNEL32!GlobalReAlloc({h:#x}, {size:#x}, {flags:#x}): GMEM_MODIFY, discarding or size 0, which neww does not do yet"
+    st = _mem(wine)
+    heap = st.process_heap
+    in_place = HEAP_REALLOC_IN_PLACE_ONLY
+    if _is_handle(wine, h):
+        entry = st.mem[h]
+        hflags = in_place if entry[1] and not flags & LMEM_MOVEABLE else 0
+        ptr = k32_heap_realloc(wine, heap, hflags, entry[0], size) if entry[0] else _find_heap(wine, heap).alloc(size)
+        if not ptr:
+            return 0
+        entry[0], entry[2] = ptr, size
+        _put_entry(wine, h, entry)
+        return h
+    hflags = 0 if flags & LMEM_MOVEABLE else in_place
+    return k32_heap_realloc(wine, heap, hflags, h, size)

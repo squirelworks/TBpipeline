@@ -76,6 +76,52 @@ def _descriptor(base, limit, access, flags=0):
     return bytes(raw)
 
 
+class SelectorHooks:
+    """What selector.c needs from the machine: a new selector, a descriptor's base, limit and
+    access, and setting them. A selector here also gets a Segment, so neww's own reads and
+    writes (wine.read, wine.write) reach the memory it describes."""
+
+    def __init__(self, machine):
+        self.m = machine
+
+    def info(self, sel):
+        """(base, limit, access) from the descriptor, or None for a selector neww never made."""
+        if sel & ~7 not in self.m.box.selectors and sel not in self.m.box.selectors:
+            return None
+        raw = bytes(self.m.uc.mem_read(sel & ~7, 8))
+        base = raw[2] | raw[3] << 8 | raw[4] << 16 | raw[7] << 24
+        limit = raw[0] | raw[1] << 8 | (raw[6] & 0x0F) << 16
+        if raw[6] & 0x80:
+            limit = limit << 12 | 0xFFF
+        return base, limit, raw[5]
+
+    def set(self, sel, base, limit, access):
+        """Write the descriptor (page granular past 1MB, as ldt_set_entry makes it) and the
+        Segment neww reads through."""
+        from .ne import Segment
+        flags = 0
+        raw_limit = limit
+        if limit >= 0x100000:
+            flags, raw_limit = 0x80, limit >> 12
+        self.m._write_descriptor(sel, _descriptor(base, raw_limit, access, flags))
+        seg = self.m.box.selectors.get(sel)
+        if seg is None:
+            seg = Segment(0, 1, bytearray(0))
+            seg.selector = sel
+            self.m.box.selectors[sel] = seg
+        seg.base = base
+        seg.data = bytearray(min(limit + 1, 0x10000))
+
+    def new(self):
+        sel = self.m.box._selector()
+        self.set(sel, 0, 0, 0x92)
+        return sel
+
+    def free(self, sel):
+        self.m._write_descriptor(sel, bytes(8))
+        self.m.box.selectors.pop(sel, None)
+
+
 class Args:
     def __init__(self, machine):
         self.machine = machine
@@ -162,6 +208,7 @@ class Machine:
         self.box.wine.read_linear = lambda addr, n: bytes(self.uc.mem_read(addr, n))
         self.box.wine.resize = self._resize
         self.box.wine.is_code = self._is_code
+        self.box.wine.selectors = SelectorHooks(self)
         self.box.wine.is_dll = self._is_dll
         self.box.wine.instance_of = self._instance_of
         self.box.wine.entry_point = self._entry_point
@@ -208,7 +255,7 @@ class Machine:
         self.box.wine.setup32 = self._setup32
         code = exe.segments[exe.entry_seg - 1]
         data = exe.segments[exe.auto - 1]
-        psp = self._psp(self.box.wine.book.name if self.box.wine.book else "")
+        psp = self._psp(self.box.wine.dos_name(self.box.wine.book) if self.box.wine.book else "")
         self._modules()
         self.referenced = set()
         self._reference(self.box.exe)
@@ -1413,12 +1460,12 @@ class Machine:
             uc.ctl_remove_cache(at, at + 2)
             uc.reg_write(UC_X86_REG_IP, (ip - 2) & 0xFFFF)
             return
-        if intno not in (0x21, 0x2F):
+        if intno not in (0x21, 0x2F, 0x31):
             self.stop = f"INT {intno:#x} {self.where()}: Wine's builtin handler for it is not in neww"
             uc.emu_stop()
             return
         self.calls += 1
-        handler = wine.int21 if intno == 0x21 else wine.int2f
+        handler = {0x21: wine.int21, 0x2F: wine.int2f, 0x31: wine.int31}[intno]
         sets, why = handler(lambda name: uc.reg_read(REGISTERS[name]))
         if why:
             self.stop = why
