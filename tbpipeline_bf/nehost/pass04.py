@@ -1010,6 +1010,13 @@ class Pass04:
             self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
             self.uc.emu_stop()
             return True
+        # InitApp(hInstance). Wine's InitApp16 creates the task's message queue
+        # and returns TRUE when it has one. This host keeps no queue, and
+        # nothing in the run reads one, so the answer is TRUE.
+        if ordinal == 5:
+            self.uc.reg_write(UC_X86_REG_AX, 1)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSysColor(index). Wine's GetSysColor16 reads system_colors in
         # win32u/sysparams.c, COLOR_SCROLLBAR to COLOR_MENUBAR, and gives 0
         # out of range. AX = 1 was a near-black red for every element.
