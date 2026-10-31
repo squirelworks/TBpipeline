@@ -26,9 +26,9 @@ from unicorn.x86_const import (
 
 API_PORT = 0xE0
 INITTASK = 91
+OF_CREATE = 0x1000
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
-OF_CREATE = 0x1000
 
 # Names other than *.ini the entry opens that TBK_INI may answer. The
 # pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
