@@ -11,7 +11,7 @@ import unittest
 from tests import neww_ne
 
 NAMED = re.compile(
-    r"^(unimplemented \w+\.\d+|KERNEL\.\d+ |USER\.\d+ |contract disagrees |not linked: |dos exit |"
+    r"^(unimplemented \w+\.\d+|register \w+\.\d+ |KERNEL\.\d+ |USER\.\d+ |contract disagrees |not linked: |dos exit |"
     r"instruction cap |\d+ second cap |packed image )"
 )
 

@@ -9,6 +9,7 @@ import struct
 from pathlib import Path
 
 from .local import LocalHeap, Stop as LocalStop
+from .spec_rows import SPEC_ROWS
 
 # Wine Win16 spec files, read at this commit. A row cites file and ordinal.
 WINE_COMMIT = "2528aff26208257fdbf980666a4f0e66d47563ce"
@@ -34,7 +35,7 @@ class Contract:
     stops and names both sizes. Neither is picked.
     """
 
-    def __init__(self, module, ordinal, name, args, ret, spec=None, binary=None, value=None):
+    def __init__(self, module, ordinal, name, args, ret, spec=None, binary=None, value=None, default=False, void=False):
         self.module = module
         self.ordinal = ordinal
         self.name = name
@@ -44,6 +45,11 @@ class Contract:
         self.binary = binary
         # (ax, dx) when the answer is a constant. The row is the whole contract.
         self.value = value
+        # A row loaded from spec_rows.py with no handler written for it. Its answer is
+        # the default: 0 for a word or a long, AX left for a void, a stop for -register.
+        self.default = default
+        # Wine's C function returns void, so there is no answer to give.
+        self.void = void
 
     @property
     def pop(self):
@@ -57,7 +63,7 @@ class Contract:
         return f"{self.module}.{self.ordinal} {self.name}: {where} pops {self.pop}, binary pops {self.binary}"
 
     @classmethod
-    def from_spec(cls, module, path, line, binary=None, value=None):
+    def from_spec(cls, module, path, line, binary=None, value=None, default=False, void=False):
         """line is the Wine spec entry, ordinal first, as the file has it."""
         head, _, rest = line.partition("(")
         words = head.split()
@@ -74,7 +80,8 @@ class Contract:
             ret = "word"
         else:
             ret = "long"
-        return cls(module, ordinal, name, args, ret, spec=(path, line), binary=binary, value=value)
+        return cls(module, ordinal, name, args, ret, spec=(path, line), binary=binary, value=value,
+                   default=default, void=void)
 
     def __repr__(self):
         return f"Contract({self.module}.{self.ordinal} {self.name} args={self.args} pop={self.pop} ret={self.ret})"
@@ -226,6 +233,37 @@ EQUATES = {
     "KERNEL": {113: ("__AHSHIFT", 3), 114: ("__AHINCR", 8), 178: ("__WINFLAGS", 0x0C25)},
 }
 
+# Every pascal entry of every Win16 spec file, from spec_rows.py (specgen.py wrote it from the
+# Wine checkout at WINE_COMMIT). A hand row above, with its handler, wins over the loaded row.
+SPEC_PATHS = {
+    "KERNEL": KERNEL_SPEC, "USER": USER_SPEC, "GDI": GDI_SPEC, "MMSYSTEM": MMSYSTEM_SPEC,
+    "WIN87EM": WIN87EM_SPEC,
+    "KEYBOARD": "dlls/keyboard.drv16/keyboard.drv16.spec",
+    "SHELL": "dlls/shell.dll16/shell.dll16.spec",
+    "COMMDLG": "dlls/commdlg.dll16/commdlg.dll16.spec",
+    "TOOLHELP": "dlls/toolhelp.dll16/toolhelp.dll16.spec",
+    "COMPOBJ": "dlls/compobj.dll16/compobj.dll16.spec",
+    "OLE2": "dlls/ole2.dll16/ole2.dll16.spec",
+    "OLE2DISP": "dlls/ole2disp.dll16/ole2disp.dll16.spec",
+    "DDEML": "dlls/ddeml.dll16/ddeml.dll16.spec",
+    "VER": "dlls/ver.dll16/ver.dll16.spec",
+}
+LOADED = {
+    module: {
+        row.ordinal: row
+        for row in (Contract.from_spec(module, SPEC_PATHS[module], line, default=True, void=void) for line, void in rows)
+    }
+    for module, rows in SPEC_ROWS.items()
+}
+HAND = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "MMSYSTEM": MMSYSTEM, "WIN87EM": WIN87EM}
+
+
+def row_for(module, ordinal):
+    """The hand row if there is one, else the loaded spec row, else None."""
+    module = module.upper()
+    return HAND.get(module, {}).get(ordinal) or LOADED.get(module, {}).get(ordinal)
+
+
 # Wine task.c TASK_Create: cmdShow is 1, SW_SHOWNORMAL, unless the startup info sets one.
 SW_SHOWNORMAL = 1
 
@@ -278,6 +316,8 @@ class Wine:
         # Set by the machine: size -> first selector of a mapped block.
         self.allocate = None
         self.trace = []
+        # (module, ordinal, name, "0" or "void") for each call a loaded row answered by default.
+        self.defaults = []
         self.exit = None
         # Wine ne_module.c NE_CreateThread posts one event before the task runs.
         # The startup WaitEvent(0) consumes it.
@@ -308,23 +348,18 @@ class Wine:
         self.status_word_2 = 0
 
     def contract(self, module, ordinal):
-        module = module.upper()
-        if module == "KERNEL":
-            return KERNEL.get(ordinal)
-        if module == "USER":
-            return USER.get(ordinal)
-        if module == "GDI":
-            return GDI.get(ordinal)
-        if module == "MMSYSTEM":
-            return MMSYSTEM.get(ordinal)
-        if module == "WIN87EM":
-            return WIN87EM.get(ordinal)
-        return None
+        return row_for(module, ordinal)
 
     def usable(self, module, ordinal):
-        """The row the gate may pop, or None. A disagreeing row is not usable."""
+        """The row the gate may pop, or None. A disagreeing row is not usable.
+
+        A loaded -register row is not usable: it sets registers no default can name,
+        so its stub has no retf and the call stops, as an ordinal with no row does.
+        """
         row = self.contract(module, ordinal)
         if row is None or row.disagreement:
+            return None
+        if row.default and row.ret == "register":
             return None
         return row
 
@@ -346,6 +381,8 @@ class Wine:
             return 0, 0, f"contract disagrees {label.disagreement}"
         if label.value is not None:
             return label.value[0], label.value[1], None
+        if label.default:
+            return self._default(label, arg)
         if module == "KERNEL":
             return self._kernel(ordinal, arg)
         if module == "USER":
@@ -355,6 +392,27 @@ class Wine:
         if module == "WIN87EM" and ordinal == 1:
             return self._fpmath(arg)
         return 0, 0, self.missing(module, ordinal)
+
+    def _default(self, row, arg):
+        """A loaded spec row with no handler. Never AX = 1.
+
+        -register stops: the call sets registers, and 0 in each is not Wine's answer.
+        A void function has no answer, so AX is left as the call found it, and DX is 0
+        as the void handlers above leave it. A word or a long is 0.
+        """
+        where = f"{row.spec[0]}:{row.ordinal}"
+        if row.ret == "register":
+            return 0, 0, (
+                f"register {row.module}.{row.ordinal} {row.name}: {where} is -register, "
+                "so it sets registers and a default answer would be made up"
+            )
+        if row.void:
+            self.defaults.append((row.module, row.ordinal, row.name, "void"))
+            self.trace[-1] += " (default: void, AX left)"
+            return arg.regs("ax"), 0, None
+        self.defaults.append((row.module, row.ordinal, row.name, "0"))
+        self.trace[-1] += f" (default: {row.ret} 0)"
+        return 0, 0, None
 
     def _kernel(self, ordinal, arg):
         if ordinal == 91:
