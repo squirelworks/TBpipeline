@@ -5,6 +5,9 @@ CPU, this module answers, and the gate's retf pops the Pascal arguments.
 An ordinal with no contract stops the run. It does not invent a pop size.
 """
 
+import struct
+from pathlib import Path
+
 # Wine Win16 spec files, read at this commit. A row cites file and ordinal.
 WINE_COMMIT = "2528aff26208257fdbf980666a4f0e66d47563ce"
 KERNEL_SPEC = "dlls/krnl386.exe16/krnl386.exe16.spec"
@@ -126,6 +129,8 @@ INITTASK_STOP = (
 )
 
 GMEM_MOVEABLE = 0x0002
+HFILE_ERROR = 0xFFFF
+OF_SHARE_MASK = 0x0070
 
 SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
 
@@ -133,8 +138,14 @@ SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "T
 class Wine:
     def __init__(self, root):
         self.root = root
+        # The book a .tbk or .sbk path opens. Set from --c.
+        self.book = None
+        # handle -> [guest path, host path, bytes, position]
         self.files = {}
-        self.next_file = 1
+        # DOS keeps 0-4 for the standard handles.
+        self.next_file = 5
+        # Set by the machine: write(selector, offset, bytes) into guest memory.
+        self.write = None
         # handle -> (first selector, size, flags)
         self.heap = {}
         # Set by the machine: size -> first selector of a mapped block.
@@ -202,15 +213,23 @@ class Wine:
         if ordinal == 17:
             self.heap.pop(arg(0), None)
             return 0, 0, None
-        if ordinal in (74, 85):
-            handle = self.next_file
-            self.next_file += 1
-            self.files[handle] = arg.string(0)
-            return handle, 0, None
+        if ordinal == 74:
+            # OpenFile(str name, ptr ofstruct, word mode): mode is arg 0, ofstruct 1-2, name 3-4.
+            return self._open_file(arg.string(3), arg(2), arg(1), arg(0))
+        if ordinal == 85:
+            # _lopen(str name, word mode)
+            return self._lopen(arg.string(1), arg(0))
         if ordinal == 81:
-            self.files.pop(arg(0), None)
+            if self.files.pop(arg(0), None) is None:
+                return HFILE_ERROR, 0, None
             return 0, 0, None
-        if ordinal in (82, 84, 50, 95, 128, 176):
+        if ordinal == 82:
+            # _lread(word file, segptr buffer, word count)
+            return self._lread(arg(3), arg(2), arg(1), arg(0))
+        if ordinal == 84:
+            # _llseek(word file, long offset, word origin)
+            return self._llseek(arg(3), arg(1) | (arg(2) << 16), arg(0))
+        if ordinal in (50, 95, 128, 176):
             return 0, 0, None
         if ordinal == 102:
             ax = arg.regs("ax")
@@ -219,6 +238,79 @@ class Wine:
                 return ax, 0, f"dos exit {ax & 0xFF:#x}"
             return 0, 0, None
         return 0, 0, f"unimplemented KERNEL.{ordinal}"
+
+    def resolve(self, path):
+        """The host file a guest path opens, or None.
+
+        A path ending in .tbk or .sbk is the book from --c, whatever its
+        directory. Any other path is its base name, looked up without case
+        in --b. Nothing else is searched.
+        """
+        name = path.replace("/", "\\").rsplit("\\", 1)[-1].rsplit(":", 1)[-1]
+        if name.lower().endswith((".tbk", ".sbk")):
+            return self.book
+        if not name:
+            return None
+        for item in Path(self.root).iterdir():
+            if item.is_file() and item.name.lower() == name.lower():
+                return item
+        return None
+
+    def _handle(self, path, host):
+        handle = self.next_file
+        self.next_file += 1
+        self.files[handle] = [path, host, Path(host).read_bytes(), 0]
+        return handle
+
+    def _open_file(self, path, ofs_sel, ofs_off, mode):
+        """Wine file.c OpenFile16. Read access only; any other mode stops."""
+        if mode & ~(OF_SHARE_MASK | 0x0003) or mode & 0x0003:
+            return 0, 0, f"KERNEL.74 OpenFile {path!r} mode {mode:#06x}: neww opens files to read and nothing else"
+        host = self.resolve(path)
+        ofs = bytearray(136)
+        ofs[0] = 136
+        if host is None:
+            struct.pack_into("<H", ofs, 2, 2)  # nErrCode: file not found
+            self._put(ofs_sel, ofs_off, ofs)
+            self.trace.append(f"  OpenFile {path!r} not found, HFILE_ERROR")
+            return HFILE_ERROR, 0, None
+        name = path.encode("latin1", "replace")[:127]
+        ofs[8:8 + len(name)] = name
+        self._put(ofs_sel, ofs_off, ofs)
+        handle = self._handle(path, host)
+        self.trace.append(f"  OpenFile {path!r} -> {handle} {Path(host).name}")
+        return handle, 0, None
+
+    def _lopen(self, path, mode):
+        if mode & 0x0003:
+            return 0, 0, f"KERNEL.85 _lopen {path!r} mode {mode:#06x}: neww opens files to read and nothing else"
+        host = self.resolve(path)
+        if host is None:
+            return HFILE_ERROR, 0, None
+        return self._handle(path, host), 0, None
+
+    def _lread(self, handle, sel, off, count):
+        entry = self.files.get(handle)
+        if entry is None:
+            return HFILE_ERROR, 0, None
+        chunk = entry[2][entry[3]:entry[3] + count]
+        entry[3] += len(chunk)
+        self._put(sel, off, chunk)
+        return len(chunk), 0, None
+
+    def _llseek(self, handle, offset, origin):
+        entry = self.files.get(handle)
+        if entry is None or origin not in (0, 1, 2):
+            return 0xFFFF, 0xFFFF, None
+        if offset & 0x80000000:
+            offset -= 1 << 32
+        start = (0, entry[3], len(entry[2]))[origin]
+        entry[3] = max(start + offset, 0)
+        return entry[3] & 0xFFFF, entry[3] >> 16, None
+
+    def _put(self, sel, off, data):
+        if self.write is not None and data:
+            self.write(sel, off, bytes(data))
 
     def _global_alloc(self, flags, size):
         """Wine global.c GlobalAlloc16 / GLOBAL_Alloc. size is the whole dword."""

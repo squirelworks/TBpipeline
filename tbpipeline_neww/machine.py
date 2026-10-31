@@ -1,6 +1,7 @@
 """Run the linked sandbox. A gate is a far call into Windows."""
 
 import struct
+from pathlib import Path
 
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_UNMAPPED
 from unicorn.x86_const import (
@@ -46,8 +47,9 @@ class Args:
 
 
 class Machine:
-    def __init__(self, root):
+    def __init__(self, root, book=None):
         self.box = Sandbox(root).load()
+        self.box.wine.book = Path(book) if book else None
         self.uc = None
         self.stop = ""
         self.calls = 0
@@ -87,6 +89,7 @@ class Machine:
             limit_b = 0xFFFF if len(seg.data) >= 0x10000 else max(len(seg.data) - 1, 0)
             self.uc.mem_write(seg.selector, _descriptor(seg.base, limit_b, access))
         self.box.wine.allocate = self._allocate
+        self.box.wine.write = self._write_guest
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
         code = exe.segments[exe.entry_seg - 1]
@@ -117,6 +120,12 @@ class Machine:
             if not self.stop:
                 self.stop = "returned"
         return self
+
+    def _write_guest(self, sel, offset, data):
+        seg = self.box.selectors.get(sel)
+        if seg is None or offset + len(data) > len(seg.data):
+            return
+        self.uc.mem_write(seg.base + offset, data)
 
     def _allocate(self, size):
         """Map size bytes behind consecutive data selectors, 64K apart in linear memory.
