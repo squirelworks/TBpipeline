@@ -393,7 +393,7 @@ class Wine:
         if ordinal == 15:
             return self._global_alloc(arg(2), arg(0) | (arg(1) << 16))
         if ordinal == 18:
-            return arg(0), 0, None
+            return self._global_lock(arg(0), arg.regs("ds"))
         if ordinal == 17:
             self.heap.pop(arg(0), None)
             return 0, 0, None
@@ -697,6 +697,23 @@ class Wine:
             "es": psp, "push": 0,
         }
         return 1, SW_SHOWNORMAL, None
+
+    def _global_lock(self, handle, ds):
+        """Wine global.c WIN16_GlobalLock16: the SEGPTR (selector, 0) in DX:AX, and the selector in CX.
+
+        K32WOWGlobalLock16: -1 is CURRENT_DS, and an invalid handle is selector 0. A valid one
+        counts a lock. Handle 0 gives GlobalHandleToSel16(0), 0, with no lock.
+        """
+        sel = 0
+        if handle:
+            if handle == 0xFFFF:
+                handle = ds
+            found = self.selector_of(handle)
+            if found is not None:
+                sel = found
+                self.locks[sel] = self.locks.get(sel, 0) + 1
+        self.registers = {"cx": sel}
+        return 0, sel, None
 
     def selector_of(self, handle):
         """GlobalHandleToSel16 in neww's numbering: a moveable handle is selector - 1. None if no block."""
