@@ -51,6 +51,7 @@ WM_NCRBUTTONDOWN, WM_NCRBUTTONUP, WM_NCRBUTTONDBLCLK = 0xA4, 0xA5, 0xA6
 WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_SYSCHAR = 0x100, 0x101, 0x102, 0x104, 0x105, 0x106
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK = 0x200, 0x201, 0x202, 0x203
 WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK = 0x204, 0x205, 0x206
+WM_KEYF1 = 0x4D
 WM_TIMER, WM_SYSTIMER, WM_PARENTNOTIFY, WM_QUERYNEWPALETTE = 0x113, 0x118, 0x210, 0x30F
 WM_PAINTICON, WM_SYNCPAINT = 0x26, 0x88
 
@@ -125,6 +126,8 @@ class TaskQueue:
         self.quit = None
         self.timers = {}         # (hwnd, id) -> [interval, proc, due]
         self.input = []          # cooked hardware messages: (hwnd, msg, wp, lp), input16
+        self.peek = None         # (raw, message or None) cooked for a peek that leaves it queued
+        self.peek_fresh = False
 
 
 class WM:
@@ -2415,6 +2418,11 @@ def next_message(wine, hwnd, first, last, remove, task=None, advance=True):
                 from .input16 import retrieved
                 retrieved(wine, entry)
             return entry
+    if q.peek is not None and q.peek[1] is not None and _matches(m, q.peek[1], hwnd, first, last):
+        entry = q.peek[1]
+        if remove:
+            q.peek = None
+        return entry
     if not first and not last or first <= WM_PAINT <= last:
         h = _paint_window(wine, hwnd, task)
         if h:
@@ -2483,11 +2491,10 @@ def _mm_callback(wine, hwnd, first, last, polling=False):
     return callback_due(wine, waiting)
 
 
-def _input(wine, hwnd, first, last, polling=False):
-    """Hardware input for the task (input16.cook_calls), after the clock moves to it when the
-    task has nothing else and the input comes before every timer. A GuestCalls that looks
-    again, a stop, or None when GetMessage goes on as before."""
-    from .input16 import cook_calls, due_time
+def _input_clock(wine, hwnd, first, last, polling=False):
+    """The clock moves to the task's next hardware input when the task has nothing else and
+    the input comes before every timer."""
+    from .input16 import due_time
     from .tasks import next_ready, earliest_timer
     m = wm(wine)
     due = due_time(wine, wine.htask)
@@ -2497,11 +2504,29 @@ def _input(wine, hwnd, first, last, polling=False):
         own = min((t[2] for t in m.timers.values()), default=None)
         if (timer is None or due <= timer[0]) and (own is None or due <= own):
             m.clock = due
+
+
+def _input(wine, hwnd, first, last, polling=False, remove=True):
+    """Hardware input for the task (input16.cook_calls), after _input_clock. A GuestCalls that
+    looks again, a stop, or None when GetMessage goes on as before."""
+    from .input16 import cook_calls
+    m = wm(wine)
+    _input_clock(wine, hwnd, first, last, polling)
     q = m.queue_of(wine.htask)
+    # A peek's cooking holds only for the call that made it (it runs again after its guest
+    # calls); the next call cooks the raw message afresh, as Wine processes it each time.
+    if q.peek is not None and not q.peek_fresh:
+        q.peek = None
+    q.peek_fresh = False
     while True:
         if any(_matches(m, entry, hwnd, first, last) for entry in q.input):
             return None     # one cooked message at a time, as the server hands them out
-        r = cook_calls(wine, first, last)
+        if q.peek is not None:
+            if q.peek[1] is not None:
+                return None
+            q.peek = None
+            return None     # dropped on a peek: it stays queued for the next look
+        r = cook_calls(wine, first, last, remove)
         if r != "cooked":
             return r
 
@@ -2548,7 +2573,7 @@ def peek_message(wine, arg, ptr, hwnd, first, last, flags):
     m = wm(wine)
     calls = _mm_callback(wine, hwnd, first, last, polling=True)
     if calls is None:
-        calls = _input(wine, hwnd, first, last, polling=True)
+        calls = _input(wine, hwnd, first, last, polling=True, remove=bool(flags & PM_REMOVE))
     if calls is not None:
         return calls
     msg, nxt = _next_or_wait(wine, hwnd, first, last, bool(flags & PM_REMOVE))
@@ -2569,10 +2594,13 @@ def wait_message(wine, arg):
     first, and WaitMessage looks again."""
     from .tasks import Switch
     calls = _mm_callback(wine, 0, 0, 0)
-    if calls is None:
-        calls = _input(wine, 0, 0, 0)
     if calls is not None:
         return calls
+    # Hardware input that is due ends the wait; WaitMessage itself does not process it.
+    from .input16 import ready
+    _input_clock(wine, 0, 0, 0)
+    if ready(wine, wine.htask):
+        return arg.regs("ax"), 0
     msg, nxt = _next_or_wait(wine, 0, 0, 0, False)
     if nxt is not None:
         wine.trace[-1] += f" (waits) -> {nxt.exe_name}"

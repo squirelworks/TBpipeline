@@ -261,6 +261,99 @@ class Mouse(unittest.TestCase):
         self.assertIn("the input script has no more for it", stop)
 
 
+class MouseAsWineDoes(unittest.TestCase):
+    """process_mouse_message details: WM_PARENTNOTIFY, WM_MOUSEACTIVATE to a child of the active
+    window, capture and PM_NOREMOVE returning before activation, and the double click bounds."""
+
+    def setUp(self):
+        from tbpipeline_neww.user_wnd import wm
+        from tests.test_neww_batch1_handlers import NUL, put
+        from tests.test_neww_batch2 import INST
+        self.w = control_wine()
+        self.hwnd = top_window(self.w)
+        cls = put(self.w, 0x20, "TBKMain")
+        self.child = by_name(self.w, "USER", "CreateWindow", cls, NUL, (0x5000, 0), 10, 10, 100, 50,
+                             self.hwnd, 7, INST, NUL, reply=answer(HTCLIENT))[0]
+        settle(self.w)
+        self.m = wm(self.w)
+        self.cx, self.cy = origin(self.w, self.child)
+        self.px, self.py = origin(self.w, self.hwnd)
+
+    def test_a_press_on_a_child_notifies_and_mouse_activates(self):
+        # send_parent_notify: WM_PARENTNOTIFY (WM_LBUTTONDOWN, 0) with the point in the parent's
+        # client coordinates. msg->hwnd != hwndActive, and its root is a top-level window, so
+        # the child gets WM_MOUSEACTIVATE (root, MAKELONG(hit, message)) though its root is
+        # active. Then WM_SETCURSOR.
+        from tbpipeline_neww.input16 import queue_script
+        self.assertEqual(self.m.active, self.hwnd)
+        x, y = self.cx + 5, self.cy + 6
+        queue_script(self.w, f"click {x},{y}")
+        reply = answer(HTCLIENT)
+        got = [get(self.w, reply)[2][:2] for _ in range(3)]
+        self.assertEqual(got, [(self.child, 0x200), (self.child, 0x201), (self.child, 0x202)])
+        down = reply.seen[[i for i, s in enumerate(reply.seen) if s[1] == 0x84][1]:]
+        self.assertEqual([(s[0], s[1]) for s in down[:4]],
+                         [(self.child, 0x84), (self.hwnd, 0x210), (self.child, 0x21), (self.child, 0x20)])
+        self.assertEqual(down[1][2:], (0x201, (y - self.py) << 16 | (x - self.px)))
+        self.assertEqual(down[2][2:], (self.hwnd, 0x201 << 16 | HTCLIENT))
+        # The button up sends neither.
+        self.assertEqual([s[1] for s in down[4:]], [0x84, 0x20])
+
+    def test_no_parent_notify_with_ws_ex_noparentnotify(self):
+        from tbpipeline_neww.input16 import queue_script
+        self.m.get(self.child).exstyle |= 0x4
+        queue_script(self.w, f"click {self.cx + 1},{self.cy + 1}")
+        reply = answer(HTCLIENT)
+        for _ in range(3):
+            get(self.w, reply)
+        self.assertNotIn(0x210, [s[1] for s in reply.seen])
+
+    def test_capture_returns_before_activation_and_set_cursor(self):
+        from tbpipeline_neww.input16 import queue_script
+        by_name(self.w, "USER", "SetCapture", self.child)
+        queue_script(self.w, f"click {self.cx + 1},{self.cy + 1}")
+        reply = answer(HTCLIENT)
+        got = [get(self.w, reply)[2][:2] for _ in range(3)]
+        self.assertEqual(got, [(self.child, 0x200), (self.child, 0x201), (self.child, 0x202)])
+        self.assertEqual(reply.seen, [])
+
+    def test_peek_without_remove_leaves_it_queued(self):
+        # !remove: the message comes back after the hook, with no WM_SETCURSOR, and stays in
+        # the queue; PM_REMOVE then processes it in full.
+        from tbpipeline_neww.input16 import queue_script, state
+        queue_script(self.w, f"move {self.cx + 1},{self.cy + 1}")
+        reply = answer(HTCLIENT)
+        ax, _stop, msg = get(self.w, reply, "PeekMessage", 0)
+        self.assertEqual((ax, msg[0], msg[1]), (1, self.child, 0x200))
+        self.assertEqual([s[1] for s in reply.seen], [0x84])
+        self.assertEqual(len(state(self.w).raw), 1)
+        ax, _stop, msg = get(self.w, reply, "PeekMessage", 1)
+        self.assertEqual((ax, msg[1]), (1, 0x200))
+        self.assertEqual([s[1] for s in reply.seen], [0x84, 0x84, 0x20])
+        self.assertEqual(state(self.w).raw, [])
+
+    def test_non_client_double_click_needs_no_class_style(self):
+        from tbpipeline_neww.input16 import queue_script
+        queue_script(self.w, f"dblclick {self.px + 3},{self.py + 3}")
+        msgs = [get(self.w, answer({self.hwnd: HTCAPTION, self.child: HTCAPTION}))[2][1] for _ in range(5)]
+        self.assertEqual(msgs, [0xA0, 0xA1, 0xA2, 0xA3, 0xA2])
+
+    def test_double_click_bounds_are_strict(self):
+        # time - clk.time < GetDoubleClickTime(), abs(dx) < SM_CXDOUBLECLK / 2.
+        from tbpipeline_neww.input16 import queue_script
+        self.m.get(self.child).cls.style |= 0x8
+        x, y = self.cx + 5, self.cy + 5
+        queue_script(self.w, f"click {x},{y}; wait 500; click {x},{y}")
+        msgs = [get(self.w, answer(HTCLIENT))[2][1] for _ in range(6)]
+        self.assertEqual(msgs[3:5], [0x200, 0x201])
+        queue_script(self.w, f"click {x + 2},{y}")
+        msgs = [get(self.w, answer(HTCLIENT))[2][1] for _ in range(3)]
+        self.assertEqual(msgs[1], 0x201)
+        queue_script(self.w, f"click {x + 3},{y}")
+        msgs = [get(self.w, answer(HTCLIENT))[2][1] for _ in range(3)]
+        self.assertEqual(msgs[1], 0x203)
+
+
 class Keyboard(unittest.TestCase):
     def setUp(self):
         self.w = control_wine()
@@ -297,6 +390,14 @@ class Keyboard(unittest.TestCase):
         self.assertEqual(by_name(self.w, "USER", "GetKeyState", 0x11)[0], 0xFF81)
         by_name(self.w, "USER", "GetKeyboardState", (DATA, 0x500))
         self.assertEqual(self.w.memory.read(DATA, 0x500 + 0x27, 1), b"\x81")
+
+    def test_f1_posts_wm_keyf1(self):
+        # process_keyboard_message: a removed WM_KEYDOWN of VK_F1 posts WM_KEYF1.
+        from tbpipeline_neww.input16 import queue_script
+        queue_script(self.w, "key f1")
+        self.assertEqual(get(self.w)[2][1:3], (0x100, 0x70))
+        self.assertEqual(get(self.w)[2][:2], (self.hwnd, 0x4D))
+        self.assertEqual(get(self.w)[2][1], 0x101)
 
     def test_without_a_focus_the_active_window_gets_sys_keys(self):
         from tbpipeline_neww.input16 import queue_script

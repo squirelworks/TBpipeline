@@ -46,7 +46,9 @@ MK_LBUTTON, MK_RBUTTON, MK_SHIFT, MK_CONTROL, MK_MBUTTON = 0x1, 0x2, 0x4, 0x8, 0
 VK_LBUTTON, VK_RBUTTON, VK_MBUTTON = 0x01, 0x02, 0x04
 VK_SHIFT, VK_CONTROL, VK_MENU = 0x10, 0x11, 0x12
 CS_DBLCLKS = 0x8
-WH_KEYBOARD, WH_MOUSE, HC_ACTION = 2, 7, 0
+WH_KEYBOARD, WH_MOUSE, HC_ACTION, HC_NOREMOVE = 2, 7, 0, 3
+WM_PARENTNOTIFY, WM_KEYF1 = 0x210, 0x4D
+VK_F1 = 0x70
 DOUBLE_CLICK_TIME = 500        # GetDoubleClickTime's default
 DOUBLE_CLICK_SIZE = 4          # SM_CXDOUBLECLK, SM_CYDOUBLECLK
 
@@ -82,6 +84,9 @@ class Raw:
         self.idle, self.delay = idle, delay
         self.due = None if idle else 0
         self.alt_down = set()
+        self.applied = False       # the device state already took it (the server's queue time)
+        self.mk = None             # the MK_ flags the server stamped on it
+        self.previously = None     # a key's state before it, for lParam bit 30
 
     @property
     def mouse(self):
@@ -272,6 +277,9 @@ def _apply_device(wine, raw):
     """What the server does when the device reports: the cursor moves, keys go down or up."""
     from .user_wnd import wm, SCREEN_W, SCREEN_H
     st = state(wine)
+    if raw.applied:
+        return
+    raw.applied = True
     if raw.mouse:
         wm(wine).cursor_pos = (max(0, min(raw.x, SCREEN_W - 1)), max(0, min(raw.y, SCREEN_H - 1)))
         vk = BUTTONS.get(raw.msg)
@@ -292,6 +300,12 @@ def retrieved(wine, msg):
     update_input_key_state on the thread's queue)."""
     st = state(wine)
     message = msg[1]
+    if message == WM_KEYDOWN and msg[2] == VK_F1 and msg[0]:
+        # process_keyboard_message: a removed F1 posts WM_KEYF1 (DefWindowProc makes WM_HELP).
+        from .user_wnd import wm
+        m = wm(wine)
+        if msg[0] != m.desktop:
+            m.queue_of(m.task_of(msg[0])).queue.append((msg[0], WM_KEYF1, 0, 0))
     if message in (WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP):
         vk, down = msg[2] & 0xFF, message in (WM_KEYDOWN, WM_SYSKEYDOWN)
     else:
@@ -342,74 +356,117 @@ def window_from_point_hit(wine, x, y):
     return 0, HTNOWHERE
 
 
-def _double_click(wine, raw, hwnd, msg):
-    """process_mouse_message: a second press of the same button on the same window, soon
-    enough and near enough, is a double click when the class has CS_DBLCLKS."""
+def _double_click(wine, raw, hwnd, hit, msg, wp, remove):
+    """process_mouse_message: a press of the same button, on the same window with the same
+    wParam, less than GetDoubleClickTime after the last and less than SM_CXDOUBLECLK / 2 and
+    SM_CYDOUBLECLK / 2 away, is a double click: off the client always, in it when the class
+    has CS_DBLCLKS. Only a removed press updates the last click."""
     from .user_wnd import wm
     m = wm(wine)
     st = state(wine)
     if raw.msg not in DOWNS:
         return msg
-    last = st.last_click
+    update = remove
     w = m.get(hwnd)
-    dbl = (last is not None and last[0] == raw.msg and last[1] == hwnd
-           and m.clock - last[2] <= DOUBLE_CLICK_TIME
-           and abs(raw.x - last[3]) <= DOUBLE_CLICK_SIZE // 2 and abs(raw.y - last[4]) <= DOUBLE_CLICK_SIZE // 2)
-    if dbl and w is not None and w.cls is not None and w.cls.style & CS_DBLCLKS:
-        st.last_click = None
-        return msg + (WM_LBUTTONDBLCLK - WM_LBUTTONDOWN)
-    st.last_click = (raw.msg, hwnd, m.clock, raw.x, raw.y)
+    if hit != HTCLIENT or (w is not None and w.cls is not None and w.cls.style & CS_DBLCLKS):
+        last = st.last_click
+        if (last is not None and last[0] == raw.msg and last[1] == hwnd and last[2] == wp
+                and m.clock - last[3] < DOUBLE_CLICK_TIME
+                and abs(raw.x - last[4]) < DOUBLE_CLICK_SIZE // 2
+                and abs(raw.y - last[5]) < DOUBLE_CLICK_SIZE // 2):
+            msg += WM_LBUTTONDBLCLK - WM_LBUTTONDOWN
+            if update:
+                st.last_click = None
+                update = False
+    if update:
+        st.last_click = (raw.msg, hwnd, wp, m.clock, raw.x, raw.y)
     return msg
 
 
-def cook_mouse(wine, raw):
+def send_parent_notify(wine, hwnd, event, x, y):
+    """win32u send_parent_notify: WM_PARENTNOTIFY (event, the point in the parent's client
+    coordinates) to each parent of a WS_CHILD without WS_EX_NOPARENTNOTIFY, up to the desktop."""
+    from .user_wnd import wm, send, screen_origin, WS_CHILD, WS_EX_NOPARENTNOTIFY
+    m = wm(wine)
+    while True:
+        w = m.get(hwnd)
+        if w is None or not w.style & WS_CHILD or w.exstyle & WS_EX_NOPARENTNOTIFY:
+            return
+        parent = w.parent
+        if not parent or parent == m.desktop or m.get(parent) is None:
+            return
+        hwnd = parent
+        ox, oy = screen_origin(wine, hwnd)
+        yield from send(wine, hwnd, WM_PARENTNOTIFY, event, ((y - oy) & 0xFFFF) << 16 | ((x - ox) & 0xFFFF))
+
+
+def cook_mouse(wine, raw, remove=True):
     """process_mouse_message for one raw message. Returns the message (hwnd, msg, wp, lp), or
-    None when it is eaten."""
+    None when it is dropped. Without remove (PeekMessage without PM_REMOVE), or with a capture
+    window, the message comes back once the hook has let it through: no WM_PARENTNOTIFY,
+    WM_MOUSEACTIVATE or WM_SETCURSOR."""
     from .user_wnd import wm, send, scratch, scratch_mark, scratch_release, call_hook, \
-        screen_origin, root_of, set_active, MESSAGE_NAMES
+        screen_origin, root_of, set_active, MESSAGE_NAMES, WS_CHILD, WS_POPUP
     m = wm(wine)
     _apply_device(wine, raw)
     x, y = m.cursor_pos
-    if m.capture and m.get(m.capture) is not None:
-        hwnd, hit = m.capture, HTCLIENT
+    capture = m.capture if m.capture and m.get(m.capture) is not None else 0
+    if capture:
+        hwnd, hit = capture, HTCLIENT
     else:
         hwnd, hit = yield from window_from_point_hit(wine, x, y)
     if not hwnd:
         wine.trace.append(f"  input {MESSAGE_NAMES.get(raw.msg, hex(raw.msg))} ({x}, {y}): no window")
         return None
-    msg = _double_click(wine, raw, hwnd, raw.msg) if hit == HTCLIENT else raw.msg
+    raw_wp = raw.mk if raw.mk is not None else mk_flags(wine)
+    raw.mk = raw_wp
+    msg = raw.msg
     if hit != HTCLIENT:
         msg += WM_NCMOUSEMOVE - WM_MOUSEMOVE
         wp, lp = hit, (y & 0xFFFF) << 16 | (x & 0xFFFF)
     else:
         ox, oy = screen_origin(wine, hwnd)
-        wp, lp = mk_flags(wine), ((y - oy) & 0xFFFF) << 16 | ((x - ox) & 0xFFFF)
-    wine.trace.append(f"  input {MESSAGE_NAMES.get(msg, hex(msg))} ({x}, {y}) -> {hwnd:#x} hit {signed(hit)}")
+        wp, lp = raw_wp, ((y - oy) & 0xFFFF) << 16 | ((x - ox) & 0xFFFF)
+    msg = _double_click(wine, raw, hwnd, hit, msg, raw_wp, remove)
+    wine.trace.append(f"  input {MESSAGE_NAMES.get(msg, hex(msg))} ({x}, {y}) -> {hwnd:#x} hit {signed(hit)}"
+                      + ("" if remove else " (not removed)"))
     if m.task_of(hwnd) != wine.htask:
         return hwnd, msg, wp, lp
     # WH_MOUSE: MOUSEHOOKSTRUCT16 {POINT16 pt; HWND16 hwnd; UINT16 wHitTestCode; DWORD dwExtraInfo}.
     if WH_MOUSE + 1 in wine.hooks:
         mark = scratch_mark(wine)
         mhs = scratch(wine, struct.pack("<hhHHI", x, y, hwnd, hit, 0))
-        eaten = yield from call_hook(wine, WH_MOUSE + 1, HC_ACTION, msg, mhs)
+        eaten = yield from call_hook(wine, WH_MOUSE + 1, HC_ACTION if remove else HC_NOREMOVE, msg, mhs)
         scratch_release(wine, mark)
         if eaten:
             return None
     if hit in (HTERROR, HTNOWHERE):
-        # process_mouse_message: WM_SETCURSOR, and the message goes no further.
+        # WM_SETCURSOR, and the message goes no further.
         yield from send(wine, hwnd, WM_SETCURSOR, hwnd, raw.msg << 16 | hit)
         return None
+    if not remove or capture:
+        return hwnd, msg, wp, lp
     eat = False
     if raw.msg in DOWNS:
-        top = root_of(wine, hwnd)
-        if top and top != m.active:
-            r = yield from send(wine, hwnd, WM_MOUSEACTIVATE, top, raw.msg << 16 | hit)
-            r &= 0xFFFF
-            eat = r in (MA_ACTIVATEANDEAT, MA_NOACTIVATEANDEAT)
-            if r in (MA_ACTIVATE, MA_ACTIVATEANDEAT, 0) and m.get(top) is not None:
-                m.foreground = top
-                yield from set_active(wine, top)
+        # Even for a double or non-client click, the notification names the plain press.
+        yield from send_parent_notify(wine, hwnd, raw.msg, x, y)
+        if m.get(hwnd) is not None and hwnd != m.active:
+            top = root_of(wine, hwnd)
+            tw = m.get(top)
+            if tw is not None and tw.style & (WS_POPUP | WS_CHILD) != WS_CHILD:
+                r = yield from send(wine, hwnd, WM_MOUSEACTIVATE, top, raw.msg << 16 | hit)
+                r &= 0xFFFF
+                if r in (MA_NOACTIVATEANDEAT, MA_ACTIVATEANDEAT):
+                    eat = True
+                if r in (MA_ACTIVATE, MA_ACTIVATEANDEAT, 0):
+                    # set_foreground_window(hwndTop): it fails when the window is gone.
+                    if m.get(top) is None:
+                        eat = True
+                    else:
+                        m.foreground = top
+                        yield from set_active(wine, top)
     if m.get(hwnd) is not None:
+        # The plain message rides in lParam, even for a non-client one.
         yield from send(wine, hwnd, WM_SETCURSOR, hwnd, raw.msg << 16 | hit)
     if eat or m.get(hwnd) is None:
         return None
@@ -430,14 +487,16 @@ def key_lparam(raw, previously_down):
     return lp
 
 
-def cook_key(wine, raw):
+def cook_key(wine, raw, remove=True):
     """process_keyboard_message: the focus window, or the active window with WM_SYS... when
     there is no focus; the WH_KEYBOARD hook may eat it."""
     from .user_wnd import wm, call_hook, MESSAGE_NAMES
     m = wm(wine)
     st = state(wine)
-    previously = raw.vk in st.down
-    raw.alt_down = set(st.down)
+    if raw.previously is None:
+        raw.previously = raw.vk in st.down
+        raw.alt_down = set(st.down)
+    previously = raw.previously
     _apply_device(wine, raw)
     hwnd, msg = m.focus, raw.msg
     if not hwnd or m.get(hwnd) is None:
@@ -449,27 +508,33 @@ def cook_key(wine, raw):
     lp = key_lparam(raw, previously)
     wine.trace.append(f"  input {MESSAGE_NAMES.get(msg, hex(msg))} vk {raw.vk:#x} -> {hwnd:#x}")
     if WH_KEYBOARD + 1 in wine.hooks and m.task_of(hwnd) == wine.htask:
-        eaten = yield from call_hook(wine, WH_KEYBOARD + 1, HC_ACTION, raw.vk, lp)
+        eaten = yield from call_hook(wine, WH_KEYBOARD + 1, HC_ACTION if remove else HC_NOREMOVE, raw.vk, lp)
         if eaten:
             return None
     return hwnd, msg, raw.vk, lp
 
 
-def cook_calls(wine, first, last):
-    """The current task's due raw message, cooked into its queue's input list. Returns None
-    when there is nothing to cook, "cooked" when it took no guest call, a GuestCalls whose
-    waiting call looks again afterwards, or (ax, dx, stop)."""
+def cook_calls(wine, first, last, remove=True):
+    """The current task's due raw message, cooked into its queue's input list (or, without
+    remove, its peek slot, the raw message staying in the system queue). Returns None when
+    there is nothing to cook, "cooked" when it took no guest call, a GuestCalls whose waiting
+    call looks again afterwards, or (ax, dx, stop)."""
     from .guest import GuestCalls, drive
     from .user_wnd import wm
     raw = head_for(wine, wine.htask)
     m = wm(wine)
     if raw is None or raw.due > m.clock or not filter_takes(first, last, raw):
         return None
-    state(wine).raw.pop(0)
+    if remove:
+        state(wine).raw.pop(0)
 
     def cook():
-        cooked = yield from (cook_mouse(wine, raw) if raw.mouse else cook_key(wine, raw))
-        if cooked is not None:
+        cooked = yield from (cook_mouse(wine, raw, remove) if raw.mouse else cook_key(wine, raw, remove))
+        if not remove:
+            q = m.queue_of(wine.htask)
+            q.peek = (raw, cooked)
+            q.peek_fresh = True
+        elif cooked is not None:
             m.queue_of(m.task_of(cooked[0])).input.append(cooked)
         return 0
 
