@@ -28,6 +28,18 @@ class Fault(unittest.TestCase):
         self.assertTrue(host.stop.startswith(
             f"fault at {cs:#x}:0x4 (TB80RTM segment 1) bytes 26 ff 5f 20, null ES: "), host.stop)
 
+    def test_unmapped_names_the_place(self):
+        from tbpipeline_newl.cpu import Cpu
+
+        code = b"\xbe\xf0\xff\xad\xf4"  # mov si,0xfff0; lodsw: past every page this fixture maps
+        with tempfile.TemporaryDirectory() as tmp:
+            build(Path(tmp) / "TB80RTM.EXE", "TB80RTM", [Seg(code), Seg(b"\x00" * 0x2000, flags=1)],
+                  auto=2, stack=0x200)
+            host = Cpu(tmp)
+            host.run(limit=100)
+        cs = host.exe["segments"][0]["selector"]
+        self.assertRegex(host.stop, rf"^unmapped 0x[0-9a-f]+ at {cs:#x}:0x3 \(TB80RTM segment 1\)$")
+
 
 if __name__ == "__main__":
     unittest.main()

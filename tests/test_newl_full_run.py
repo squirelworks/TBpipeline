@@ -16,7 +16,7 @@ try:
 except ImportError:
     bin_or_skip = None
 
-NAMED = ("packed ", "fault at ", "gap ", "scan ", "OpenFile ", "dos exit ", "hlt at ", "instruction cap ", "time cap ")
+NAMED = ("packed ", "fault at ", "unmapped ", "gap ", "scan ", "OpenFile ", "dos exit ", "hlt at ", "instruction cap ", "time cap ")
 
 
 @unittest.skipIf(unicorn is None, "unicorn is not installed, so the newl CPU cannot run TB80RTM")

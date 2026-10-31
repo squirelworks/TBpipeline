@@ -610,7 +610,10 @@ class Cpu:
         return None
 
     def _unmapped(self, uc, access, address, size, value, user):
-        self.stop = f"unmapped {address:#x}"
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        where = self._where(cs)
+        self.stop = f"unmapped {address:#x} at {cs:#x}:{ip:#x}" + (f" ({where})" if where else "")
         return False
 
     def _task_selector(self, data):
