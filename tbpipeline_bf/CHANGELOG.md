@@ -21,6 +21,7 @@ Not a release. `1.0.0r6` stays the version.
 - `bmp_bitmap.py` applies `TB80BMP`'s relocs, so the far call at `0x1FCD` is bound. An internal target runs; an import stops and is named. It prints instead of rewriting `bmp_bitmap.txt`.
 - `python3 -m tbpipeline_bf.runtime` and `python3 -m tbpipeline_bf.runtime.debug` run again. They died unpacking `resolve()`, which had grown to seven values. Without `--dbgrender` they still write no `render.html`.
 - `render.html` marks its theme on `<body data-theme="…">`. An unknown `--theme` is drawn and marked as `default`.
+- The reader no longer imports the host. `resolve()` and `new_debug_dir()` moved from `run.py` to `cli.py`, which imports neither `unicorn` nor pass 06. `python3 -m tbpipeline_bf.runtime` runs without `unicorn` installed. `run.py` imports them from there.
 
 ## 1.0.0r6
 

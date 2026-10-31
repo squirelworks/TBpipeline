@@ -2,7 +2,7 @@
 
 import sys
 
-from tbpipeline_bf.run import new_debug_dir, resolve
+from tbpipeline_bf.cli import new_debug_dir, resolve
 from tbpipeline_bf.runtime.debug import run
 
 
