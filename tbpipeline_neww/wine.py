@@ -137,7 +137,8 @@ class Wine:
         self.next_heap = 1
         self.trace = []
         self.exit = None
-        # The loader posts one event before the entry. WaitEvent consumes it.
+        # Wine ne_module.c NE_CreateThread posts one event before the task runs.
+        # The startup WaitEvent(0) consumes it.
         self.events = 1
 
     def contract(self, module, ordinal):
@@ -181,10 +182,15 @@ class Wine:
             # also sets CX, DX, SI, DI, ES:BX and pushes a zero word.
             return 0, 0, INITTASK_STOP
         if ordinal == 30:
+            # Wine task.c WaitEvent16: hTask 0 is the current task. An event is taken and FALSE
+            # returned. With no event the task blocks, and one task cannot be woken.
+            task = arg(0)
+            if task != 0:
+                return 0, 0, f"KERNEL.30 WaitEvent hTask={task:#x}: neww has no task handle to match it"
             if self.events > 0:
                 self.events -= 1
                 return 0, 0, None
-            return 0, 0, "WaitEvent with no event"
+            return 0, 0, "KERNEL.30 WaitEvent would block: no event is posted and there is no other task"
         if ordinal == 15:
             handle = self.next_heap
             self.next_heap += 1
