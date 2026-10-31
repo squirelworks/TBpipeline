@@ -64,18 +64,22 @@ class Wine:
     def equate(self, module, ordinal):
         return EQUATES.get(module.upper(), {}).get(ordinal)
 
+    @staticmethod
+    def missing(module, ordinal):
+        return f"unimplemented {module}.{ordinal}: no contract, pop size not guessed"
+
     def answer(self, module, ordinal, arg):
         """arg(n) reads Pascal argument n. Returns (ax, dx, stop)."""
         label = self.contract(module, ordinal)
         name = label[0] if label else str(ordinal)
         self.trace.append(f"{module}.{ordinal} {name}")
         if label is None:
-            return 0, 0, f"unimplemented {module}.{ordinal}"
+            return 0, 0, self.missing(module, ordinal)
         if module == "KERNEL":
             return self._kernel(ordinal, arg)
         if module == "USER":
             return self._user(ordinal, arg)
-        return 0, 0, f"unimplemented {module}.{ordinal}"
+        return 0, 0, self.missing(module, ordinal)
 
     def _kernel(self, ordinal, arg):
         if ordinal == 3:
