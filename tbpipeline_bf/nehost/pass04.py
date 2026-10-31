@@ -25,6 +25,8 @@ from unicorn.x86_const import (
 
 API_PORT = 0xE0
 INITTASK = 91
+OF_PARSE = 0x0100
+OF_EXIST = 0x4000
 
 # Names other than *.ini the entry opens that TBK_INI may answer. The
 # pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
@@ -414,11 +416,23 @@ class Pass04:
     def _kernel_file(self, ordinal):
         uc = self.uc
         if ordinal == 74:
+            style = self._word(0)
             path = self._string(self._word(4), self._word(3))
             self.opens.append(path)
-            self.open_styles.append((path, self._word(0)))
+            self.open_styles.append((path, style))
             print(f"  open {path}", file=sys.stderr, flush=True)
+            full = path if path[1:2] == ":" else "C:\\TOOLBOOK\\" + path.lstrip("\\")
+            if style & OF_PARSE:
+                # Windows only qualifies the name. Nothing is opened.
+                self._ofstruct(full, 0)
+                uc.reg_write(UC_X86_REG_AX, 0)
+                return True
             handle = self._take_file(path)
+            self._ofstruct(full, 0 if handle is not None else 2)
+            if handle is not None and style & OF_EXIST:
+                # Opened and closed again; the handle is only a success flag.
+                self.files.pop(handle, None)
+                self.pos.pop(handle, None)
             uc.reg_write(UC_X86_REG_AX, handle if handle is not None else 0xFFFF)
             return True
         if ordinal == 85:
@@ -459,6 +473,15 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
         return False
+
+    def _ofstruct(self, full, error):
+        """OpenFile's OFSTRUCT: cBytes, fFixedDisk, nErrCode, 4 reserved,
+        szPathName[128]. The runtime reads the name back from it."""
+        seg, off = self._word(2), self._word(1)
+        if seg not in self.arena.segs:
+            return
+        name = full.encode("latin1", "replace")[:127]
+        self.arena.write(seg, off, struct.pack("<BBHI", 136, 1, error, 0) + name + b"\x00")
 
     def _take_file(self, path):
         low = path.lower().replace("/", "\\")
