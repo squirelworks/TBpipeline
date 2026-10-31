@@ -359,6 +359,27 @@ def load_menu16(wine, arg, inst, name_ptr):
     return (0, 0, f"USER.150 {why}") if why else handle
 
 
+@api("USER", "LoadMenuIndirect")
+def load_menu_indirect(wine, arg, ptr):
+    """LoadMenuIndirect16: a MENUITEMTEMPLATEHEADER (version 0 for a 3.x program, else 0 is the
+    answer), its offset skipped, then parse_menu_resource. The template is read from the
+    pointer to the end of its block."""
+    sel, off = ptr >> 16, ptr & 0xFFFF
+    size = wine.size(sel) if wine.size is not None else None
+    end = min(size if size else 0x10000, 0x10000)
+    if not ptr or off + 4 > end:
+        return 0, 0, f"USER.220 LoadMenuIndirect: template {sel:#x}:{off:#x} is not in a block neww knows"
+    data = wine.read(sel, off, end - off)
+    version, header = struct.unpack_from("<HH", data)
+    if version != 0:
+        return 0, 0
+    try:
+        handle, _pos = parse_menu(wine, data, 4 + header, False)
+    except (ValueError, struct.error):
+        return 0, 0, "USER.220 LoadMenuIndirect: the template runs past the end of its block"
+    return handle, 0
+
+
 @api("USER", "CreateMenu")
 def create_menu(wine, arg):
     return new_menu(wine, False)
