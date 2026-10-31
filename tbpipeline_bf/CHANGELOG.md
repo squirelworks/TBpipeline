@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `USER.180` `GetSysColor` returns Wine's default colour for the index in DX:AX, from `system_colors` in `win32u/sysparams.c`, and 0 out of range. It used to fall through to `AX = 1`, `RGB(1, 0, 0)` for every element.
 - `KERNEL.36` `GetCurrentTask` returns one task handle, a zeroed block the host keeps, in AX and DX, as Wine's `WIN16_GetCurrentTask` returns the current and first task. It used to fall through to `AX = 1`, which TB80UTL and TB80LNL stored as the key of their per-task tables.
 - `USER.118` `RegisterWindowMessage` returns one atom from `0xC000` per message name, compared without case, as Wine's `RegisterWindowMessageA` (`GlobalAddAtomA`) does. It used to fall through to `AX = 1`, so every registered message got message number 1.
 - `KERNEL.128` `GetPrivateProfileString` copies the key's value from the INI `TBK_INI` supplies, or else the default without trailing blanks, cut to `size - 1`, and returns its length. It used to fall through to `AX = 1` and leave the buffer as it was. The runtime reads its `ToolBook startup` keys this way before the `WinExec` wall.
