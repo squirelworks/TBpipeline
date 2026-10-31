@@ -7,7 +7,7 @@ from tbpipeline_bf.runtime.debug import run
 
 
 def main():
-    _bin, book, dbgrender, theme, render = resolve(sys.argv[1:])
+    _bin, book, dbgrender, theme, render, _open, _page = resolve(sys.argv[1:])
     if not book.is_file():
         print(f"not a book: {book}", file=sys.stderr)
         print("usage: python3 -m tbpipeline_bf.runtime.debug --dbgrender --b ~/TBK/bin --c book.tbk", file=sys.stderr)
