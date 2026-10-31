@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..engine import Engine, compile_handler
 from ..tbk import Book
+from .shapes import polygons
 
 THEMES = {
     "default": """
@@ -79,6 +80,8 @@ def document(title, payload, theme, script, extra=""):
 {css}
   .extra {{ max-width: 760px; margin: 8px auto 24px; text-align: center; }}
   .extra button {{ font: 13px Tahoma, "MS Sans Serif", sans-serif; padding: 4px 12px; }}
+  main {{ position: relative; }}
+  svg.placed {{ position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }}
   #files {{ margin-top: 10px; }}
   #files img {{ max-width: 100%; background: #fff; border: 1px solid #404040; }}
   #files p {{ color: inherit; }}
@@ -190,6 +193,24 @@ function show() {
     const p = document.createElement("p");
     p.textContent = line;
     stage.appendChild(p);
+  }
+  if (page.shapes && page.shapes.length) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "placed");
+    let w = 1, h = 1;
+    for (const shape of page.shapes) {
+      for (const [x, y] of shape.points) { w = Math.max(w, x); h = Math.max(h, y); }
+    }
+    svg.setAttribute("width", Math.ceil(w));
+    svg.setAttribute("height", Math.ceil(h));
+    for (const shape of page.shapes) {
+      const poly = document.createElementNS(ns, "polygon");
+      poly.setAttribute("points", shape.points.map(p => p[0] + "," + p[1]).join(" "));
+      poly.setAttribute("fill", shape.fill);
+      svg.appendChild(poly);
+    }
+    stage.appendChild(svg);
   }
   if (page.handlers && page.handlers.length) {
     const box = document.createElement("div");
@@ -324,6 +345,14 @@ def _clicks(handlers) -> list[dict]:
     return clicks
 
 
+def placed(blob: bytes) -> list[dict]:
+    """Kind-04 polygons at the twips the record names, divided by 15."""
+    return [
+        {"points": [[x, y] for x, y in points], "fill": "#%02x%02x%02x" % color}
+        for points, color in polygons(blob)
+    ]
+
+
 def walked(book: Book, handlers: dict | None = None) -> list[dict]:
     """Pages in the order engine.py walks them. Works for a .tbk or a .sbk."""
     engine = Engine(book)
@@ -341,6 +370,7 @@ def walked(book: Book, handlers: dict | None = None) -> list[dict]:
             "text": prose[:12],
             "jumps": page.quoted_jumps[:16],
             "handlers": _clicks((handlers or {}).get(page.name)),
+            "shapes": placed(page.blob),
         })
         try:
             engine.next()
