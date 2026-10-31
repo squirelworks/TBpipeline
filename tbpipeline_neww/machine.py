@@ -8,7 +8,7 @@ from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DS,
-    UC_X86_REG_BP, UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_FPCW, UC_X86_REG_FPSW, UC_X86_REG_FPTAG, UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
+    UC_X86_REG_BP, UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_FPCW, UC_X86_REG_FPSW, UC_X86_REG_FPTAG, UC_X86_REG_IP, UC_X86_REG_LDTR, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
 REGISTERS = {
@@ -19,9 +19,12 @@ REGISTERS = {
 }
 
 from .image import Sandbox
-from .wine import SYSTEM
+from .wine import SYSTEM, moveable_handle
 from .ne import Segment
 
+
+# The GDT is at linear 0. Its copy, the LDT, is the next 64K.
+LDT_BASE = 0x10000
 
 # The cap stays. A run that ends on it says so.
 TIMEOUT_US = 15_000_000
@@ -117,6 +120,7 @@ class Machine:
                 return self
         self.uc = Uc(UC_ARCH_X86, UC_MODE_16)
         self.uc.mem_map(0, 0x100000)
+        self.uc.reg_write(UC_X86_REG_LDTR, (0, LDT_BASE, 0xFFFF, 0x82))
         flat = self._selector(0, 0xFFFF, 0x9A)
         for seg in self.box.selectors.values():
             size = (max(len(seg.data), 1) + 0xFFF) & ~0xFFF
@@ -124,7 +128,7 @@ class Machine:
             self.uc.mem_write(seg.base, bytes(seg.data))
             access = 0x92 if seg.flags & 1 else 0x9A
             limit_b = 0xFFFF if len(seg.data) >= 0x10000 else max(len(seg.data) - 1, 0)
-            self.uc.mem_write(seg.selector, _descriptor(seg.base, limit_b, access))
+            self._write_descriptor(seg.selector, _descriptor(seg.base, limit_b, access))
         self.box.wine.allocate = self._allocate
         self.box.wine.size = self._size
         self.box.wine.owner = self._owner
@@ -136,8 +140,8 @@ class Machine:
         psp = self._psp()
         self._modules()
         self._task()
-        # Wine ne_module.c NE_StartTask: the handle of a moveable DGROUP is selector - 1.
-        instance = data.selector - 1 if data.flags & 0x0010 else data.selector
+        # Wine ne_module.c NE_StartTask: a moveable DGROUP's instance is its handle.
+        instance = moveable_handle(data.selector) if data.flags & 0x0010 else data.selector
         names, rows, why = self._dlls_to_init()
         self.box.wine.task = {
             "psp": psp, "instance": instance, "dgroup": data.selector,
@@ -311,7 +315,7 @@ class Machine:
             seg.selector = sel
             seg.base = base + i * 0x10000
             self.box.selectors[sel] = seg
-            self.uc.mem_write(sel, _descriptor(seg.base, left - 1, 0x92))
+            self._write_descriptor(sel, _descriptor(seg.base, left - 1, 0x92))
             first = sel if first is None else first
         return first
 
@@ -345,7 +349,7 @@ class Machine:
                     "passes its module handle in DI. neww has no module handles"
                 )
             seg = dll.segments[dll.auto - 1]
-            instance = seg.selector - 1 if seg.flags & 0x0010 else seg.selector
+            instance = moveable_handle(seg.selector) if seg.flags & 0x0010 else seg.selector
             code = dll.segments[dll.entry_seg - 1]
             rows.append((name, code.selector, dll.entry_ip, seg.selector, dll.heap, instance))
         return names, rows, None
@@ -448,8 +452,13 @@ class Machine:
 
     def _selector(self, base, limit, access):
         sel = self.box._selector()
-        self.uc.mem_write(sel, _descriptor(base, limit, access))
+        self._write_descriptor(sel, _descriptor(base, limit, access))
         return sel
+
+    def _write_descriptor(self, sel, descriptor):
+        """The GDT entry, and the same entry in the LDT, so a moveable handle loads as its selector."""
+        self.uc.mem_write(sel, descriptor)
+        self.uc.mem_write(LDT_BASE + sel, descriptor)
 
     def _out(self, uc, port, size, value, user):
         if port == 0xE6:
