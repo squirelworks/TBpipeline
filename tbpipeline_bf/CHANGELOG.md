@@ -5,6 +5,7 @@
 Not a release. `1.0.0r6` stays the version.
 
 - `KERNEL.166` `WinExec` stops the run and quotes the command line. It is the wall of item 27: TB80BAS starts its book file manager, `TB80NET.EXE`, as a second task, and `known-bugs.md` says what the way past would take.
+- `KERNEL.21` `GlobalHandle` returns the handle in AX and the selector in DX; in this host they are the same value. TB80UTL's heap maker keeps DX as the new heap's selector, and DX = 0 gave TB80BAS a heap at selector 0.
 - `USER.420` `wsprintf` formats into the caller's buffer, and its pop size is 0: it is cdecl, and the caller does `add sp, 0xE`. The table had 8. The message box the book open stops on now reads "A internal error has occurred in File 'Unknown' line 629." The `TB80enu` open was the unformatted buffer: the entry asks for `C:\TOOLBOOK\TB80enu1.DLL`.
 - `USER.1` `MessageBox` stops the run, and the stop quotes the caption, the type and the text. It used to return `AX = 1`, which is `IDOK`: TB80UTL's internal-error box says "Press OK to continue", so the runtime ran past its own assertion and exited 0 without asking for the book.
 - The compressed-picture status line under every page says the host probe stops at its first import, `KERNEL.36`, not at `0x1FCD`. The far call there is bound now (#42), and the stop is from the bf host's run (#75).
