@@ -127,6 +127,7 @@ class Machine:
             self.uc.mem_write(seg.selector, _descriptor(seg.base, limit_b, access))
         self.box.wine.allocate = self._allocate
         self.box.wine.size = self._size
+        self.box.wine.owner = self._owner
         self.box.wine.write = self._write_guest
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
@@ -225,6 +226,13 @@ class Machine:
         if seg is None or offset + len(data) > len(seg.data):
             return
         self.uc.mem_write(seg.base + offset, data)
+
+    def _owner(self, sel):
+        """The NE file a selector's segment came from, as GetExePtr finds a module from a handle."""
+        for image in self.box.images.values():
+            if not image.synthetic and any(seg.selector == sel for seg in image.segments):
+                return image.path
+        return None
 
     def _size(self, sel):
         """GlobalSize16 of the block behind a selector."""
