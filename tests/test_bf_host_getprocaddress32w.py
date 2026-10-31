@@ -1,6 +1,6 @@
 """KERNEL.515 GetProcAddress32W finds an export of a 32-bit DLL.
 
-Wine's GetProcAddress32W16 (dlls/krnl386.exe16/wowthunk.c) is
+Wine's GetProcAddress32W16 (dlls/krnl386.exe16/thunk.c:2535) is
 GetProcAddress((HMODULE)hModule, lpszProc): the export's address, by
 name or by an ordinal in the low word of lpszProc, or 0 when there is
 none. The spec line is `515 pascal GetProcAddress32W(long str)

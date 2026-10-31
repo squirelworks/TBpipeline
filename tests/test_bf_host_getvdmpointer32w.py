@@ -1,6 +1,6 @@
 """KERNEL.516 GetVDMPointer32W turns a 16:16 pointer into a linear one.
 
-Wine's GetVDMPointer32W16 (dlls/krnl386.exe16/wowthunk.c) returns
+Wine's GetVDMPointer32W16 (dlls/krnl386.exe16/thunk.c:2486) returns
 K32WOWGetVDMPointer(vp, 0, fMode). With fMode set (protected mode) that
 is the selector's descriptor base plus the offset. With fMode 0 (real
 mode) it is seg * 16 + off. The spec line is
