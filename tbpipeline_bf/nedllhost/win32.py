@@ -313,6 +313,14 @@ def _environment_block_w():
     return b"".join(v.encode("utf-16-le") + b"\0\0" for v in ENVIRONMENT) + b"\0\0"
 
 
+def _heap_blocks(host):
+    """Blocks handed out as if from the process heap, each in its own
+    reservation: the environment copies. HeapFree gives them back."""
+    if not hasattr(host, "heap_blocks32"):
+        host.heap_blocks32 = set()
+    return host.heap_blocks32
+
+
 def _get_environment_strings_w(host, args):
     # GetEnvironmentStringsW(void), stdcall, pops 0. Wine's kernelbase
     # GetEnvironmentStringsW (dlls/kernelbase/process.c:1555) copies
@@ -324,6 +332,7 @@ def _get_environment_strings_w(host, args):
     at = _reserve32(host, len(block))
     if at:
         host.uc.mem_write(at, block)
+        _heap_blocks(host).add(at)
     return at
 
 
@@ -343,11 +352,35 @@ def _get_environment_strings_a(host, args):
     at = _reserve32(host, len(block))
     if at:
         host.uc.mem_write(at, block)
+        _heap_blocks(host).add(at)
     return at
 
 
 WIN32[("KERNEL32", "GetEnvironmentStrings")] = (0, _get_environment_strings_a)
 WIN32[("KERNEL32", "GetEnvironmentStringsA")] = (0, _get_environment_strings_a)
+
+
+def _free_environment_strings(host, args):
+    # FreeEnvironmentStringsA/W(ptr), stdcall, pops 4. kernelbase.spec:403
+    # exports the A name as FreeEnvironmentStringsW, which is
+    # HeapFree(GetProcessHeap(), 0, ptr) (dlls/kernelbase/process.c:1702).
+    # RtlFreeHeap (dlls/ntdll/heap.c:2078) returns TRUE for NULL; a pointer
+    # that is no block of the heap is STATUS_INVALID_PARAMETER, so FALSE
+    # with ERROR_INVALID_PARAMETER. A freed block's reservation is unmapped.
+    ptr = args[0]
+    if not ptr:
+        return 1
+    blocks = _heap_blocks(host)
+    if ptr not in blocks:
+        host.uc.mem_write(TEB + TEB_LAST_ERROR, struct.pack("<I", ERROR_INVALID_PARAMETER))
+        return 0
+    blocks.discard(ptr)
+    host.uc.mem_unmap(ptr, host.regions32.pop(ptr))
+    return 1
+
+
+WIN32[("KERNEL32", "FreeEnvironmentStringsA")] = (4, _free_environment_strings)
+WIN32[("KERNEL32", "FreeEnvironmentStringsW")] = (4, _free_environment_strings)
 
 
 def _u32(buf, off):
