@@ -437,13 +437,33 @@ class Pass04:
 
     def _take_file(self, path):
         low = path.lower().replace("/", "\\")
-        if not low.endswith((".tbk", ".sbk")):
+        if low.endswith((".tbk", ".sbk")):
+            blob = self.book_bytes
+        else:
+            blob = self._ini_bytes(low)
+        if blob is None:
             return None
         handle = self.next_handle
         self.next_handle += 1
-        self.files[handle] = self.book_bytes
+        self.files[handle] = blob
         self.pos[handle] = 0
         return handle
+
+    def _ini_bytes(self, low):
+        """An INI from TBK_INI, matched by its file name. Unset means 0xFFFF.
+
+        Read at the moment of the open, like TBK_UNPACKED for LoadLibrary.
+        Only a name ending in .ini is looked for. The directory is the
+        caller's; the host never writes an INI and never looks in /Toolbook/.
+        """
+        root = os.environ.get("TBK_INI", "")
+        base = low.split("\\")[-1]
+        if not root or not base.endswith(".ini") or not os.path.isdir(root):
+            return None
+        for entry in os.listdir(root):
+            if entry.lower() == base:
+                return open(os.path.join(root, entry), "rb").read()
+        return None
 
     def _copy_to(self, seg, offset, text, limit):
         raw = text.encode("latin1", "replace")[: max(limit - 1, 0)] + b"\x00"
@@ -972,7 +992,6 @@ class Pass04:
                 uc.reg_write(UC_X86_REG_AX, 2)
                 uc.reg_write(UC_X86_REG_EFLAGS, uc.reg_read(UC_X86_REG_EFLAGS) | 1)
                 return
-            self.files[handle] = self.book_bytes
             uc.reg_write(UC_X86_REG_AX, handle)
             self._clear()
             return
