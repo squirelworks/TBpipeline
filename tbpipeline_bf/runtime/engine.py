@@ -87,6 +87,7 @@ class Engine:
     log: list[Notify] = field(default_factory=list)
     variables: dict = field(default_factory=dict)
     scripts: dict = field(default_factory=dict)
+    followed: dict | None = None
 
     @property
     def page(self) -> Page | None:
@@ -104,7 +105,12 @@ class Engine:
                     continue
                 steps = compile_handler(handler.source)
                 literal = next((s.get("page") for s in steps if s.get("op") == "goto" and s.get("page")), "")
-                clicks.append({"name": handler.name, "steps": steps, "literal": literal})
+                clicks.append({
+                    "name": handler.name,
+                    "offset": handler.offset,
+                    "steps": steps,
+                    "literal": literal,
+                })
             if clicks:
                 self.scripts[name] = clicks
 
@@ -138,6 +144,7 @@ class Engine:
         if page is None:
             raise IndexError("no page")
         self.log.append(Notify("buttonClick", (page.name, target or "")))
+        self.followed = None
         scripts = self.scripts.get(page.name) or []
         chosen = None
         if target:
@@ -148,6 +155,7 @@ class Engine:
         if chosen is None and scripts and not target:
             chosen = scripts[0]
         if chosen is not None:
+            self.followed = chosen
             dest, other = run_steps(chosen["steps"], self.variables, Path(self.book.path).name, page.name)
             own = Path(self.book.path).name.lower()
             if other and Path(other).name.lower() != own:
