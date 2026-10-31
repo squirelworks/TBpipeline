@@ -67,8 +67,8 @@ class InitTask(unittest.TestCase):
         uc = host.uc
         ds = uc.reg_read(UC_X86_REG_DS)
         es = uc.reg_read(UC_X86_REG_ES)
-        # DGROUP is 256 bytes plus the NE stack; SP starts at its top.
-        sp0 = 256 + 0x40 - 2
+        # SP starts at DGROUP's minsize plus the NE stack, as Wine NE_StartTask sets it.
+        sp0 = 256 + 0x40
         # SP at the call is sp0 - 4. stackmin is the caller's SP, stacktop is stackmin - BX + 150.
         stacktop = sp0 - 0x40 + 150
         self.assertEqual(host.word(ds, 0x20), 1)
@@ -101,7 +101,7 @@ class InitTask(unittest.TestCase):
             "neww has no local heap, KERNEL.4 LocalInit has no contract",
         )
         self.assertEqual(uc.reg_read(UC_X86_REG_AX), 0x5555)
-        self.assertEqual(uc.reg_read(UC_X86_REG_SP), 256 + 0x100 + 0x40 - 2 - 4)
+        self.assertEqual(uc.reg_read(UC_X86_REG_SP), 256 + 0x40 - 4)
         self.assertEqual([host.word(ds, o) for o in (0x0A, 0x0C, 0x0E)], [0, 0, 0])
 
     def test_dll_with_init_code_stops(self):

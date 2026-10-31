@@ -35,7 +35,7 @@ class ContractRow(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             neww_ne.exit_program_with(d, before, [(3, 1, 4, 1, row.ordinal)])
             host = Machine(d)
-            sp0 = len(host.box.exe.segments[host.box.exe.auto - 1].data) - 2
+            sp0 = host.box.exe.segments[host.box.exe.auto - 1].minsize + host.box.exe.stack
             stub = host.box.images["KERNEL"].segments[0].data[row.ordinal * 8:row.ordinal * 8 + 8]
             host.run()
             sp = host.uc.reg_read(UC_X86_REG_SP)
