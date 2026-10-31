@@ -112,6 +112,8 @@ Anything the table does not name pops 0. The default return is `AX = 1`, `DX = 0
 
 Every call that still takes that default is written to `02_launch.txt` as `ax=1 MODULE.ordinal from CS:IP stack w0 w1 w2 w3`. The module is the one the reloc named at that call site, even when the pop table has no size for it, and `?` when no reloc named it. `w0` is the last word pushed. The list is the inventory of answers that are still guesses.
 
+The last call of a run, answered or not, is kept as `last_call` and written as `last call MODULE.ordinal from CS:IP stack w0 w1 w2 w3 -> ax=.. bx=.. cx=.. dx=.. si=.. di=.. ds=.. es=..`, tagged `(AX = 1 default)` when it fell through. That line is how a run names the call that still refuses the book. When it is an `AX = 1` call, the next change replaces that one ordinal with a real answer or a stop. When the same call is named twice, it goes into `known-bugs.md` as the wall.
+
 ## Relocs
 
 NE relocations are chained. The word at the fixup address is the next offset, or `0xFFFF` for the end. The host saves that next pointer, writes the resolved value, and follows the saved pointer. Following the value it just wrote walks off into the address it patched in.
