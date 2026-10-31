@@ -43,10 +43,10 @@ class GetSystemMetrics(unittest.TestCase):
             self.assertEqual((host.stop, ax), ("dos exit 0x0", 0), index)
 
     def test_host_metric_stops(self):
-        host, ax = run(0)
+        host, ax = run(2)
         self.assertEqual(
             host.stop,
-            "USER.179 GetSystemMetrics(0): Wine reads it from the registry, fonts, or display, and neww has none of them",
+            "USER.179 GetSystemMetrics(2): Wine reads it from the registry, fonts, or display, and neww has none of them",
         )
         self.assertEqual(ax, 0xFFFF)
 
