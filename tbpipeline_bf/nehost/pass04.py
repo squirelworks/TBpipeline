@@ -1144,6 +1144,11 @@ class Pass04:
         if intno == 3:
             uc.emu_stop()
             return
+        # int 2Fh AX = 150Bh asks MSCDEX whether drive CX is a CD-ROM, and
+        # BX = ADADh back says MSCDEX is there. There is no MSCDEX: like DOS
+        # with nothing on the multiplex, every register comes back as it was.
+        if intno == 0x2F and uc.reg_read(UC_X86_REG_AX) == 0x150B:
+            return
         cs = uc.reg_read(UC_X86_REG_CS)
         ip = uc.reg_read(UC_X86_REG_IP)
         info = self.arena.segs.get(cs)
