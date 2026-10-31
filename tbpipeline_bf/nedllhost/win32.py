@@ -163,6 +163,57 @@ def _get_proc_address(host, args):
 WIN32[("KERNEL32", "GetProcAddress")] = (8, _get_proc_address)
 
 
+# Address space for 32-bit reservations (heaps, VirtualAlloc), above the
+# DLL images at 0x10000000 and below the system DLL handles. Reservations
+# start on 64K boundaries, as Windows' allocation granularity puts them.
+ARENA32, ARENA32_END = 0x20000000, 0x7F000000
+ERROR_NOT_ENOUGH_MEMORY = 8
+
+
+def _reserve32(host, size):
+    """Map size bytes (rounded to 64K) at the next 64K boundary; its base, or 0 when out of room.
+
+    Unicorn has no reserved-but-uncommitted pages, so the whole
+    reservation is mapped readable and writable.
+    """
+    size = (size + 0xFFFF) & ~0xFFFF
+    base = getattr(host, "next32", ARENA32)
+    if not size or base + size > ARENA32_END:
+        return 0
+    host.uc.mem_map(base, size)
+    host.next32 = base + size
+    host.regions32 = getattr(host, "regions32", {})
+    host.regions32[base] = size
+    return base
+
+
+def _heap_create(host, args):
+    # HeapCreate(flOptions, dwInitialSize, dwMaximumSize), stdcall, pops 12.
+    # Wine's kernelbase HeapCreate (dlls/kernelbase/memory.c:740) is
+    # RtlCreateHeap(flags, NULL, max_size, init_size), and NULL becomes
+    # ERROR_NOT_ENOUGH_MEMORY. RtlCreateHeap (dlls/ntdll/heap.c:1499), in a
+    # 32-bit process:
+    #   commit = ROUND_SIZE(commit, INITIAL_COMMIT_ALIGN - 1)   (0x1000)
+    #   if (!total) total = ROUND_SIZE(commit + 1, REGION_ALIGN - 1)
+    #   if (!commit) commit = REGION_ALIGN
+    #   total = min(max(total, commit), 0xffff0000)
+    # and allocate_region reserves total bytes; the heap's handle is the
+    # region's base. Nothing here allocates from it yet: HeapAlloc is its
+    # own answer.
+    _, init_size, max_size = args[0], args[1], args[2]
+    commit = (init_size + 0xFFF) & ~0xFFF
+    total = max_size or ((commit + 1 + 0xFFFF) & ~0xFFFF)
+    commit = commit or 0x10000
+    total = min(max(total, commit), 0xFFFF0000)
+    heap = _reserve32(host, total)
+    if not heap:
+        host.uc.mem_write(TEB + TEB_LAST_ERROR, struct.pack("<I", ERROR_NOT_ENOUGH_MEMORY))
+    return heap
+
+
+WIN32[("KERNEL32", "HeapCreate")] = (12, _heap_create)
+
+
 def _u32(buf, off):
     return struct.unpack_from("<I", buf, off)[0]
 
