@@ -8,6 +8,7 @@ skipped so the trace shows the next thing the entry asks for.
 """
 
 import os
+import re
 import struct
 import sys
 
@@ -390,7 +391,7 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
         at = (heap["next"] + 3) & ~3
-        if at + size > heap["end"]:
+        if at + size > heap["end"] and not self._local_grow(ds, heap, at + size):
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
         if flags & 0x40:
@@ -400,6 +401,43 @@ class Pass04:
         uc.reg_write(UC_X86_REG_AX, at)
         uc.reg_write(UC_X86_REG_DX, 0)
         return True
+
+    def _local_grow(self, seg, heap, need):
+        """Windows grows a full DGROUP up to 64K before LocalAlloc fails.
+
+        TB80BAS's NE header asks for a small heap. Without the grow it fell
+        back to the task's DS, wrote its record there, and read it back
+        through its own DS as zeros.
+        """
+        info = self.arena.segs[seg]
+        if heap["end"] != info["size"] or need > 0x10000:
+            return False
+        self.arena.grow(seg, (need + 0xFFF) & ~0xFFF)
+        heap["end"] = self.arena.segs[seg]["size"]
+        # The descriptor moved, and DS or ES still caches the old base.
+        # Unicorn loads a segment register written from the host as a
+        # real-mode paragraph, so the guest has to reload it: the thunk's
+        # retf goes through a stub that does, then returns to the caller.
+        if seg in (self.uc.reg_read(UC_X86_REG_DS), self.uc.reg_read(UC_X86_REG_ES)):
+            self._return_through_reload()
+        return True
+
+    def _return_through_reload(self):
+        if not getattr(self, "reload_sel", 0):
+            stub = bytes([
+                0x50,              # push ax
+                0x8C, 0xD8,        # mov ax, ds
+                0x8E, 0xD8,        # mov ds, ax
+                0x8C, 0xC0,        # mov ax, es
+                0x8E, 0xC0,        # mov es, ax
+                0x58,              # pop ax
+                0xCB,              # retf
+            ])
+            self.reload_sel = self.arena.alloc_selector(0x10, 0x9A, stub)
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        sp = (self.uc.reg_read(UC_X86_REG_SP) - 4) & 0xFFFF
+        self.arena.write(ss, sp, struct.pack("<HH", 0, self.reload_sel))
+        self.uc.reg_write(UC_X86_REG_SP, sp)
 
     def _local_realloc(self, handle, size, flags):
         uc = self.uc
@@ -718,6 +756,15 @@ class Pass04:
     def _kernel_proc(self, ordinal):
         """Pointers must be null or a real thunk. AX=1 was called as 0000:0001."""
         uc = self.uc
+        # IsBadCodePtr(lpfn). AX=1 is "bad": TB80BAS skipped its file
+        # manager's handler and the book open failed.
+        if ordinal == 336:
+            off, sel = self._word(0), self._word(1)
+            info = self.arena.segs.get(sel)
+            good = info is not None and info["access"] & 0x08 and off <= info["limit"]
+            uc.reg_write(UC_X86_REG_AX, 0 if good else 1)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         if ordinal == 50:
             noff, nseg, hmod = self._word(0), self._word(1), self._word(2)
             mod = self.mods.get(hmod) or (self.mods.get(self.exe_inst) if hmod == 0 else None)
@@ -773,6 +820,28 @@ class Pass04:
             self.uc.reg_write(UC_X86_REG_AX, n)
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # MessageBox(hwnd, text, caption, type). AX=1 is IDOK: TB80UTL's
+        # internal-error box says "Press OK to continue", so the runtime ran
+        # on past its own assertion. The box is where the run stops.
+        if ordinal == 1:
+            kind = self._word(0)
+            caption = self._string(self._word(2), self._word(1))
+            text = self._box_text(self._word(4), self._word(3))
+            self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
+            self.uc.emu_stop()
+            return True
+        # wsprintf(out, fmt, ...) is cdecl, so the caller pops. AX=1 left
+        # the buffer as it was, and the error box the runtime raised read
+        # as garbage.
+        if ordinal == 420:
+            out = (self._word(1), self._word(0))
+            fmt = self._box_text(self._word(3), self._word(2))
+            text = self._wsprintf(fmt, 4).encode("latin1", "replace")[:1023]
+            if out[0] in self.arena.segs:
+                self.arena.write(out[0], out[1], text + b"\x00")
+            self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
         # door call RegisterPenApp through a null pointer.
         if ordinal != 179:
@@ -787,6 +856,26 @@ class Pass04:
             41: 0, 42: 0, 43: 2,
         }.get(metric, 0)
         self.uc.reg_write(UC_X86_REG_AX, value)
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
+    def _keyboard(self, ordinal):
+        # AnsiToOem(src, dst) and OemToAnsi(src, dst). AX=1 copied nothing,
+        # and TB80BAS opened the book under whatever its stack buffer held.
+        if ordinal not in (5, 6):
+            return False
+        codecs = ("cp1252", "cp437") if ordinal == 5 else ("cp437", "cp1252")
+        dst, src = (self._word(1), self._word(0)), (self._word(3), self._word(2))
+        text = self._string(*src).encode("latin1")
+        out = bytearray()
+        for ch in text:
+            try:
+                out += bytes([ch]).decode(codecs[0]).encode(codecs[1])
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                out.append(ch)
+        if dst[0] in self.arena.segs:
+            self.arena.write(dst[0], dst[1], bytes(out) + b"\x00")
+        self.uc.reg_write(UC_X86_REG_AX, 0xFFFF)
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
 
@@ -930,6 +1019,12 @@ class Pass04:
             print(f"  api ordinal {ordinal}", file=sys.stderr, flush=True)
         if ordinal == INITTASK and self.startup == 0:
             self.startup = 1
+            # Windows' InitTask makes the PSP tail ASCIIZ. The C startup hands
+            # ES:BX to WinMain as lpCmdLine, and TB80RTM's name parser stops
+            # only at space, tab or NUL: with the CR it opened 'fixture.tbk\r'.
+            tail = self.arena.read(self.psp, 0x81, 0x7F)
+            if b"\r" in tail:
+                self.arena.write(self.psp, 0x81 + tail.index(b"\r"), b"\x00")
             uc.reg_write(UC_X86_REG_AX, 1)
             uc.reg_write(UC_X86_REG_BX, 0x80)
             uc.reg_write(UC_X86_REG_CX, 0x1000)
@@ -970,6 +1065,8 @@ class Pass04:
         if self.pending and self.pending[0] == "KERNEL" and self._kernel_proc(ordinal):
             return
         if self.pending and self.pending[0] == "USER" and self._user(ordinal):
+            return
+        if self.pending and self.pending[0] == "KEYBOARD" and self._keyboard(ordinal):
             return
         if self.pending and self.pending[0] in ("COMPOBJ", "OLE2", "OLE2DISP") and self._oleapi():
             return
@@ -1090,6 +1187,57 @@ class Pass04:
         if sel not in self.arena.segs:
             return ""
         return self.arena.read(sel, offset, 128).split(b"\x00", 1)[0].decode("latin1", "replace")
+
+    def _box_text(self, sel, offset):
+        info = self.arena.segs.get(sel)
+        if info is None:
+            return ""
+        size = max(0, min(512, info["limit"] + 1 - offset))
+        return self.arena.read(sel, offset, size).split(b"\x00", 1)[0].decode("latin1", "replace")
+
+    def _wsprintf(self, fmt, n):
+        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer."""
+        out = []
+        pos = 0
+        for m in re.finditer(r"%(%|([-#0]*)(\d*)(?:\.(\d+))?(l?)([sdiuxXc]))", fmt):
+            out.append(fmt[pos:m.start()])
+            pos = m.end()
+            if m.group(1) == "%":
+                out.append("%")
+                continue
+            flags, width, prec, long_, kind = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6)
+            if kind == "s":
+                off, sel = self._word(n), self._word(n + 1)
+                n += 2
+                value = self._box_text(sel, off)
+                if prec:
+                    value = value[:int(prec)]
+            elif kind == "c":
+                value = chr(self._word(n) & 0xFF)
+                n += 1
+            else:
+                raw = self._word(n)
+                n += 1
+                bits = 16
+                if long_:
+                    raw |= self._word(n) << 16
+                    n += 1
+                    bits = 32
+                if kind in "di" and raw >> (bits - 1):
+                    raw -= 1 << bits
+                value = {"x": f"{raw:x}", "X": f"{raw:X}"}.get(kind, str(raw))
+                if flags and "#" in flags and kind in "xX" and raw:
+                    value = "0x" + value
+            if width:
+                if "-" in flags:
+                    value = value.ljust(int(width))
+                elif "0" in flags and kind not in "sc":
+                    value = value.rjust(int(width), "0")
+                else:
+                    value = value.rjust(int(width))
+            out.append(value)
+        out.append(fmt[pos:])
+        return "".join(out)
 
     def _clear(self):
         self.uc.reg_write(UC_X86_REG_EFLAGS, self.uc.reg_read(UC_X86_REG_EFLAGS) & ~1)
