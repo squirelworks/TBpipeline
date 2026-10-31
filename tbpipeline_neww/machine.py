@@ -83,6 +83,15 @@ class Machine:
         if exe is None:
             self.stop = "no executable"
             return self
+        for image in [exe] + [img for img in self.box.images.values() if img is not exe]:
+            if image.packed:
+                # An iterated segment loads as zeros here. Running it executes empty memory.
+                self.stop = (
+                    f"packed image {Path(image.path).name}: {len(image.packed)} of {len(image.segments)} "
+                    f"segments have the iterated flag, first is segment {image.packed[0]}. "
+                    "neww does not unpack. --b must hold the unpacked images"
+                )
+                return self
         self.uc = Uc(UC_ARCH_X86, UC_MODE_16)
         self.uc.mem_map(0, 0x100000)
         flat = self._selector(0, 0xFFFF, 0x9A)
