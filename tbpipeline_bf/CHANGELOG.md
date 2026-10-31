@@ -14,6 +14,7 @@ Not a release. `1.0.0r6` stays the version.
 - Guest reads of the PSP command tail at `0x80` are recorded, and `02_launch.txt` counts them. The fake PSP is built in one place for pass 04 and pass 06.
 - A status line under every page says compressed ToolBook pictures are not drawn, that the decoder is `TB80BMP` ordinal 3, and that the host stops at `0x1FCD`. The reader does not decode them.
 - `--open`'s `click` lines name the handler that ran and its offset, then the page it landed on: `P20000 buttonClick 0x… -> P20001`. A page whose click ran nothing says `no buttonClick`.
+- No host change: a test pins the `.tbk` / `.sbk` rule. `OpenFile`, `_lopen`, and DOS `3Dh` on such a path return a handle whose bytes are the command-line book, and the magic at `0xC00` reads back through it. A `0xFFFF` there fails the test.
 
 ## 1.0.0r6
 
