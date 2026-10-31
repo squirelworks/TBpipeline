@@ -903,12 +903,12 @@ class Wine(KernelState):
     def resolve(self, path):
         """The host file a guest path opens, or None.
 
-        A path ending in .tbk or .sbk is the book from --c, whatever its
-        directory. Any other path is its base name, looked up without case
-        in --b. Nothing else is searched.
+        A path ending in .tbk is the book from --c, whatever its directory.
+        Any other path, a system book (.sbk) among them, is its base name,
+        looked up without case in --b. Nothing else is searched.
         """
         name = path.replace("/", "\\").rsplit("\\", 1)[-1].rsplit(":", 1)[-1]
-        if name.lower().endswith((".tbk", ".sbk")):
+        if name.lower().endswith(".tbk"):
             return self.book
         if not name:
             return None
@@ -1291,6 +1291,21 @@ class Wine(KernelState):
         if handle == 0:
             # Wine: GetCurrentTask(), whose module is the executable.
             handle = self.task["instance"] if self.task else 0
+        gate = next((stem for stem, h in self.system_modules.items() if h == handle), None)
+        if gate is not None:
+            if gate in ("KERNEL", "USER", "GDI"):
+                return 0, 0, f"KERNEL.49 GetModuleFileName({gate}): Wine loads it at start under its own file name, which neww does not model"
+            # A builtin loaded through an import: NE_LoadDLLs asks MODULE_LoadModule16 for the
+            # import name with ".DLL", and NE_DoLoadBuiltinModule keeps that base name as the
+            # module's path (build_module). Its ne_expver is the OS version, below 0x400, so
+            # GetShortPathNameA runs, finds no such file in the current directory, and leaves
+            # the name as it is.
+            path = f"{gate}.DLL".encode("latin1")
+            if size <= 0:
+                return 0, 0, None
+            path = path[:size - 1]
+            self._put(sel, off, path + b"\x00")
+            return len(path), 0, None
         owner = self.owner(self.selector_of(handle)) if self.selector_of(handle) is not None else None
         if owner is None:
             # NE_GetPtr finds no module.
@@ -1703,4 +1718,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, tasks, win32, kernel32  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, tasks, win32, kernel32, mmsystem16  # noqa: E402,F401

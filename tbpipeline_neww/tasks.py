@@ -46,6 +46,8 @@ class Task:
         self.wait = None
         # Saved registers while another task runs, or the start registers before it first runs.
         self.context = None
+        # TDB hParent: the task current when this one was made; 0 for the first.
+        self.parent = 0
 
     def __repr__(self):
         return f"Task({self.exe_name} {self.htask:#x})"
@@ -318,3 +320,35 @@ def win_exec(wine, arg):
     wine.registers = {"switch": Switch("answer", child, answer=answer)}
     return 0, 0, None
 
+
+
+@handles("TOOLHELP", 65)
+def task_find_handle(wine, arg):
+    """toolhelp.c TaskFindHandle16(lpte, hTask) -> TaskNext16 with hNext = hTask: FALSE for no
+    task, else the TASKENTRY from the TDB and the instance data. hQueue is 0, as Wine's TDB
+    never sets it; wPSPOffset is Wine's 0x100. wSS:wSP is where the task's 16-bit stack is: for
+    the calling task the stack at this call, for another its saved SS:SP."""
+    import struct
+    htask = arg(0)
+    sel, off = arg(2), arg(1)
+    task = by_handle(wine, htask) if wine.tasks else None
+    if task is None and htask == wine.htask and not wine.tasks:
+        return 0, 0, "TOOLHELP.65 TaskFindHandle: neww keeps no task list in this run"
+    if task is None:
+        return 0, 0, None
+    if htask == wine.htask:
+        ss, sp = arg.regs("ss"), arg.regs("sp")
+    else:
+        ss, sp = task.context["ss"], task.context["sp"]
+    dgroup = task.task.get("dgroup") if isinstance(task.task, dict) else None
+    inst = struct.unpack("<HHH", wine.read(dgroup, 0x0A, 6)) if dgroup else (0, 0, 0)
+    alive = [t for t in reversed(wine.tasks) if t.alive]
+    order = sorted(alive, key=lambda t: t.htask != wine.first_task)
+    nxt = 0
+    if task in order and order.index(task) + 1 < len(order):
+        nxt = order[order.index(task) + 1].htask
+    name = task.exe_name.encode("latin1")[:8].ljust(10, b"\0")[:10]
+    entry = struct.pack("<IHHHHHHHHHHH", 0x29, htask, task.parent, task.instance, task.module,
+                        ss, sp, inst[0], inst[1], inst[2], task.events, 0) + name + struct.pack("<HH", 0x100, nxt)
+    wine.write(sel, off + 4, entry[4:])
+    return 1, 0, None

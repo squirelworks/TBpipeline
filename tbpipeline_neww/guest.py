@@ -23,12 +23,18 @@ class Call:
 
 class GuestCalls:
     """calls run in order. after(i, ax, dx) may return more Call objects to run next, or a stop
-    string. finish(results) returns (ax, dx) for the original caller, or (ax, dx, stop)."""
+    string. finish(results) returns (ax, dx) for the original caller, or (ax, dx, stop).
 
-    def __init__(self, calls, finish, after=None):
+    With retry, the original call runs again after the calls instead of returning: the
+    caller's arguments and return address are put back and the gate's stub runs from its
+    first byte, as a Wine call that waits runs a callback and then looks again. finish is
+    then asked only for a stop."""
+
+    def __init__(self, calls, finish, after=None, retry=False):
         self.calls = list(calls)
         self.finish = finish
         self.after = after
+        self.retry = retry
 
 
 def _answer(value):
