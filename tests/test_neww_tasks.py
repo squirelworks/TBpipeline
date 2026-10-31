@@ -135,18 +135,21 @@ class Spawn(unittest.TestCase):
     def missing(self, line):
         parent = win_exec(Asm()).store("ax", 0x40).exit(0)
         host = run(parent, None, parent_data=data_with(0x100, {0x10: line}))
-        self.assertEqual(host.stop, "dos exit 0x0")
         self.assertEqual(len(host.box.wine.tasks), 1)
-        return word(host, host.box.exe.segments[1].selector, 0x40)
+        return host
 
-    def test_missing_bare_name_is_winoldaps_exit_code_1(self):
-        # WinExec16: no path, so the 16-bit builtin is tried, 21 hands the string to winoldap.mod,
-        # whose WinMain16 fails CreateProcessA and ends with exit code 1, which NE_CreateThread returns.
-        self.assertEqual(self.missing("CHILD.EXE hello"), 1)
+    def test_missing_bare_name_stops_at_winoldap(self):
+        # WinExec16: no path, the 16-bit builtin fails, and 21 sends the string to winoldap.mod.
+        # neww has no winoldap task, so it stops by name instead of answering for one.
+        host = self.missing("CHILD.EXE hello")
+        self.assertEqual(host.stop, "KERNEL.166 WinExec('CHILD.EXE hello'): CHILD.EXE is not in --b, and "
+                                    "WinExec16 would start winoldap.mod to run it as a 32-bit program, which neww does not have")
 
     def test_missing_name_with_a_path_is_error_2(self):
-        self.assertEqual(self.missing("C:\\TBK\\CHILD.EXE hello"), 2)
-        self.assertEqual(self.missing("sub/CHILD.EXE"), 2)
+        for line in ("C:\\TBK\\CHILD.EXE hello", "sub/CHILD.EXE"):
+            host = self.missing(line)
+            self.assertEqual(host.stop, "dos exit 0x0")
+            self.assertEqual(word(host, host.box.exe.segments[1].selector, 0x40), 2)
 
     def test_contains_path(self):
         from tbpipeline_neww.tasks import contains_path
