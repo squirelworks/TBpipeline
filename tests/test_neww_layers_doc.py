@@ -15,6 +15,7 @@ DISAGREE = {
     "KERNEL.85": "_lopen",
     "KERNEL.15": "GlobalAlloc",
     "KERNEL.18": "GlobalLock",
+    "KERNEL.20": "GlobalSize",
     "KERNEL.30": "WaitEvent",
     "KERNEL.102": "DOS3Call",
 }
