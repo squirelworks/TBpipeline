@@ -134,6 +134,7 @@ class Machine:
         code = exe.segments[exe.entry_seg - 1]
         data = exe.segments[exe.auto - 1]
         psp = self._psp()
+        self._modules()
         # Wine ne_module.c NE_StartTask: the handle of a moveable DGROUP is selector - 1.
         instance = data.selector - 1 if data.flags & 0x0010 else data.selector
         names, rows, why = self._dlls_to_init()
@@ -228,11 +229,43 @@ class Machine:
         self.uc.mem_write(seg.base + offset, data)
 
     def _owner(self, sel):
-        """The NE file a selector's segment came from, as GetExePtr finds a module from a handle."""
+        """The NE file a selector's block belongs to, as GetExePtr finds a module from a handle.
+
+        A segment of the file, or its module handle.
+        """
         for image in self.box.images.values():
-            if not image.synthetic and any(seg.selector == sel for seg in image.segments):
+            if image.synthetic:
+                continue
+            if any(seg.selector == sel for seg in image.segments) or self.box.wine.modules.get(image.name) == sel:
                 return image.path
         return None
+
+    def _modules(self):
+        """A module handle per NE file, in Wine's load order: the executable, then each DLL as loaded.
+
+        Wine's handle is the selector of the NE_MODULE block build_module makes. neww makes
+        the block but not its contents, so a guest read of it stops.
+        """
+        order = [self.box.exe]
+        seen = set()
+
+        def walk(image):
+            for name in image.modules:
+                dll = self.box.images.get(name)
+                if dll is None or dll.synthetic or dll is self.box.exe or name in seen:
+                    continue
+                seen.add(name)
+                order.append(dll)
+                walk(dll)
+
+        walk(self.box.exe)
+        for image in order:
+            sel = self._allocate(0x60)
+            self.box.wine.modules[image.name] = sel
+            base = self.box.selectors[sel].base
+            self.uc.hook_add(UC_HOOK_MEM_READ, self._module_read, (image.name, base), base, base + 0x5F)
+        # NE_RegisterModule puts each new module at the head of the list.
+        self.box.wine.first_module = self.box.wine.modules[order[-1].name]
 
     def _size(self, sel):
         """GlobalSize16 of the block behind a selector."""
@@ -373,6 +406,16 @@ class Machine:
             self._write_guest(sel, 0, block)
             self.box.wine.environment = sel
         return self.box.wine.environment
+
+    def _module_read(self, uc, access, address, size, value, user):
+        name, base = user
+        if self.stop:
+            return
+        self.stop = (
+            f"module database of {name} read at +{address - base:#x} {self.where()}: "
+            "Wine's NE_MODULE block is built by build_module, and neww has only the handle"
+        )
+        uc.emu_stop()
 
     def _psp_read(self, uc, access, address, size, value, user):
         base, start, end = user
