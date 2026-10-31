@@ -46,6 +46,9 @@ USER = {
     111: ("SendMessage", 10),
     176: ("LoadString", 10),
     266: ("SetMessageQueue", 2),
+    # pascal SetWindowsHookEx(s_word segptr word word): returns HHOOK in DX:AX.
+    # Added for "gap USER.291 far call at 0x1428:0xc9a0" (TB80RCR segment 3).
+    291: ("SetWindowsHookEx", 10),
 }
 
 WIN87EM = {
@@ -104,6 +107,7 @@ class Layer:
         self.module_name_len = len(self.module_name)
         self.task = 0
         self.gsizes = {}
+        self.hooks = []  # (idHook, proc seg, proc off, hinst, htask); never called
         self.capped = []  # (handle, size asked) for GlobalAlloc over 64K
 
     def name_of(self, module, ordinal, name=""):
@@ -242,6 +246,11 @@ class Layer:
         raise Gap("KERNEL", ordinal, self.name_of("KERNEL", ordinal))
 
     def _user(self, ordinal, args):
+        if ordinal == 291:
+            # Pushed first is deepest: idHook, lpfn seg:off, hInstance, hTask.
+            hook_id = args[4] - 0x10000 if args[4] & 0x8000 else args[4]
+            self.hooks.append((hook_id, args[3], args[2], args[1], args[0]))
+            return 0x00010000 | len(self.hooks)  # HHOOK: opaque, nonzero, one per call
         if ordinal in (5, 266):
             return 1
         if ordinal == 108:
