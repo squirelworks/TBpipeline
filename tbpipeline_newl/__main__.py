@@ -7,8 +7,9 @@ report and does not start the CPU.
 import sys
 from pathlib import Path
 
+from .bas import LAYERS, count as bas_count
 from .layer import EQUATES, Layer
-from .ne import imports
+from .ne import exported_names, imports
 
 
 def _bin(argv):
@@ -38,6 +39,10 @@ def _report(root):
             other.append(shown)
     print(f"layer {exe.name}")
     print(f"  answered {len(known)}  gap {len(gap)}  other {len(other)}")
+    bas = next((p for name in ("TB80BAS.DLL", "TB80BAS.dll") if (p := root / name).is_file()), None)
+    counts, unnamed = bas_count(rows, exported_names(bas) if bas else None)
+    shown = "  ".join(f"{layer} {counts[layer]}" for layer in LAYERS + ("other",))
+    print(f"TB80BAS by layer  {shown}  unnamed {unnamed}")
     return 0
 
 

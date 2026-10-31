@@ -27,6 +27,12 @@ API_PORT = 0xE0
 INITTASK = 91
 
 
+def ax1_line(module, ordinal, words, cs, ip):
+    """One line of 02_launch.txt for a call that got the AX = 1 default."""
+    stack = " ".join(f"{w:04x}" for w in words)
+    return f"ax=1 {module}.{ordinal} from {cs:#06x}:{ip:#06x} stack {stack}"
+
+
 class Pass04:
     def __init__(self, image, book):
         self.file = open(image, "rb").read()
@@ -65,6 +71,9 @@ class Pass04:
         self.thunk = self.arena.alloc_selector(0x1000, 0x9A)
         self.segs = {}
         self.sites = {}
+        self.callers = {}
+        self.caller = None
+        self.ax1 = []
         self.pending = None
         self.modnames = self._module_names()
         auto = _u16(self.file, self.ne + 0x0E)
@@ -175,6 +184,7 @@ class Pass04:
         if self.arena.read(sel, disp - 1, 1) != b"\x9a":
             return
         name = self.modnames[module - 1]
+        self.callers[(sel, (disp + 4) & 0xFFFF)] = (name, ordinal)
         pop = POP.get(name, {}).get(ordinal)
         if pop is None:
             return
@@ -228,6 +238,7 @@ class Pass04:
         site = self.sites.get((ret_cs, ret_ip))
         pop = site[2] if site else self._pushed(ret_cs, ret_ip)
         self.pending = site
+        self.caller = (ret_cs, ret_ip)
         # Snapshot arguments first. Sliding the return address overwrites
         # the words it lands on, and the handlers read them after this.
         self._args = self.arena.read(ss, (sp + 4) & 0xFFFF, 32)
@@ -891,8 +902,20 @@ class Pass04:
             if ((uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF) == 0x4C:
                 self._dos()
                 return
+        self._note_ax1(ordinal)
         uc.reg_write(UC_X86_REG_AX, 1)
         uc.reg_write(UC_X86_REG_DX, 0)
+
+    def _note_ax1(self, ordinal):
+        """Every far call that falls through to the AX = 1 default, as a line.
+
+        The module comes from the reloc that named the call site, not from
+        the pop table, so a call with no pop size is still named.
+        """
+        cs, ip = self.caller or (0, 0)
+        module = self.callers.get((cs, ip), ("?", ordinal))[0]
+        words = [_u16(self._args, n * 2) if (n + 1) * 2 <= len(self._args) else 0 for n in range(4)]
+        self.ax1.append(ax1_line(module, ordinal, words, cs, ip))
 
     def _strmgr(self):
         """TB80UTL.3 GETSTRMGRSTRING. Pascal, five words.

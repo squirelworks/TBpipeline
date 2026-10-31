@@ -217,6 +217,8 @@ class Pass06(Pass04):
         stub = (t2 * 8) & 0xFFF
         if atype == 3:
             self.arena.write(sel, disp, struct.pack("<HH", stub, self.thunk))
+            if disp >= 1 and self.arena.read(sel, disp - 1, 1) == b"\x9a":
+                self.callers[(sel, (disp + 4) & 0xFFFF)] = (mod, t2)
             pop = POP.get(mod, {}).get(t2)
             if pop is not None and disp >= 1 and self.arena.read(sel, disp - 1, 1) == b"\x9a":
                 self.sites[(sel, (disp + 4) & 0xFFFF)] = (mod, t2, pop)

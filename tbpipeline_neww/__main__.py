@@ -27,6 +27,9 @@ def main(argv=None):
     code = box.exe.segments[box.exe.entry_seg - 1]
     print(f"sandbox {box.exe.name} {box.exe.entry_seg}:{box.exe.entry_ip:#x} sel {code.selector:#x}")
     print(f"  modules {len(box.images)}  linked {box.linked}  equates {box.equates}  gaps {len(box.gaps)}")
+    bas = box.images.get("TB80BAS")
+    if bas is not None and not bas.synthetic:
+        print(f"  TB80BAS {len(bas.entries)} exports stay in the DLL. neww does not answer them in Python.")
     for line in box.gaps[:12]:
         print(f"  gap {line}")
     host.run()
