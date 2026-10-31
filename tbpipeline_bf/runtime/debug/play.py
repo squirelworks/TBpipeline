@@ -200,6 +200,19 @@ function show() {
     p.textContent = "Text position unknown: the field record's coordinates are not decoded, so this text is listed, not placed.";
     stage.appendChild(p);
   }
+  if (page.pictures && page.pictures.length) {
+    for (const src of page.pictures) {
+      const img = document.createElement("img");
+      img.className = "picture";
+      img.src = src;
+      img.alt = src;
+      stage.appendChild(img);
+    }
+    const p = document.createElement("p");
+    p.className = "empty unplaced";
+    p.textContent = "Picture position unknown: Windows bitmaps from this page are drawn in book order, not placed.";
+    stage.appendChild(p);
+  }
   if (page.shapes && page.shapes.length) {
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
@@ -359,7 +372,7 @@ def placed(blob: bytes) -> list[dict]:
     ]
 
 
-def walked(book: Book, handlers: dict | None = None) -> list[dict]:
+def walked(book: Book, handlers: dict | None = None, resources: dict | None = None) -> list[dict]:
     """Pages in the order engine.py walks them. Works for a .tbk or a .sbk."""
     engine = Engine(book)
     pages = []
@@ -378,6 +391,7 @@ def walked(book: Book, handlers: dict | None = None) -> list[dict]:
             "handlers": _clicks((handlers or {}).get(page.name)),
             "shapes": placed(page.blob),
             "textAt": None,
+            "pictures": ((resources or {}).get("pages") or {}).get(page.name, []),
         })
         try:
             engine.next()
@@ -390,7 +404,7 @@ def render_new(book: Book, theme="default", files=None, resources=None, handlers
     payload = json.dumps({
         "title": book.path.stem,
         "file": Path(book.path).name,
-        "pages": walked(book, handlers),
+        "pages": walked(book, handlers, resources),
         "files": files or {},
         "resources": resources or {"book": [], "pages": {}},
     })
