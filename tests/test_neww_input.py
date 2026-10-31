@@ -332,6 +332,26 @@ class MouseAsWineDoes(unittest.TestCase):
         self.assertEqual([s[1] for s in reply.seen], [0x84, 0x84, 0x20])
         self.assertEqual(state(self.w).raw, [])
 
+    def test_a_message_dropped_on_a_peek_leaves_the_queue(self):
+        # accept_hardware_message: when WH_MOUSE eats the message, it leaves the queue even
+        # without PM_REMOVE; the next look does not call the hook for it again.
+        from tbpipeline_neww.input16 import queue_script, state
+        self.w.hooks[8] = (0x00010001, 0x0130_0010)
+        hooked = []
+
+        def reply(call):
+            if (call.cs, call.ip) == (0x0130, 0x0010):
+                hooked.append((call.words[0], call.words[1]))
+                return 1, 0
+            return (HTCLIENT, 0) if call.words[1] == 0x84 else (0, 0)
+        queue_script(self.w, f"move {self.cx + 1},{self.cy + 1}")
+        ax, _stop, _msg = get(self.w, reply, "PeekMessage", 0)
+        self.assertEqual(ax, 0)
+        self.assertEqual(hooked, [(3, 0x200)])      # HC_NOREMOVE
+        self.assertEqual(state(self.w).raw, [])
+        get(self.w, reply, "PeekMessage", 0)
+        self.assertEqual(hooked, [(3, 0x200)])
+
     def test_non_client_double_click_needs_no_class_style(self):
         from tbpipeline_neww.input16 import queue_script
         queue_script(self.w, f"dblclick {self.px + 3},{self.py + 3}")
@@ -398,6 +418,23 @@ class Keyboard(unittest.TestCase):
         self.assertEqual(get(self.w)[2][1:3], (0x100, 0x70))
         self.assertEqual(get(self.w)[2][:2], (self.hwnd, 0x4D))
         self.assertEqual(get(self.w)[2][1], 0x101)
+
+    def test_f1_is_posted_before_the_keyboard_hook_eats_it(self):
+        # WM_KEYF1 goes out before WH_KEYBOARD runs (process_keyboard_message), so a hook that
+        # eats F1 still leaves it.
+        from tbpipeline_neww.input16 import queue_script
+        self.w.hooks[3] = (0x00010001, 0x0130_0010)
+        hooked = []
+
+        def reply(call):
+            if (call.cs, call.ip) == (0x0130, 0x0010):
+                hooked.append(call.words[1])
+                return 1, 0          # eaten
+            return 0, 0
+        queue_script(self.w, "key f1")
+        msg = get(self.w, reply)[2]
+        self.assertEqual(msg[:2], (self.hwnd, 0x4D))
+        self.assertEqual(hooked, [0x70, 0x70])     # the down and the up, both eaten
 
     def test_without_a_focus_the_active_window_gets_sys_keys(self):
         from tbpipeline_neww.input16 import queue_script

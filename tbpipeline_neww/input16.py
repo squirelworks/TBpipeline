@@ -87,6 +87,7 @@ class Raw:
         self.applied = False       # the device state already took it (the server's queue time)
         self.mk = None             # the MK_ flags the server stamped on it
         self.previously = None     # a key's state before it, for lParam bit 30
+        self.post = None           # a message the cooking posts (WM_KEYF1)
 
     @property
     def mouse(self):
@@ -300,12 +301,6 @@ def retrieved(wine, msg):
     update_input_key_state on the thread's queue)."""
     st = state(wine)
     message = msg[1]
-    if message == WM_KEYDOWN and msg[2] == VK_F1 and msg[0]:
-        # process_keyboard_message: a removed F1 posts WM_KEYF1 (DefWindowProc makes WM_HELP).
-        from .user_wnd import wm
-        m = wm(wine)
-        if msg[0] != m.desktop:
-            m.queue_of(m.task_of(msg[0])).queue.append((msg[0], WM_KEYF1, 0, 0))
     if message in (WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP):
         vk, down = msg[2] & 0xFF, message in (WM_KEYDOWN, WM_SYSKEYDOWN)
     else:
@@ -507,6 +502,11 @@ def cook_key(wine, raw, remove=True):
         return None
     lp = key_lparam(raw, previously)
     wine.trace.append(f"  input {MESSAGE_NAMES.get(msg, hex(msg))} vk {raw.vk:#x} -> {hwnd:#x}")
+    if remove and msg == WM_KEYDOWN and raw.vk == VK_F1 and hwnd != m.desktop:
+        # process_keyboard_message: a removed F1 posts WM_KEYF1 before WH_KEYBOARD runs, so it
+        # goes out even when the hook eats the key (DefWindowProc makes it WM_HELP). It lands
+        # behind the key down, which Wine is returning as it posts.
+        raw.post = (hwnd, WM_KEYF1, 0, 0)
     if WH_KEYBOARD + 1 in wine.hooks and m.task_of(hwnd) == wine.htask:
         eaten = yield from call_hook(wine, WH_KEYBOARD + 1, HC_ACTION if remove else HC_NOREMOVE, raw.vk, lp)
         if eaten:
@@ -531,11 +531,22 @@ def cook_calls(wine, first, last, remove=True):
     def cook():
         cooked = yield from (cook_mouse(wine, raw, remove) if raw.mouse else cook_key(wine, raw, remove))
         if not remove:
+            if cooked is None:
+                # accept_hardware_message: a message dropped (hook, HTERROR, HTNOWHERE, no
+                # window) leaves the queue even on a peek; only one that gets through stays.
+                if raw in state(wine).raw:
+                    state(wine).raw.remove(raw)
+                return 0
             q = m.queue_of(wine.htask)
             q.peek = (raw, cooked)
             q.peek_fresh = True
         elif cooked is not None:
-            m.queue_of(m.task_of(cooked[0])).input.append(cooked)
+            q = m.queue_of(m.task_of(cooked[0]))
+            q.input.append(cooked)
+            if raw.post is not None:
+                q.after[cooked] = raw.post
+        elif raw.post is not None:
+            m.queue_of(m.task_of(raw.post[0])).queue.append(raw.post)
         return 0
 
     res = drive(cook())

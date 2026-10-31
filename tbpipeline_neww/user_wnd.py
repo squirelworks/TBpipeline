@@ -128,6 +128,7 @@ class TaskQueue:
         self.input = []          # cooked hardware messages: (hwnd, msg, wp, lp), input16
         self.peek = None         # (raw, message or None) cooked for a peek that leaves it queued
         self.peek_fresh = False
+        self.after = {}          # cooked message -> a message posted once it is read (WM_KEYF1)
 
 
 class WM:
@@ -2417,6 +2418,9 @@ def next_message(wine, hwnd, first, last, remove, task=None, advance=True):
                 del q.input[i]
                 from .input16 import retrieved
                 retrieved(wine, entry)
+                post = q.after.pop(entry, None)
+                if post is not None:
+                    q.queue.append(post)
             return entry
     if q.peek is not None and q.peek[1] is not None and _matches(m, q.peek[1], hwnd, first, last):
         entry = q.peek[1]
@@ -2522,10 +2526,7 @@ def _input(wine, hwnd, first, last, polling=False, remove=True):
         if any(_matches(m, entry, hwnd, first, last) for entry in q.input):
             return None     # one cooked message at a time, as the server hands them out
         if q.peek is not None:
-            if q.peek[1] is not None:
-                return None
-            q.peek = None
-            return None     # dropped on a peek: it stays queued for the next look
+            return None
         r = cook_calls(wine, first, last, remove)
         if r != "cooked":
             return r
