@@ -402,9 +402,16 @@ class Cpu:
                 uc.mem_write(seg["base"] + (off & 0xFFFF), raw)
                 ax = len(raw.rstrip(b"\x00"))
         if module == "KERNEL" and ordinal == 15:
-            lo = args[1] if len(args) > 1 else 0
-            hi = args[2] if len(args) > 2 else 0
-            size = (lo | (hi << 16)) or 0x1000
+            # pascal16 GlobalAlloc(word long): flags is pushed first, so the
+            # dword size is on top, low word nearest SP.
+            lo = args[0] if args else 0
+            hi = args[1] if len(args) > 1 else 0
+            asked = lo | (hi << 16)
+            size = asked or 0x1000
+            if size > 0x10000:
+                # One selector, one 16-bit segment. A larger block needs
+                # __AHINCR tiling, which this layer does not do.
+                self.layer.capped.append((ax, asked))
             size = min(size, 0x10000)
             size = max((size + 0xFFF) & ~0xFFF, 0x1000)
             base = self.linear

@@ -67,7 +67,7 @@ Each run writes its own folder beside the script: `tbpipeline_bf/_debug/db-YYYYM
 
 This cut is 1.0.0r6. The reader is written only with `--dbgrender`. The host still exits before a book open.
 
-`render/` holds one file per drawing. Kind-04 polygons are also on the page in `render.html`, at their twips / 15. Curve runs are only files. `resources/` holds the BMPs the book already has. Two buttons under the reader show them. The probe logs are copied into the debug run.
+`render/` holds one file per drawing. Kind-04 polygons are also on the page in `render.html`, at their twips / 15. Curve runs are only files. `resources/` holds the BMPs the book already has. A BMP inside a page is also drawn on that page, in book order, not placed. Two buttons under the reader show them. The probe logs are copied into the debug run.
 
 
 Known bugs are in `known-bugs.md`. The plan is `plannedmilestones.md`. `v1.0.1` is the work that was waiting. `v2.0.0` is total functionality.

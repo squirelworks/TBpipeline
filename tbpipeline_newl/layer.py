@@ -95,6 +95,7 @@ class Layer:
         self.module_name_len = len(self.module_name)
         self.task = 0
         self.gsizes = {}
+        self.capped = []  # (handle, size asked) for GlobalAlloc over 64K
 
     def name_of(self, module, ordinal, name=""):
         module = module.upper()
@@ -184,8 +185,8 @@ class Layer:
         if ordinal == 15:
             handle = self.next_heap
             self.next_heap += 1
-            size = (args[1] if len(args) > 1 else 0) or 1
-            self.heap[handle] = bytearray(size)
+            size = (args[0] if args else 0) | ((args[1] if len(args) > 1 else 0) << 16)
+            self.heap[handle] = bytearray(min(size, 0x10000) or 1)
             return handle
         if ordinal == 18:
             return args[0] if args else 0

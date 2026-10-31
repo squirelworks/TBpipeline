@@ -8,6 +8,8 @@ Not a release. `1.0.0r6` stays the version.
 - Every far call that falls through to `AX = 1` is a line in the debug folder's `02_launch.txt`: module, ordinal, call site, and the first four argument words. It is written on every launch, not only when the run dies.
 - Kind-04 polygons are placed in `render.html` as SVG, at the record's twips / 15 from the page's top-left corner. Stage 2b says how many. Curve runs are still only files.
 - `TBK_INI` names a directory the host may answer an `.ini` open from. `TB80.INI` there gets a handle whose bytes are that file. Unset, an INI open is still `0xFFFF`. No INI is committed.
+- A page with text says, under the text, that its position is unknown. Field records do not yet name where the text sits, so it is listed, not placed. The payload carries `textAt: null` until those words are found.
+- A Windows BMP that sits inside a page is drawn on that page in `render.html`, in book order, with a line saying its position is unknown. It is still copied into `resources/`.
 - The same `TBK_INI` directory answers the extensionless `TB80enu` open. `OpenFile`'s style word is recorded beside each path.
 
 ## 1.0.0r6
