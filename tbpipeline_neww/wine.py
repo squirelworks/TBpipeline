@@ -102,6 +102,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "23  pascal -ret16 LockSegment(word) LockSegment16",
     "24  pascal -ret16 UnlockSegment(word) UnlockSegment16",
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
+    "49  pascal -ret16 GetModuleFileName(word ptr s_word) GetModuleFileName16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
     "74  pascal -ret16 OpenFile(str ptr word) OpenFile16",
     "81  pascal -ret16 _lclose(word) _lclose16",
@@ -138,6 +139,10 @@ EQUATES = {
 
 # Wine task.c TASK_Create: cmdShow is 1, SW_SHOWNORMAL, unless the startup info sets one.
 SW_SHOWNORMAL = 1
+
+# The --b directory as the guest sees it, in module paths. Wine would show the host
+# directory through a DOS drive. Any directory finds the file: resolve() goes by base name.
+BIN_DIR = "C:\\TBK"
 
 # Wine hook.c: WH_MINHOOK is WH_MSGFILTER (-1), Win16 goes up to WH_SHELL (10), and only
 # these indexes (id - WH_MINHOOK) have a hook_procs entry.
@@ -179,6 +184,8 @@ class Wine:
         self.registers = None
         # Set by the machine: selector -> size of its block in bytes, or None.
         self.size = None
+        # Set by the machine: selector -> path of the NE file whose segment it is, or None.
+        self.owner = None
         # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
         self.hooks = {}
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
@@ -270,6 +277,10 @@ class Wine:
             if sel is not None:
                 self.locks[sel] = self.locks.get(sel, 0) - 1
             return arg.regs("ax"), 0, None
+        if ordinal == 49:
+            # GetModuleFileName(word hModule, ptr buffer, s_word size)
+            size = arg(0) - 0x10000 if arg(0) & 0x8000 else arg(0)
+            return self._module_file_name(arg(3), arg(2), arg(1), size)
         if ordinal == 131:
             # Wine task.c GetDOSEnvironment16: WOWGlobalLock16 of the block, a SEGPTR in DX:AX.
             if self.environment is None:
@@ -466,6 +477,26 @@ class Wine:
             f"WIN87EM.1 __fpMath BX={bx}: Wine win87em.c reads or rounds on the host x87 here "
             "(6 frndint, 7 fistp, 8 fstsw), or has no case. neww does not answer it"
         )
+
+    def _module_file_name(self, handle, sel, off, size):
+        """Wine ne_module.c GetModuleFileName16: the module's path, lstrcpynA into the buffer."""
+        if handle == 0:
+            # Wine: GetCurrentTask(), whose module is the executable.
+            handle = self.task["instance"] if self.task else 0
+        owner = self.owner(self.selector_of(handle)) if self.selector_of(handle) is not None else None
+        if owner is None:
+            # NE_GetPtr finds no module.
+            return 0, 0, None
+        name = Path(owner).name.upper()
+        stem, _, ext = name.partition(".")
+        if len(stem) > 8 or len(ext) > 3 or "." in ext:
+            return 0, 0, f"KERNEL.49 GetModuleFileName: {name} has no 8.3 name, and Wine's GetShortPathNameA would make one"
+        path = f"{BIN_DIR}\\{name}".encode("latin1")
+        if size <= 0:
+            return 0, 0, None
+        path = path[:size - 1]
+        self._put(sel, off, path + b"\x00")
+        return len(path), 0, None
 
     def _set_windows_hook(self, id_, proc, task):
         """Wine user.exe16/hook.c SetWindowsHookEx16. Returns (ax, dx, stop): the HHOOK in DX:AX."""
