@@ -300,6 +300,36 @@ def _get_command_line_a(host, args):
 WIN32[("KERNEL32", "GetCommandLineA")] = (0, _get_command_line_a)
 
 
+# The process environment, as "NAME=value" strings. This host gives the
+# guest no variables, as KERNEL.131 GetDOSEnvironment already answers on
+# the 16-bit side, so the block is the terminator alone.
+ENVIRONMENT = []
+
+
+def _environment_block_w():
+    """Wine's ProcessParameters->Environment: each string and its NUL in
+    UTF-16, then one more NUL. get_env_length (dlls/kernelbase/process.c:1456)
+    counts that last NUL, so an empty environment is one WCHAR."""
+    return b"".join(v.encode("utf-16-le") + b"\0\0" for v in ENVIRONMENT) + b"\0\0"
+
+
+def _get_environment_strings_w(host, args):
+    # GetEnvironmentStringsW(void), stdcall, pops 0. Wine's kernelbase
+    # GetEnvironmentStringsW (dlls/kernelbase/process.c:1555) copies
+    # get_env_length(Environment) WCHARs into a new block from the process
+    # heap and returns it, or NULL when the allocation fails. Each call is a
+    # new copy, which FreeEnvironmentStringsW gives back. The copy goes in
+    # its own reservation here; there is no process heap yet.
+    block = _environment_block_w()
+    at = _reserve32(host, len(block))
+    if at:
+        host.uc.mem_write(at, block)
+    return at
+
+
+WIN32[("KERNEL32", "GetEnvironmentStringsW")] = (0, _get_environment_strings_w)
+
+
 def _u32(buf, off):
     return struct.unpack_from("<I", buf, off)[0]
 
