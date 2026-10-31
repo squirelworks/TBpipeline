@@ -1,6 +1,6 @@
 """KERNEL.513 LoadLibraryEx32W maps a 32-bit DLL and runs its DllMain.
 
-Wine's LoadLibraryEx32W16 (dlls/krnl386.exe16/wowthunk.c) returns
+Wine's LoadLibraryEx32W16 (dlls/krnl386.exe16/thunk.c:2495) returns
 LoadLibraryExA's HMODULE: the image base once DllMain(hinst,
 DLL_PROCESS_ATTACH, 0) has returned TRUE, or 0 when the file is missing
 or DllMain says FALSE. The spec line is

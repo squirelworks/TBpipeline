@@ -6,7 +6,7 @@ LoadLibraryEx32W and KERNEL.515 GetProcAddress32W. LoadLibraryEx32W
 maps the PE at its image base in the same CPU, gives it a flat 32-bit
 code and data selector, a stack and a TEB, and runs its entry point
 with DLL_PROCESS_ATTACH, as Wine's LoadLibraryEx32W16
-(dlls/krnl386.exe16/wowthunk.c) does through LoadLibraryExA.
+(dlls/krnl386.exe16/thunk.c:2495) does through LoadLibraryExA.
 
 Its imports from KERNEL32, USER32 and the rest bind to 8-byte stubs,
 `mov edx, id; out 0xE1, al; ret`. The OUT is answered by name from
