@@ -1192,16 +1192,19 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(2 + n), self._word(1 + n), text, size) if size else 0)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
-        if ordinal == 127:
+        if ordinal in (57, 127):
             # GetPrivateProfileInt(app, key, default, file). AX = 1 said every
             # key held 1. Wine's GetPrivateProfileInt16 reads the value into a
             # 30-character buffer: missing or empty gives the default, else
             # RtlUnicodeStringToInteger with base 0, cast to INT16.
-            path = self._string(self._word(1), self._word(0))
-            app = self._string(self._word(6), self._word(5)) if self._word(6) else None
-            key = self._string(self._word(4), self._word(3)) if self._word(4) else None
+            # GetProfileInt(app, key, default) is the same call on "win.ini"
+            # in Wine's GetProfileInt16.
+            n = 2 if ordinal == 127 else 0
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else None
+            key = self._string(self._word(2 + n), self._word(1 + n)) if self._word(2 + n) else None
             value = (self._profile_value(path, app, key) or "")[:29]
-            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(2))
+            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(n))
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
         if ordinal == 88:
