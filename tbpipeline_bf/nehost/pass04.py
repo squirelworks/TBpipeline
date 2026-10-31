@@ -26,6 +26,11 @@ from unicorn.x86_const import (
 API_PORT = 0xE0
 INITTASK = 91
 
+# Names other than *.ini the entry opens that TBK_INI may answer. The
+# pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
+# two rounds of TB80.INI opens. What the file should hold is not known.
+SUPPLIED = {"tb80enu"}
+
 
 def ax1_line(module, ordinal, words, cs, ip):
     """One line of 02_launch.txt for a call that got the AX = 1 default."""
@@ -43,6 +48,7 @@ class Pass04:
         self.shift = _u16(self.file, self.ne + 0x32)
         self.segoff = _u16(self.file, self.ne + 0x22)
         self.opens = []
+        self.open_styles = []
         self.skipped = []
         self.misses = []
         self.named = []
@@ -392,6 +398,7 @@ class Pass04:
         if ordinal == 74:
             path = self._string(self._word(4), self._word(3))
             self.opens.append(path)
+            self.open_styles.append((path, self._word(0)))
             print(f"  open {path}", file=sys.stderr, flush=True)
             handle = self._take_file(path)
             uc.reg_write(UC_X86_REG_AX, handle if handle is not None else 0xFFFF)
@@ -453,12 +460,13 @@ class Pass04:
         """An INI from TBK_INI, matched by its file name. Unset means 0xFFFF.
 
         Read at the moment of the open, like TBK_UNPACKED for LoadLibrary.
-        Only a name ending in .ini is looked for. The directory is the
-        caller's; the host never writes an INI and never looks in /Toolbook/.
+        Only a name ending in .ini, or one of SUPPLIED, is looked for. The
+        directory is the caller's; the host never writes an INI and never
+        looks in /Toolbook/.
         """
         root = os.environ.get("TBK_INI", "")
         base = low.split("\\")[-1]
-        if not root or not base.endswith(".ini") or not os.path.isdir(root):
+        if not root or not (base.endswith(".ini") or base in SUPPLIED) or not os.path.isdir(root):
             return None
         for entry in os.listdir(root):
             if entry.lower() == base:
