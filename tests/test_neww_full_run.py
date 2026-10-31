@@ -22,7 +22,7 @@ class CapIsNamed(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             neww_ne.exit_program_with(d, bytes([0xEB, 0xFE]), [])
             host = Machine(d).run(limit=5000)
-        self.assertEqual(host.stop, "instruction cap 5,000 at 0x8:0x0 with no gate call pending, after 0 calls")
+        self.assertEqual(host.stop, "instruction cap 5,000 at 0x8:0x0 in TB80RTM segment 1 +0x0 with no gate call pending, after 0 calls")
         self.assertRegex(host.stop, NAMED)
 
 

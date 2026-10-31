@@ -121,7 +121,7 @@ class Machine:
             self.uc.emu_start(0xF000, 0, timeout=TIMEOUT_US, count=limit)
         except UcError as exc:
             if not self.stop:
-                self.stop = str(exc)
+                self.stop = f"{exc} {self.where()}"
         else:
             if not self.stop:
                 # There is no address to return to, so a quiet end is a cap.
@@ -131,8 +131,33 @@ class Machine:
                     cap = f"{TIMEOUT_US // 1_000_000} second cap"
                 else:
                     cap = f"instruction cap {limit:,}"
-                self.stop = f"{cap} at {cs:#x}:{ip:#x} with no gate call pending, after {self.calls} calls"
+                self.stop = f"{cap} {self.where()} with no gate call pending, after {self.calls} calls"
         return self
+
+    def where(self, cs=None, ip=None):
+        """CS:IP, then the module, segment, and nearest export at or below it."""
+        if cs is None:
+            cs = self.uc.reg_read(UC_X86_REG_CS)
+            ip = self.uc.reg_read(UC_X86_REG_IP)
+        text = f"at {cs:#x}:{ip:#x}"
+        seg = self.box.selectors.get(cs)
+        for image in self.box.images.values():
+            if image.synthetic or seg not in image.segments:
+                continue
+            text += f" in {image.name} segment {seg.index} +{ip:#x}"
+            best = None
+            for ordinal, ent in image.entries.items():
+                if ent.segment == seg.index and ent.offset <= ip and (best is None or ent.offset > best[1].offset):
+                    best = (ordinal, ent)
+            if best:
+                ordinal, ent = best
+                name = image.names.get(ordinal, f"@{ordinal}")
+                text += f", {name}+{ip - ent.offset:#x} (ordinal {ordinal})"
+            break
+        else:
+            if seg is self.box.trap:
+                text += " in the trap segment"
+        return text
 
     def _write_guest(self, sel, offset, data):
         seg = self.box.selectors.get(sel)
