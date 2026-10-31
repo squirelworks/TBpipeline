@@ -127,6 +127,11 @@ class Machine:
             return
         self.calls += 1
         ax, dx, why = self.box.wine.answer(module, ordinal, Args(self))
+        if self.box.wine.contract(module, ordinal) is None:
+            # No contract: stop on the OUT. Nothing is popped, AX and DX keep the guest's values.
+            self.stop = why
+            uc.emu_stop()
+            return
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
         uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
         if why or self.calls > 400:

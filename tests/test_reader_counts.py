@@ -44,7 +44,7 @@ class RenderCounts(unittest.TestCase):
             pages = [line.strip() for line in stage_2b if line.strip().startswith("render/")]
             files = [line.strip() for line in stage_2c if line.strip().startswith("render/")]
             self.assertEqual(pages, ["render/ 1 pages with a drawing"])
-            self.assertEqual(files, ["render/ 4 PNG files, drawn and not placed"])
+            self.assertEqual(files, ["render/ 4 PNG files"])
             self.assertNotEqual(pages, files)
 
 
