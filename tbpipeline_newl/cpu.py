@@ -387,7 +387,7 @@ class Cpu:
             ss = uc.reg_read(UC_X86_REG_SS)
             args = [self._word(ss, sp + 4 + n * 2) for n in range(8)]
         try:
-            ax = self.layer.call(module, ordinal, args)
+            ax = self.layer.call(module, ordinal, args, at=self._site(uc))
         except Gap as exc:
             self.stop = str(exc)
             uc.emu_stop()
@@ -432,6 +432,20 @@ class Cpu:
         if self.layer.exit is not None:
             self.stop = f"dos exit {self.layer.exit:#x}"
             uc.emu_stop()
+
+    def _site(self, uc):
+        """The far call that reached the gate. SS:SP is still the return address."""
+        sp = uc.reg_read(UC_X86_REG_SP)
+        ss = uc.reg_read(UC_X86_REG_SS)
+        ip, cs = self._word(ss, sp), self._word(ss, sp + 2)
+        seg = self.selectors.get(cs)
+        if seg is not None and ip >= 5:
+            try:
+                if uc.mem_read(seg["base"] + ip - 5, 1)[0] == 0x9A:
+                    return cs, ip - 5, "call"
+            except UcError:
+                pass
+        return cs, ip, "return"
 
     def _unmapped(self, uc, access, address, size, value, user):
         self.stop = f"unmapped {address:#x}"
