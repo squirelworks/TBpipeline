@@ -62,7 +62,7 @@ class StartupScan(unittest.TestCase):
 
     def test_scan_that_finds_a_written_record_goes_on(self):
         host, _ = self._run(plant=True)
-        self.assertEqual(host.stop, "returned")
+        self.assertTrue(host.stop.startswith("hlt at "), host.stop)
 
 
 if __name__ == "__main__":

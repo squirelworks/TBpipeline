@@ -39,7 +39,7 @@ def load_keywords(res_path: Path) -> list[str]:
     return keywords
 
 
-def decompress(bytecode, keywords, max_out=100_000, origin=0, span=None):
+def decompress(bytecode, keywords, max_out=100_000, origin=0, span=None, misses=None):
     """Decompress one OpenScript bytecode stream.
 
     bytecode is the book. Decoding starts at origin. A back-reference is an
@@ -54,6 +54,10 @@ def decompress(bytecode, keywords, max_out=100_000, origin=0, span=None):
       F0-FE   2-16 spaces
       FF      repeat next byte (count+1) times
     Stops on a 0x00 literal or when the output limit is reached.
+
+    A copy that lands outside the book is written as "?". When misses is a
+    list, the book offset of each such byte is appended to it, so a caller
+    can tell an unreadable handler from a real "?".
     """
     blob = bytecode
     out = bytearray()
@@ -122,6 +126,8 @@ def decompress(bytecode, keywords, max_out=100_000, origin=0, span=None):
                 out.append(blob[at])
             else:
                 out.append(ord("?"))
+                if misses is not None:
+                    misses.append(at)
 
     return out.decode("latin-1", errors="replace")
 
