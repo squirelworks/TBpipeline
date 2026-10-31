@@ -325,6 +325,14 @@ class Pass04:
     def _kernel_heap(self, ordinal):
         """GlobalAlloc/Lock/Free. A fake 0000:0001 pointer was written through the GDT."""
         uc = self.uc
+        # GlobalCompact(dwMinFree). Wine's GlobalCompact16 compacts nothing
+        # and returns GLOBAL_MAX_ALLOC_SIZE, 0x00FF0000 (16M - 64K), as the
+        # largest free block. AX = 1 with DX left as it was said one byte, or
+        # whatever DX held.
+        if ordinal == 25:
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, 0x00FF)
+            return True
         if ordinal == 15:
             size = self._word(0) | (self._word(1) << 16)
             flags = self._word(2)
