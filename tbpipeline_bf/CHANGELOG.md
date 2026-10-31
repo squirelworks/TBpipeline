@@ -6,6 +6,7 @@ Not a release. `1.0.0r6` stays the version.
 
 - `GDI.87` `GetStockObject` returns `index + 32`, Wine's stock handle, and 0 for a bad index.
 - `KERNEL.131` `GetDOSEnvironment` returns a far pointer to Wine's environment block layout, with no variables.
+- `KERNEL.518` `CallProcEx32W` runs a 32-bit procedure with its parameters, maps each one its mask marks from 16:16 to linear, and returns EAX in DX:AX, as Wine's `CallProcEx32W16` does. It is cdecl, so it pops nothing: the pop table had 12. It used to fall through to `AX = 1`.
 - `KERNEL.25` `GlobalCompact` returns `0x00FF0000`, Wine's `GLOBAL_MAX_ALLOC_SIZE`.
 - `KERNEL.198` `GlobalUnfix` is answered and returns nothing, as Wine's void `GlobalUnfix16` does.
 - `KERNEL.515` `GetProcAddress32W` returns the address of a loaded 32-bit DLL's export, by name or by ordinal, or 0, as Wine's `GetProcAddress32W16` returns `GetProcAddress`. For a Win32 system DLL it returns an import stub that is answered by name. It used to fall through to `AX = 1`.
