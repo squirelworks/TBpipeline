@@ -46,6 +46,7 @@ Every run ends on one of these lines. A line that matches none of them is an ano
 | `gap KERNEL.999 Name far call at CS:IP` | No contract for that ordinal. The name appears when the layer or the import has one. `returning to CS:IP` replaces `far call at` when the call was not a direct `9A` |
 | `scan lodsw at CS:IP read SEL:OFF, GlobalAlloc block H that nothing wrote, looking for 0x0012` | A string scan reached memory nobody wrote |
 | `OpenFile NAME: no book on the command line (--c)` | The guest asked for a `.tbk` or `.sbk` and `--c` was not given. With `--c`, that handle is the book |
+| `fault at CS:IP (MODULE segment N) bytes .., null ES: ...` | A CPU exception. It gives the place, the first four bytes there, and DS or ES when either is 0 |
 | `dos exit 0xNN` | `DOS3Call` with `AH = 4Ch` |
 | `hlt at CS:IP` | The guest halted |
 | `instruction cap 1000000 reached at CS:IP, ...` | The cap. The line says how many Windows calls were taken and the last one, or `no Windows call taken`. The CLI then prints the last 20 basic blocks |
