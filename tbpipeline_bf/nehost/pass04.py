@@ -1040,6 +1040,29 @@ class Pass04:
             self.uc.reg_write(UC_X86_REG_AX, atom)
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # RegisterClass(lpWndClass), pops 4. Wine's RegisterClass16 copies
+        # the WNDCLASS16 into RegisterClassEx16, which returns the class
+        # atom, or 0 when the instance already has a class of that name.
+        # Class names and registered messages share USER's atom table, so
+        # the atom comes from the same table as RegisterWindowMessage.
+        if ordinal == 57:
+            raw = self.arena.read(self._word(1), self._word(0), 26)
+            style, proc_off, proc_seg, cls_extra, wnd_extra, inst = struct.unpack_from("<6H", raw, 0)
+            name_off, name_seg = struct.unpack_from("<HH", raw, 22)
+            name = f"#{name_off}" if name_seg == 0 else self._string(name_seg, name_off)
+            classes = self.__dict__.setdefault("classes", {})
+            if (name.lower(), inst) in classes:
+                atom = 0
+            else:
+                atoms = self.__dict__.setdefault("message_atoms", {})
+                atom = atoms.setdefault(name.lower(), 0xC000 + len(atoms))
+                classes[(name.lower(), inst)] = {
+                    "name": name, "atom": atom, "style": style, "proc": (proc_seg, proc_off),
+                    "cls_extra": cls_extra, "wnd_extra": wnd_extra, "inst": inst,
+                }
+            self.uc.reg_write(UC_X86_REG_AX, atom)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
         # door call RegisterPenApp through a null pointer.
         if ordinal != 179:
