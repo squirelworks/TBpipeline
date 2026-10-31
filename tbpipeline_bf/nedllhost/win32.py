@@ -126,6 +126,43 @@ def _get_module_handle_a(host, args):
 WIN32[("KERNEL32", "GetModuleHandleA")] = (4, _get_module_handle_a)
 
 
+ERROR_PROC_NOT_FOUND = 127
+
+
+def _get_proc_address(host, args):
+    # GetProcAddress(hModule, lpProcName), stdcall, pops 8. Wine's
+    # kernelbase get_proc_address (dlls/kernelbase/loader.c:66): a name
+    # when lpProcName >> 16 is not 0, else the ordinal in its low word,
+    # looked up by ntdll's LdrGetProcedureAddress (dlls/ntdll/loader.c:2066).
+    # A handle that is no loaded module is STATUS_DLL_NOT_FOUND
+    # (ERROR_MOD_NOT_FOUND); a missing export is STATUS_PROCEDURE_NOT_FOUND
+    # (ERROR_PROC_NOT_FOUND). Either way the result is NULL.
+    # A system DLL has no image here: its export is a stub that WIN32
+    # answers by name when it is called, as GetProcAddress32W (#151) does.
+    # A NULL hModule means the process image, which a 16-bit process
+    # doesn't have here, so it is not answered.
+    hmod, proc = args[0], args[1]
+    if not hmod:
+        raise Unanswered("NULL hModule: the process has no 32-bit image")
+    what = _cstr32(host, proc) if proc >> 16 else proc & 0xFFFF
+    system = next((d for d, h in SYSTEM_HANDLES.items() if h == hmod), None)
+    if system:
+        return host._api32_stub(system, what)
+    mod = next((m for m in getattr(host, "pe32", {}).values() if m["base"] == hmod), None)
+    if mod is None:
+        error = ERROR_MOD_NOT_FOUND
+    else:
+        rva = (mod["names"] if isinstance(what, str) else mod["ords"]).get(what)
+        if rva:
+            return mod["base"] + rva
+        error = ERROR_PROC_NOT_FOUND
+    host.uc.mem_write(TEB + TEB_LAST_ERROR, struct.pack("<I", error))
+    return 0
+
+
+WIN32[("KERNEL32", "GetProcAddress")] = (8, _get_proc_address)
+
+
 def _u32(buf, off):
     return struct.unpack_from("<I", buf, off)[0]
 
