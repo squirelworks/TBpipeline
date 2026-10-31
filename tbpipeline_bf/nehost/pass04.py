@@ -695,6 +695,15 @@ class Pass04:
     def _kernel_proc(self, ordinal):
         """Pointers must be null or a real thunk. AX=1 was called as 0000:0001."""
         uc = self.uc
+        # IsBadCodePtr(lpfn). AX=1 is "bad": TB80BAS skipped its file
+        # manager's handler and the book open failed.
+        if ordinal == 336:
+            off, sel = self._word(0), self._word(1)
+            info = self.arena.segs.get(sel)
+            good = info is not None and info["access"] & 0x08 and off <= info["limit"]
+            uc.reg_write(UC_X86_REG_AX, 0 if good else 1)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         if ordinal == 50:
             noff, nseg, hmod = self._word(0), self._word(1), self._word(2)
             mod = self.mods.get(hmod) or (self.mods.get(self.exe_inst) if hmod == 0 else None)
