@@ -370,6 +370,8 @@ class Machine:
         self.initialized |= set(names)
         # PostEvent16(hTask) in NE_CreateThread: the startup WaitEvent(0) takes it.
         child = tasks.Task(htask, image.name, task, module, instance, events=1)
+        # TASK_Create: hParent is GetCurrentTask() when the task is made.
+        child.parent = wine.htask
         # NE_StartTask: AX 0, BX stack size, CX heap size, SI previous instance (none),
         # DI the instance, BP 0, ES the PSP, DS = SS = DGROUP. IF is set.
         child.context = {
@@ -938,14 +940,15 @@ class Machine:
         self.guest[ident].setdefault("slots", []).append((sel, base))
         return sel
 
-    def _start_guest(self, uc, request, pop):
+    def _start_guest(self, uc, request, pop, stub=None):
         """The gate answered with a GuestCalls. Its retf (pop bytes) goes to the first call's
-        trampoline instead of the caller."""
+        trampoline instead of the caller. stub is the gate stub's (cs, ip), for a retry."""
         self.hook_serial += 1
         ss = uc.reg_read(UC_X86_REG_SS)
         sp = uc.reg_read(UC_X86_REG_SP)
         ident = len(self.guest)
         self.guest.append({
+            "stub": stub, "args": self._read(self.box.selectors[ss], sp + 4, pop),
             "request": request, "ss": ss, "after_sp": sp + 4 + pop, "ret": self._read(self.box.selectors[ss], sp, 4),
             "ds": uc.reg_read(UC_X86_REG_DS), "es": uc.reg_read(UC_X86_REG_ES), "bp": uc.reg_read(UC_X86_REG_BP),
             "si": uc.reg_read(UC_X86_REG_SI), "di": uc.reg_read(UC_X86_REG_DI),
@@ -1005,13 +1008,22 @@ class Machine:
             self.stop = out[2]
             uc.emu_stop()
             return
+        for name in ("bp", "si", "di"):
+            uc.reg_write(REGISTERS[name], state[name])
+        if request.retry:
+            # The call runs again: its arguments and return address back on the stack as the
+            # caller left them, then the tail pops DS and ES and its retf goes to the stub.
+            cs, ip = state["stub"]
+            sp = state["after_sp"] - len(state["args"]) - 4 - 12
+            frame = struct.pack("<HHHHHH", 0, self.tail, state["ds"], state["es"], ip, cs)
+            self._write_guest(state["ss"], sp, frame + state["ret"] + state["args"])
+            uc.reg_write(UC_X86_REG_SP, sp)
+            return
         # Back to the original caller: the registers a Pascal callee keeps (DS, ES, SI, DI, BP),
         # the answer in DX:AX, and SP past the popped arguments. The trampoline's retf goes to
         # the tail, which pops DS and ES and returns.
         uc.reg_write(UC_X86_REG_AX, out[0] & 0xFFFF)
         uc.reg_write(UC_X86_REG_DX, out[1] & 0xFFFF)
-        for name in ("bp", "si", "di"):
-            uc.reg_write(REGISTERS[name], state[name])
         sp = state["after_sp"] - 12
         frame = struct.pack("<HHHH", 0, self.tail, state["ds"], state["es"]) + state["ret"]
         self._write_guest(state["ss"], sp, frame)
@@ -1194,7 +1206,7 @@ class Machine:
                 self.stop = f"{module}.{ordinal}: a register contract cannot call the guest"
                 uc.emu_stop()
                 return
-            self._start_guest(uc, request, row.pop)
+            self._start_guest(uc, request, row.pop, stub=(cs, ordinal * 8))
             return
         if "init_dlls" in registers:
             # The gate's retf goes to the trampoline instead of the caller.
@@ -1389,6 +1401,17 @@ class Machine:
             self.stop = (f"INT {intno:#x} {self.where()}: the guest set this vector to {seg:#x}:{off:#x}, "
                          "and DOSVM_EmulateInterruptPM would call it, which neww does not do yet")
             uc.emu_stop()
+            return
+        if 0x34 <= intno <= 0x3B or intno == 0x3D:
+            # fpu.c FPU_ModifyCode: the floating point emulator's INT 34h-3Bh is the x87
+            # opcode D8h-DFh, INT 3Dh a standalone FWAIT. Wine writes FWAIT (9Bh) and the
+            # opcode (or NOP for 3Dh) over the two INT bytes and backs IP up to run them.
+            opcode = 0x90 if intno == 0x3D else 0xD8 + intno - 0x34
+            self._write_guest(cs, (ip - 2) & 0xFFFF, bytes([0x9B, opcode]))
+            # The CPU's translated copy of the old bytes goes, so the new ones run.
+            at = self._linear(cs) + ((ip - 2) & 0xFFFF)
+            uc.ctl_remove_cache(at, at + 2)
+            uc.reg_write(UC_X86_REG_IP, (ip - 2) & 0xFFFF)
             return
         if intno not in (0x21, 0x2F):
             self.stop = f"INT {intno:#x} {self.where()}: Wine's builtin handler for it is not in neww"

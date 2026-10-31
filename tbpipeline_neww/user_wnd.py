@@ -2438,6 +2438,16 @@ def _next_or_wait(wine, hwnd, first, last, remove):
     return next_message(wine, hwnd, first, last, remove), None
 
 
+def _mm_callback(wine, hwnd, first, last, polling=False):
+    """mmsystem16.callback_due for a task in GetMessage, PeekMessage or WaitMessage. The task
+    would wait when it has no message and no other task can run; a poll never waits."""
+    from .mmsystem16 import callback_due
+    from .tasks import next_ready
+    waiting = (not polling and next_message(wine, hwnd, first, last, False, advance=False) is None
+               and next_ready(wine) is None)
+    return callback_due(wine, waiting)
+
+
 NO_INPUT = ("the queue is empty, no window needs painting and no timer is set; "
             "the task waits for input, and neww has none")
 
@@ -2447,8 +2457,12 @@ def get_message(wine, arg, ptr, hwnd, first, last):
     """GetMessage16: the next message, FALSE for WM_QUIT. With none, the task waits and another
     task runs; it resumes at the call, and GetMessage looks again. When no task can run, the
     clock moves to the first timer. With no message, no timer and nothing to paint in any task,
-    they would wait for input forever, and the run stops there."""
+    they would wait for input forever, and the run stops there. A multimedia timer callback
+    that is due runs first, and GetMessage looks again (mmsystem16.callback_due)."""
     from .tasks import Switch
+    calls = _mm_callback(wine, hwnd, first, last)
+    if calls is not None:
+        return calls
     msg, nxt = _next_or_wait(wine, hwnd, first, last, True)
     if nxt is not None:
         wine.trace[-1] += f" (waits) -> {nxt.exe_name}"
@@ -2468,9 +2482,13 @@ PM_REMOVE, PM_NOYIELD = 0x1, 0x2
 def peek_message(wine, arg, ptr, hwnd, first, last, flags):
     """PeekMessage16: PM_REMOVE is 1. With no message the answer is FALSE and the clock moves
     one millisecond, so a polling loop sees time pass. Without PM_NOYIELD, another task that
-    can run runs first, and this one gets its FALSE when it runs again."""
+    can run runs first, and this one gets its FALSE when it runs again. A multimedia timer
+    callback that is due runs first, and PeekMessage looks again."""
     from .tasks import Switch
     m = wm(wine)
+    calls = _mm_callback(wine, hwnd, first, last, polling=True)
+    if calls is not None:
+        return calls
     msg, nxt = _next_or_wait(wine, hwnd, first, last, bool(flags & PM_REMOVE))
     if msg is None:
         m.clock += 1
@@ -2485,8 +2503,12 @@ def peek_message(wine, arg, ptr, hwnd, first, last, flags):
 @api("USER", "WaitMessage")
 def wait_message(wine, arg):
     """WaitMessage16: returns when the task has a message. Until then another task runs, or
-    the clock moves to the first timer. Void."""
+    the clock moves to the first timer. Void. A multimedia timer callback that is due runs
+    first, and WaitMessage looks again."""
     from .tasks import Switch
+    calls = _mm_callback(wine, 0, 0, 0)
+    if calls is not None:
+        return calls
     msg, nxt = _next_or_wait(wine, 0, 0, 0, False)
     if nxt is not None:
         wine.trace[-1] += f" (waits) -> {nxt.exe_name}"
