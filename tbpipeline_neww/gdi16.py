@@ -156,9 +156,8 @@ class Gdi:
         from PIL import ImageFont
         height = log["height"] or 16
         family = log["pitch_family"] & 0xF0
-        pitch = log["pitch_family"] & 0x03
         face = log["face"].lower()
-        if pitch == 1 or family == 0x30 or "courier" in face or "fixed" in face:
+        if is_fixed_pitch(log):
             kind = "modern"
         elif family == 0x10 or "times" in face or "roman" in face or "serif" in face and "sans" not in face:
             kind = "roman"
@@ -170,21 +169,34 @@ class Gdi:
             return self.fonts[key]
         name = TEXT_STANDIN[(kind, bold)]
         path = next((str(Path(d) / name) for d in FONT_DIRS if (Path(d) / name).exists()), None)
-        if path is None:
-            raise FileNotFoundError(name)
+
+        def load(size):
+            # No DejaVu (a Windows host): Pillow's own scalable face stands in.
+            # BASIC layout: one glyph per character, the same on every host. Raqm, where Pillow has
+            # it, refuses to lay out a lone control character, which GetCharWidth(0, 255) asks for.
+            if path:
+                return ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)
+            return ImageFont.load_default(size)
         if height < 0:
             size = -height
-            probe = ImageFont.truetype(path, size)
+            probe = load(size)
             a, d = probe.getmetrics()
             font = probe
         else:
-            probe = ImageFont.truetype(path, 100)
+            probe = load(100)
             a0, d0 = probe.getmetrics()
             size = max(1, round(height * 100 / (a0 + d0)))
-            font = ImageFont.truetype(path, size)
+            font = load(size)
             a, d = font.getmetrics()
         self.fonts[key] = (font, a + d, a, d, size)
         return self.fonts[key]
+
+
+def is_fixed_pitch(log):
+    """A LOGFONT the stand-in draws with the monospace face."""
+    face = log["face"].lower()
+    return ((log["pitch_family"] & 0x03) == 1 or log["pitch_family"] & 0xF0 == 0x30 or "courier" in face
+            or "fixed" in face)
 
 
 def _logfont(height, width, weight, charset, pitch_family, face, italic=0, underline=0, strike=0, escapement=0,
@@ -1204,6 +1216,14 @@ def realize(wine, dc):
     return g.font_for(font.log), font.log
 
 
+def tm_pitch(log):
+    """tmPitchAndFamily. TMPF_FIXED_PITCH (1) means the font is VARIABLE pitch; Windows named the bit
+    backwards. TMPF_VECTOR (2) and TMPF_TRUETYPE (4) are set, as for a TrueType face. TB80BAS reads
+    bit 0: clear, it gives every character the width of the break character instead of asking
+    GetCharWidth, so proportional text was laid out as if it were monospace."""
+    return (log["pitch_family"] & 0xF0) | 0x06 | (0 if is_fixed_pitch(log) else 0x01)
+
+
 def text_metrics(wine, dc):
     (pil, height, ascent, descent, size), log = realize(wine, dc)
     widths = [pil.getlength(chr(c)) for c in range(32, 127)]
@@ -1213,7 +1233,7 @@ def text_metrics(wine, dc):
         "height": height, "ascent": ascent, "descent": descent, "internal": max(0, internal), "external": 0,
         "ave": ave, "max": round(max(widths)), "weight": log["weight"], "italic": log["italic"],
         "underline": log["underline"], "strike": log["strike"], "first": 32, "last": 255, "default": 31,
-        "break": 32, "pitch": (log["pitch_family"] & 0xF0) | (0x06 if (log["pitch_family"] & 3) != 1 else 0x04),
+        "break": 32, "pitch": tm_pitch(log),
         "charset": log["charset"], "overhang": 0, "aspect": 96,
     }
 
@@ -1233,9 +1253,15 @@ def get_text_metrics(wine, arg, hdc, ptr):
     return 1
 
 
+def char_width(pil, ch):
+    """One character's advance in whole pixels, as GetCharWidth gives it. The extent of a string is
+    the sum of these, so a caller that adds up GetCharWidth lands where TextOut stops."""
+    return round(pil.getlength(ch))
+
+
 def text_width(wine, dc, text):
     (pil, *_rest), _log = realize(wine, dc)
-    return round(pil.getlength(text)) + dc.char_extra * len(text)
+    return sum(char_width(pil, ch) for ch in text) + dc.char_extra * len(text)
 
 
 @api("GDI", "GetTextExtent")
@@ -1265,7 +1291,7 @@ def get_char_width(wine, arg, hdc, first, last, ptr):
     if dc is None or last < first:
         return 0
     (pil, *_r), _log = realize(wine, dc)
-    out = b"".join(struct.pack("<h", round(pil.getlength(bytes([c]).decode("cp1252", "replace"))))
+    out = b"".join(struct.pack("<h", char_width(pil, bytes([c]).decode("cp1252", "replace")))
                    for c in range(first, last + 1))
     write(wine, ptr, out)
     return 1
@@ -1326,7 +1352,7 @@ def draw_text(wine, dc, x, y, text, opaque_rect=None, clip_rect=None):
     cx = 0
     for ch in text:
         draw.text((cx, 0), ch, font=pil, fill=255)
-        cx += pil.getlength(ch) + dc.char_extra
+        cx += char_width(pil, ch) + dc.char_extra
     if log["underline"]:
         draw.line([(0, ascent + 1), (width, ascent + 1)], fill=255)
     if log["strike"]:
@@ -1363,7 +1389,7 @@ def ext_text_out(wine, arg, hdc, x, y, flags, rect_ptr, ptr, count, dx_ptr):
     if dx_ptr and text:
         dxs = struct.unpack(f"<{len(text)}h", read(wine, dx_ptr, 2 * len(text)))
         (pil, *_r), _l = realize(wine, dc)
-        own = [round(pil.getlength(c)) for c in text]
+        own = [char_width(pil, c) for c in text]
         if list(dxs) != own:
             return 0, 0, f"GDI ExtTextOut {text!r} with lpDx {list(dxs)}: neww lays text out with the font's widths {own}"
     draw_text(wine, dc, x, y, text, opaque_rect=rect if flags & 2 and rect else None,
