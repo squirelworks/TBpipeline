@@ -108,6 +108,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
     "36  pascal   GetCurrentTask() WIN16_GetCurrentTask",
     "55  pascal -register Catch(ptr) Catch16",
+    "56  pascal -register Throw(ptr word) Throw16",
     "47  pascal   GetModuleHandle(segstr) WIN16_GetModuleHandle",
     "49  pascal -ret16 GetModuleFileName(word ptr s_word) GetModuleFileName16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
@@ -408,6 +409,8 @@ class Wine:
             return arg.regs("ax"), 0, None
         if ordinal == 55:
             return self._catch(arg)
+        if ordinal == 56:
+            return self._throw(arg)
         if ordinal == 36:
             # WIN16_GetCurrentTask: the current task in AX, hFirstTask in DX.
             return self.htask, self.htask, None
@@ -782,6 +785,27 @@ class Wine:
         )
         self.write(sel, off, struct.pack("<9H", *words))
         return 0, 0, None
+
+    def _throw(self, arg):
+        """Wine thunk.c Throw16: back to the Catch, with AX the return value.
+
+        CS:IP, BP, SI, DI and DS come from the CATCHBUF. Esp, the SP at the far return, is
+        lpbuf[2] + 4 words - 1 word, Throw's extra argument, so the stub's retf 6 ends where
+        Catch's retf 4 did. A CATCHBUF from another stack segment stops, where Wine says
+        "expect crash now".
+        """
+        retval, off, sel = arg(0), arg(1), arg(2)
+        size = self.size(sel)
+        if size is None or off + 18 > size:
+            return 0, 0, f"KERNEL.56 Throw({sel:#x}:{off:#x}): the CATCHBUF is not in a block neww has"
+        buf = [arg.word(sel, off + 2 * i) for i in range(9)]
+        if buf[8] != arg.regs("ss"):
+            return 0, 0, f"KERNEL.56 Throw: the CATCHBUF's SS {buf[8]:#x} is not SS {arg.regs('ss'):#x}, Wine's \"Switching stack segment with Throw() not supported\""
+        self.registers = {
+            "frame": (buf[0], buf[1], (buf[2] + 6) & 0xFFFF),
+            "bp": buf[3], "si": buf[4], "di": buf[5], "ds": buf[6],
+        }
+        return retval, 0, None
 
     def _global_size(self, handle):
         """Wine global.c GlobalSize16: the arena's size, 0 for handle 0 or an invalid handle.

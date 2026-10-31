@@ -518,6 +518,13 @@ class Machine:
             }
             self._write_guest(ss, sp, struct.pack("<HH", 0, self.trampoline))
             registers = {}
+        if "frame" in registers:
+            # The contract returns somewhere else: the far return address goes at the new SP,
+            # and the stub's retf pops it and the arguments from there, as Wine's relay does.
+            ip, cs_to, sp_to = registers.pop("frame")
+            ss = uc.reg_read(UC_X86_REG_SS)
+            self._write_guest(ss, sp_to, struct.pack("<HH", ip, cs_to))
+            registers["sp"] = sp_to
         for name, value in registers.items():
             if name != "push":
                 uc.reg_write(REGISTERS[name], value & 0xFFFF)
