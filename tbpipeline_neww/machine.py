@@ -10,6 +10,7 @@ from unicorn.x86_const import (
 )
 
 from .image import Sandbox
+from .ne import Segment
 
 
 def _descriptor(base, limit, access):
@@ -85,6 +86,7 @@ class Machine:
             access = 0x92 if seg.flags & 1 else 0x9A
             limit_b = 0xFFFF if len(seg.data) >= 0x10000 else max(len(seg.data) - 1, 0)
             self.uc.mem_write(seg.selector, _descriptor(seg.base, limit_b, access))
+        self.box.wine.allocate = self._allocate
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
         code = exe.segments[exe.entry_seg - 1]
@@ -115,6 +117,28 @@ class Machine:
             if not self.stop:
                 self.stop = "returned"
         return self
+
+    def _allocate(self, size):
+        """Map size bytes behind consecutive data selectors, 64K apart in linear memory.
+
+        Returns the first selector. Selector i covers base + i * 0x10000, the
+        __AHINCR tiling Wine's SELECTOR_AllocBlock gives a block over 64K.
+        """
+        span = (size + 0xFFF) & ~0xFFF
+        base = self.box.linear
+        self.box.linear += span
+        self.uc.mem_map(base, span)
+        first = None
+        for i in range((size + 0xFFFF) // 0x10000):
+            left = size - i * 0x10000
+            seg = Segment(0, 1, bytearray(min(left, 0x10000)))
+            sel = self.box._selector()
+            seg.selector = sel
+            seg.base = base + i * 0x10000
+            self.box.selectors[sel] = seg
+            self.uc.mem_write(sel, _descriptor(seg.base, left - 1, 0x92))
+            first = sel if first is None else first
+        return first
 
     def _selector(self, base, limit, access):
         sel = self.box._selector()
