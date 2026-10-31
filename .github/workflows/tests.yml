@@ -14,4 +14,6 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r tbpipeline_bf/requirements.txt -r tbpipeline_newl/requirements.txt -r tbpipeline_neww/requirements.txt
+      # tbpipeline_bf/runtime/debug/shapes.py imports PIL; its requirements.txt does not list it.
+      - run: pip install pillow
       - run: python3 -m unittest discover -s tests -t .
