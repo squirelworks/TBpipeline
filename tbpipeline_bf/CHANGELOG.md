@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `USER.266` `SetMessageQueue` returns TRUE, as Wine's `SetMessageQueue` does for any size.
 - `KERNEL.30` `WaitEvent` takes the start event Wine posts and returns FALSE. A wait with nothing pending stops the run.
 - `GDI.87` `GetStockObject` returns `index + 32`, Wine's stock handle, and 0 for a bad index.
 - `KERNEL.131` `GetDOSEnvironment` returns a far pointer to Wine's environment block layout, with no variables.
