@@ -1,6 +1,7 @@
 """Run the linked sandbox. A gate is a far call into Windows."""
 
 import struct
+import time
 from pathlib import Path
 
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_UNMAPPED
@@ -12,6 +13,10 @@ from unicorn.x86_const import (
 
 from .image import Sandbox
 from .ne import Segment
+
+
+# The cap stays. A run that ends on it says so.
+TIMEOUT_US = 15_000_000
 
 
 def _descriptor(base, limit, access):
@@ -111,14 +116,22 @@ class Machine:
         self.uc.mem_write(0xF020, blob)
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
+        started = time.monotonic()
         try:
-            self.uc.emu_start(0xF000, 0, timeout=15_000_000, count=limit)
+            self.uc.emu_start(0xF000, 0, timeout=TIMEOUT_US, count=limit)
         except UcError as exc:
             if not self.stop:
                 self.stop = str(exc)
         else:
             if not self.stop:
-                self.stop = "returned"
+                # There is no address to return to, so a quiet end is a cap.
+                cs = self.uc.reg_read(UC_X86_REG_CS)
+                ip = self.uc.reg_read(UC_X86_REG_IP)
+                if time.monotonic() - started >= TIMEOUT_US / 1e6:
+                    cap = f"{TIMEOUT_US // 1_000_000} second cap"
+                else:
+                    cap = f"instruction cap {limit:,}"
+                self.stop = f"{cap} at {cs:#x}:{ip:#x} with no gate call pending, after {self.calls} calls"
         return self
 
     def _write_guest(self, sel, offset, data):
