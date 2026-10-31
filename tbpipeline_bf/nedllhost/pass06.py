@@ -355,7 +355,9 @@ class Pass06(Pass04):
         procs, ords = self._export_procs_from(data, segs)
         self.mods[inst]["procs"] = procs
         self.mods[inst]["ords"] = ords
-        text = (" " + tail).encode("latin1") if tail else b""
+        # WinExec hands over the arguments without the program name or the
+        # blanks before them, the way Windows builds the new task's tail.
+        text = tail.strip().encode("latin1")
         psp = bytearray(0x100)
         psp[0x80] = len(text)
         psp[0x81:0x81 + len(text) + 1] = text + b"\r"
@@ -393,6 +395,10 @@ class Pass06(Pass04):
             self._fix_ret(ordinal)
             self.calls.append(ordinal)
             task["init"] = True
+            # The same ASCIIZ tail the runtime's InitTask gets.
+            line = self.arena.read(task["psp"], 0x81, 0x7F)
+            if b"\r" in line:
+                self.arena.write(task["psp"], 0x81 + line.index(b"\r"), b"\x00")
             uc.reg_write(UC_X86_REG_AX, 1)
             uc.reg_write(UC_X86_REG_BX, 0x81)
             uc.reg_write(UC_X86_REG_CX, task["stack"])

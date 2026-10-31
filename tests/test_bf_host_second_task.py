@@ -110,7 +110,7 @@ class SecondTask(unittest.TestCase):
         self.assertEqual(inst, task["inst"], "WinExec did not return the new instance")
         self.assertGreater(inst, 32)
         self.assertEqual(struct.unpack("<H", host.arena.read(inst, 0x10, 2))[0], inst, "InitTask DI")
-        self.assertEqual(host.arena.read(task["psp"], 0x81, 7), b" hello\r")
+        self.assertEqual(host.arena.read(task["psp"], 0x80, 7), b"\x05hello\x00", "the tail InitTask hands over")
         self.assertEqual(host.task_log[-1], "TASKTWO yielded at USER.108")
 
     def test_the_task_blocks_in_getmessage(self):
