@@ -5,6 +5,7 @@
 Not a release. `1.0.0r6` stays the version.
 
 - `USER.1` `MessageBox` stops the run, and the stop quotes the caption, the type and the text. It used to return `AX = 1`, which is `IDOK`: TB80UTL's internal-error box says "Press OK to continue", so the runtime ran past its own assertion and exited 0 without asking for the book.
+- The compressed-picture status line under every page says the host probe stops at its first import, `KERNEL.36`, not at `0x1FCD`. The far call there is bound now (#42), and the stop is from the bf host's run (#75).
 - Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files`. The known bug that they disagreed without saying why is gone.
 - Every far call that falls through to `AX = 1` is a line in the debug folder's `02_launch.txt`: module, ordinal, call site, and the first four argument words. It is written on every launch, not only when the run dies.
 - Kind-04 polygons are placed in `render.html` as SVG, at the record's twips / 15 from the page's top-left corner. Stage 2b says how many. Curve runs are still only files.
