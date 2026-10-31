@@ -123,6 +123,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
 USER = _table("USER", USER_SPEC, [
     "1   pascal -ret16 MessageBox(word str str word) MessageBox16",
     "66  pascal -ret16 GetDC(word) GetDC16",
+    "68  pascal -ret16 ReleaseDC(word word) ReleaseDC16",
     "108 pascal -ret16 GetMessage(ptr word word word) GetMessage16",
     "111 pascal   SendMessage(word word word long) SendMessage16",
     "118 pascal -ret16 RegisterWindowMessage(str) RegisterWindowMessageA",
@@ -637,15 +638,27 @@ class Wine:
     def _get_dc(self, hwnd):
         """Wine user.exe16/window.c GetDC16: HDC_16 of user32 GetDC. Returns (ax, dx, stop).
 
-        hwnd 0 is the screen. Wine takes a free DCE from its cache, so each GetDC without a
-        ReleaseDC is a new DC. Wine's HDC is a win32u GDI handle. neww numbers its own from
-        0x1004 by 4, which is never a selector.
+        hwnd 0 is the screen, a DCX_CACHE DCE of the desktop window. win32u dce.c
+        NtUserGetDCEx takes the first released DCE of that window in dce_list, which
+        list_add_head keeps newest first, or allocates a new one. Wine's HDC is a win32u
+        GDI handle. neww numbers its own from 0x1004 by 4, which is never a selector.
         """
         if hwnd:
             return 0, 0, f"USER.66 GetDC({hwnd:#x}): Wine gets a DC for that window, and neww has no windows"
-        hdc = 0x1004 + 4 * len(self.dcs)
-        self.dcs[hdc] = hwnd
+        free = [hdc for hdc, used in self.dcs.items() if not used]
+        hdc = max(free) if free else 0x1004 + 4 * len(self.dcs)
+        self.dcs[hdc] = True
         return hdc, 0, None
+
+    def _release_dc(self, hwnd, hdc):
+        """Wine ReleaseDC16, win32u dce.c release_dc: 1 for a DC in use, which goes back to the cache.
+
+        release_dc does not look at hwnd.
+        """
+        if not self.dcs.get(hdc):
+            return 0, 0, None
+        self.dcs[hdc] = False
+        return 1, 0, None
 
     def _register_window_message(self, name):
         """RegisterWindowMessageA: a string atom, 0xC000 to 0xFFFF, the same for the same name.
@@ -771,6 +784,8 @@ class Wine:
             return self._register_window_message(arg.string(0)), 0, None
         if ordinal == 66:
             return self._get_dc(arg(0))
+        if ordinal == 68:
+            return self._release_dc(arg(1), arg(0))
         if ordinal == 179:
             index = arg(0) - 0x10000 if arg(0) & 0x8000 else arg(0)
             return self._system_metrics(index)
