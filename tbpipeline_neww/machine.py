@@ -51,17 +51,23 @@ class Machine:
         self.stop = ""
         self.calls = 0
 
+    def _read(self, seg, offset, size):
+        # Once the CPU runs, the guest's memory is the truth, not the loaded image.
+        if self.uc is not None:
+            return bytes(self.uc.mem_read(seg.base + offset, size))
+        return bytes(seg.data[offset:offset + size])
+
     def word(self, sel, offset):
         seg = self.box.selectors.get(sel)
         if seg is None or offset + 2 > len(seg.data):
             return 0
-        return struct.unpack_from("<H", seg.data, offset)[0]
+        return struct.unpack("<H", self._read(seg, offset, 2))[0]
 
     def string(self, sel, offset):
         seg = self.box.selectors.get(sel)
         if seg is None or offset >= len(seg.data):
             return ""
-        raw = bytes(seg.data[offset:offset + 128])
+        raw = self._read(seg, offset, min(128, len(seg.data) - offset))
         return raw.split(b"\x00", 1)[0].decode("latin1", "replace")
 
     def run(self, limit=1_000_000):
