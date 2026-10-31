@@ -194,6 +194,12 @@ function show() {
     p.textContent = line;
     stage.appendChild(p);
   }
+  if (page.text.length && !page.textAt) {
+    const p = document.createElement("p");
+    p.className = "empty unplaced";
+    p.textContent = "Text position unknown: the field record's coordinates are not decoded, so this text is listed, not placed.";
+    stage.appendChild(p);
+  }
   if (page.shapes && page.shapes.length) {
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
@@ -371,6 +377,7 @@ def walked(book: Book, handlers: dict | None = None) -> list[dict]:
             "jumps": page.quoted_jumps[:16],
             "handlers": _clicks((handlers or {}).get(page.name)),
             "shapes": placed(page.blob),
+            "textAt": None,
         })
         try:
             engine.next()
