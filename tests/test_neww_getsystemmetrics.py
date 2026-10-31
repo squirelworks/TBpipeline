@@ -42,11 +42,18 @@ class GetSystemMetrics(unittest.TestCase):
             host, ax = run(index)
             self.assertEqual((host.stop, ax), ("dos exit 0x0", 0), index)
 
-    def test_host_metric_stops(self):
-        host, ax = run(2)
+    def test_fixed_at_96_dpi(self):
+        # SM_CXVSCROLL: SCROLLWIDTH -240 twips; SM_CYMENU: MENUHEIGHT 18 + 1; SM_CXMAXTRACK.
+        for index, value in ((2, 16), (15, 19), (59, 1036), (11, 32)):
+            host, ax = run(index)
+            self.assertEqual((host.stop, ax), ("dos exit 0x0", value), index)
+
+    def test_font_metric_stops(self):
+        # SM_CXMIN needs the caption font's average width.
+        host, ax = run(28)
         self.assertEqual(
             host.stop,
-            "USER.179 GetSystemMetrics(2): Wine reads it from the registry, fonts, or display, and neww has none of them",
+            "USER.179 GetSystemMetrics(28): Wine reads it from the registry, fonts, or display, and neww has none of them",
         )
         self.assertEqual(ax, 0xFFFF)
 

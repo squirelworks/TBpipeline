@@ -4,7 +4,7 @@ import struct
 import time
 from pathlib import Path
 
-from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED
+from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED, UC_HOOK_INTR
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DS,
@@ -26,6 +26,11 @@ from .ne import Segment
 
 # The GDT is at linear 0. Its copy, the LDT, is the next 64K.
 LDT_BASE = 0x10000
+
+# Where an INT 21h answer that sets ES or DS returns through, so the CPU loads the selectors.
+# Its selector's GDT base is selector * 16, so it is the same block by either rule.
+INT_TAIL_SEL = 0xFFF0
+INT_TAIL = INT_TAIL_SEL << 4
 
 # The cap stays. A run that ends on it says so.
 TIMEOUT_US = 15_000_000
@@ -126,7 +131,7 @@ class Machine:
         self.uc.reg_write(UC_X86_REG_LDTR, (0, LDT_BASE, 0xFFFF, 0x82))
         flat = self._selector(0, 0xFFFF, 0x9A)
         for seg in self.box.selectors.values():
-            size = (max(len(seg.data), 1) + 0xFFF) & ~0xFFF
+            size = max((max(len(seg.data), 1) + 0xFFF) & ~0xFFF, seg.room)
             self.uc.mem_map(seg.base, size)
             self.uc.mem_write(seg.base, bytes(seg.data))
             access = 0x92 if seg.flags & 1 else 0x9A
@@ -139,6 +144,7 @@ class Machine:
         self.box.wine.read = self._read_guest
         self.box.wine.linear = self._linear
         self.box.wine.write_linear = lambda addr, data: self.uc.mem_write(addr, bytes(data))
+        self.box.wine.read_linear = lambda addr, n: bytes(self.uc.mem_read(addr, n))
         self.box.wine.resize = self._resize
         self.box.wine.is_code = self._is_code
         self.box.wine.is_dll = self._is_dll
@@ -150,6 +156,18 @@ class Machine:
         self.box.wine.exe_name = exe.name
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
+        self.uc.hook_add(UC_HOOK_INTR, self._interrupt)
+        # DOSVM_GetPMHandler16's default vectors: int16_sel:5 * n, one stub per interrupt.
+        # Each is OUT 0EBh ; IRET here, so a call to one stops and names the interrupt.
+        stubs = self._alloc_code(256 * 5)
+        self.uc.mem_write(self.box.selectors[stubs].base, bytes([0xE6, 0xEB, 0xCF, 0x90, 0x90]) * 256)
+        self.box.wine.int_stubs = stubs
+        self._write_descriptor(INT_TAIL_SEL, _descriptor(INT_TAIL, 0xF, 0x9A))
+        self.uc.mem_write(INT_TAIL, bytes([
+            0x2E, 0x8E, 0x06, 0x10, 0x00,   # mov es, cs:[10h]
+            0x2E, 0x8E, 0x1E, 0x12, 0x00,   # mov ds, cs:[12h]
+            0x2E, 0xFF, 0x2E, 0x14, 0x00,   # jmp far cs:[14h]
+        ]))
         code = exe.segments[exe.entry_seg - 1]
         data = exe.segments[exe.auto - 1]
         psp = self._psp()
@@ -166,6 +184,9 @@ class Machine:
         self.initialized = set(names)
         # pop ds ; pop es ; retf: how a finished guest-call request returns to its caller.
         self.guest = []
+        self.tramp_free = []
+        self.tramp_retired = []
+        self.hook_serial = 0
         tail_base = self.box.linear
         self.box.linear += 0x1000
         self.uc.mem_map(tail_base, 0x1000)
@@ -361,6 +382,13 @@ class Machine:
             return "not a block"
         if size > 0x10000 or oldsize > 0x10000:
             return "a block over 64K would need its selector tiles moved, which neww does not do"
+        if size <= getattr(seg, "room", 0):
+            # Room reserved at this base: the block grows or shrinks where it is.
+            if size > len(seg.data):
+                self.uc.mem_write(seg.base + len(seg.data), bytes(size - len(seg.data)))
+            seg.data = bytearray(size)
+            self._write_descriptor(sel & ~7, _descriptor(seg.base, size - 1, 0x92))
+            return None
         data = self._read(seg, 0, min(len(seg.data), size))
         span = (size + 0xFFF) & ~0xFFF
         base = self.box.linear
@@ -368,6 +396,7 @@ class Machine:
         self.uc.mem_map(base, span)
         self.uc.mem_write(base, data)
         seg.base = base
+        seg.room = span
         seg.data = bytearray(size)
         self._write_descriptor(sel & ~7, _descriptor(base, size - 1, 0x92))
         return None
@@ -563,19 +592,44 @@ class Machine:
         code += bytes([0xB9, ident & 0xFF, ident >> 8, 0xE6, 0xE8, 0xCB])
         return code
 
+    # Trampoline slots: TRAMP_SLOT bytes each, with a selector of their own, reused.
+    TRAMP_SLOT = 0x200
+    TRAMP_BLOCK = 0x10000
+
     def _trampoline_for(self, call, ident):
-        """A code block that makes one call and reports it. Each block is used once."""
+        """A code block that makes one call and reports it.
+
+        A slot is taken back once its call has returned and the hook that saw OUT 0E8h has
+        ended, because the trampoline's retf still runs after that OUT.
+        """
         code = self._call_code(call, ident)
-        size = (len(code) + 0xFFF) & ~0xFFF
-        base = self.box.linear
-        self.box.linear += size
-        self.uc.mem_map(base, size)
+        if len(code) > self.TRAMP_SLOT:
+            raise ValueError(f"trampoline of {len(code)} bytes")
+        serial = self.hook_serial
+        keep = []
+        for slot, retired in self.tramp_retired:
+            if retired < serial:
+                self.tramp_free.append(slot)
+            else:
+                keep.append((slot, retired))
+        self.tramp_retired = keep
+        if not self.tramp_free:
+            base = self.box.linear
+            self.box.linear += self.TRAMP_BLOCK
+            self.uc.mem_map(base, self.TRAMP_BLOCK)
+            for off in range(0, self.TRAMP_BLOCK, self.TRAMP_SLOT):
+                self.tramp_free.append((self._selector(base + off, self.TRAMP_SLOT - 1, 0x9A), base + off))
+        sel, base = self.tramp_free.pop()
         self.uc.mem_write(base, bytes(code))
-        return self._selector(base, len(code) - 1, 0x9A)
+        # Unicorn keeps translated code by address: a reused slot must not run the old call.
+        self.uc.ctl_remove_cache(base, base + self.TRAMP_SLOT)
+        self.guest[ident].setdefault("slots", []).append((sel, base))
+        return sel
 
     def _start_guest(self, uc, request, pop):
         """The gate answered with a GuestCalls. Its retf (pop bytes) goes to the first call's
         trampoline instead of the caller."""
+        self.hook_serial += 1
         ss = uc.reg_read(UC_X86_REG_SS)
         sp = uc.reg_read(UC_X86_REG_SP)
         ident = len(self.guest)
@@ -608,6 +662,9 @@ class Machine:
             uc.emu_stop()
             return
         state = self.guest[ident]
+        self.hook_serial += 1
+        slot = state["slots"].pop()
+        self.tramp_retired.append((slot, self.hook_serial))
         ax, dx = uc.reg_read(UC_X86_REG_AX), uc.reg_read(UC_X86_REG_DX)
         index = len(state["results"])
         state["results"].append((ax, dx))
@@ -738,6 +795,12 @@ class Machine:
         if port == 0xE8:
             self._guest_result(uc)
             return
+        if port == 0xEB:
+            n = (uc.reg_read(UC_X86_REG_IP) - 2) // 5
+            self.stop = (f"INT {n:#x}: the guest called the default vector DOSVM_GetPMHandler16 gave it, "
+                         "Wine's builtin handler stub, which neww does not run")
+            uc.emu_stop()
+            return
         if port == 0xE5:
             slot = uc.reg_read(UC_X86_REG_DX)
             traps = self.box.traps
@@ -820,6 +883,46 @@ class Machine:
         if self.calls > self.call_limit:
             self.stop = "call limit"
             uc.emu_stop()
+
+    def _interrupt(self, uc, intno, user):
+        """INT n in 16-bit code. Wine's INSTR_EmulateInstruction sends INT 21h to
+        DOSVM_Int21Handler, the handler DOS3Call uses. Any other interrupt stops."""
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        wine = self.box.wine
+        if self._read_guest(cs, (ip - 2) & 0xFFFF, 2) != bytes([0xCD, intno]):
+            # Unicorn reports a CPU fault here too. Its IP is the faulting instruction.
+            self.stop = f"Unhandled CPU exception (UC_ERR_EXCEPTION) {self.where()}, exception {intno:#x}"
+            uc.emu_stop()
+            return
+        if intno in wine.pm_vectors:
+            seg, off = wine.pm_vectors[intno]
+            self.stop = (f"INT {intno:#x} {self.where()}: the guest set this vector to {seg:#x}:{off:#x}, "
+                         "and DOSVM_EmulateInterruptPM would call it, which neww does not do yet")
+            uc.emu_stop()
+            return
+        if intno != 0x21:
+            self.stop = f"INT {intno:#x} {self.where()}: Wine's builtin handler for it is not in neww"
+            uc.emu_stop()
+            return
+        self.calls += 1
+        sets, why = wine.int21(lambda name: uc.reg_read(REGISTERS[name]))
+        if why:
+            self.stop = why
+            uc.emu_stop()
+            return
+        es, ds = sets.pop("es", None), sets.pop("ds", None)
+        for name, value in sets.items():
+            uc.reg_write(REGISTERS[name], value & 0xFFFF)
+        if es is not None or ds is not None:
+            # Unicorn's register write gives ES or DS the real-mode base, selector * 16, not the
+            # descriptor's. So the CPU loads them: CS:IP goes to INT_TAIL, whose selector's
+            # descriptor base is its selector * 16, and the tail does mov es ; mov ds ; jmp far back.
+            tail = struct.pack("<HHHH", es if es is not None else uc.reg_read(UC_X86_REG_ES),
+                               ds if ds is not None else uc.reg_read(UC_X86_REG_DS), ip, cs)
+            uc.mem_write(INT_TAIL + 0x10, tail)
+            uc.reg_write(UC_X86_REG_CS, INT_TAIL_SEL)
+            uc.reg_write(UC_X86_REG_IP, 0)
 
     def _unmapped(self, uc, access, address, size, value, user):
         self.stop = f"unmapped {address:#x}"

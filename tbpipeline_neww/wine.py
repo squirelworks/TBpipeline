@@ -6,6 +6,7 @@ An ordinal with no contract stops the run. It does not invent a pop size.
 """
 
 import struct
+import time
 from pathlib import Path
 
 from .local import LocalHeap, Stop as LocalStop
@@ -110,8 +111,9 @@ def _table(module, path, lines):
 # Each line is copied from the spec file named above. ret: "word" in AX,
 # "long" in DX:AX, "register" when the call reads and sets registers.
 KERNEL = _table("KERNEL", KERNEL_SPEC, [
-    # Windows 3.10 in AX, DX 0. newl returns the same pair.
-    ("3   pascal GetVersion() GetVersion16", (0x0A03, 0)),
+    # kernel.c GetVersion16: Windows 3.10 in AX (RtlGetVersion 3.10, VER_PLATFORM_WIN32s), and
+    # DOS 6.22 in DX, the dosver Wine picks for Windows 3.1 and later.
+    ("3   pascal GetVersion() GetVersion16", (0x0A03, 0x0616)),
     "4   pascal -ret16 LocalInit(word word word) LocalInit16",
     "5   pascal -ret16 LocalAlloc(word word) LocalAlloc16",
     "7   pascal -ret16 LocalFree(word) LocalFree16",
@@ -188,12 +190,28 @@ METRICS[32], METRICS[33] = 3 + 1, 3 + 1
 # 11 * 2472 / 2048 = 13 pixels tall, so 18 stands.
 METRICS[4] = 18 + 1
 
-# The other cases of that switch. Any index that is not a case returns 0.
-METRICS_FROM_HOST = frozenset([
-    2, 3, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 34, 35,
-    36, 37, 38, 39, 40, 42, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
-    68, 69, 70, 71, 72, 76, 77, 78, 79, 80,
-])
+# The cases of that switch that are fixed at 96 dpi on one 1024x768 monitor, worked out from
+# the sysparams.c defaults: SCROLLWIDTH and SCROLLHEIGHT -240 twips are 16 pixels, CAPTIONWIDTH
+# and MENUHEIGHT and MENUWIDTH -270 are 18, SMCAPTIONHEIGHT and SMCAPTIONWIDTH -225 are 15,
+# ICONSPACING -1125 is 75, DOUBLECLKWIDTH, DOUBLECLKHEIGHT, DRAGWIDTH, DRAGHEIGHT are 4,
+# MOUSEBUTTONSWAP, MENUDROPALIGNMENT and SHOWSOUNDS are 0.
+METRICS.update({
+    2: 16, 3: 16, 9: 16, 10: 16, 20: 16, 21: 16,           # scroll bars and thumbs
+    11: 32, 12: 32, 13: 32, 14: 32,                          # icon, cursor
+    15: 18 + 1,                                              # SM_CYMENU
+    16: 1024 + 8 - 8, 17: 768 + 2 * 19 - (19 + 8),           # SM_CXFULLSCREEN, SM_CYFULLSCREEN
+    23: 0,                                                   # SM_SWAPBUTTON
+    29: 19 + 8, 35: 19 + 8,                                  # SM_CYMIN, SM_CYMINTRACK
+    30: 18, 31: 18,                                          # SM_CXSIZE, SM_CYSIZE
+    36: 4, 37: 4, 38: 75, 39: 75, 40: 0, 42: 0, 45: 2, 46: 2,
+    49: 16, 50: 16, 51: 15 + 1, 52: 15, 53: 15, 54: 18, 55: 18,
+    59: 1024 + 4 + 8, 60: 768 + 4 + 8, 61: 1024 + 8, 62: 768 + 2 * 19,
+    68: 4, 69: 4, 70: 0, 76: 0, 77: 0, 78: 1024, 79: 768, 80: 1,
+})
+
+# The rest need a font's metrics (SM_CXMIN, SM_CXMINTRACK, SM_CXMENUCHECK, SM_CYMENUCHECK)
+# or MINIMIZEDMETRICS (SM_CXMINSPACING and the minimized sizes), which neww does not have.
+METRICS_FROM_HOST = frozenset([28, 34, 47, 48, 56, 57, 58, 71, 72])
 
 GDI = _table("GDI", GDI_SPEC, [
     "80  pascal -ret16 GetDeviceCaps(word s_word) GetDeviceCaps16",
@@ -359,6 +377,10 @@ class Wine(KernelState):
         self.owner = None
         # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
         self.hooks = {}
+        # DOSVM_SetPMHandler16: interrupt -> (selector, offset) the guest set with INT 21h AH=25h.
+        self.pm_vectors = {}
+        # The selector of the default vector stubs, set by the machine.
+        self.int_stubs = 0
         self.dcs = {}
         # NE file path -> its Resources, read the first time a resource call names the module.
         self.tables = {}
@@ -487,14 +509,14 @@ class Wine(KernelState):
             return ok, 0, None
         if ordinal == 7:
             # LocalFree(word handle) in CURRENT_DS.
-            heap = LocalHeap(arg.regs("ds"), arg.word, self.write)
+            heap = self.local_heap(arg.regs("ds"), arg.word)
             try:
                 return heap.free(arg(0)), 0, None
             except LocalStop as why:
                 return 0, 0, f"KERNEL.7 LocalFree({arg(0):#x}): {why}"
         if ordinal == 5:
             # LocalAlloc(word flags, word size) in CURRENT_DS. Wine also returns the handle in CX.
-            heap = LocalHeap(arg.regs("ds"), arg.word, self.write)
+            heap = self.local_heap(arg.regs("ds"), arg.word)
             try:
                 handle = heap.alloc(arg(1), arg(0))
             except LocalStop as why:
@@ -595,12 +617,57 @@ class Wine(KernelState):
         if ordinal == 176:
             return 0, 0, None
         if ordinal == 102:
-            ax = arg.regs("ax")
-            if (ax >> 8) & 0xFF == 0x4C:
-                self.exit = ax & 0xFF
-                return ax, 0, f"dos exit {ax & 0xFF:#x}"
-            return 0, 0, None
+            # DOS3Call is DOSVM_Int21Handler, as INT 21h is.
+            sets, why = self.int21(arg.regs)
+            if why:
+                return 0, 0, why
+            ax = sets.pop("ax", arg.regs("ax"))
+            self.registers = sets
+            return ax, 0, None
         return 0, 0, f"unimplemented KERNEL.{ordinal}"
+
+    def int21(self, reg):
+        """Wine int21.c DOSVM_Int21Handler for the functions a run has reached. reg(name) reads a
+        register. Returns (registers to set, stop)."""
+        ax = reg("ax")
+        ah = ax >> 8
+        self.trace.append(f"INT21 AH={ah:#04x}")
+        if ah == 0x4C:
+            self.exit = ax & 0xFF
+            return {}, f"dos exit {ax & 0xFF:#x}"
+        if ah == 0x25:
+            # SET INTERRUPT VECTOR: DOSVM_SetPMHandler16(AL, DS:DX) in Win16.
+            n = ax & 0xFF
+            seg, off = reg("ds"), reg("dx")
+            if (seg, off) == (self.int_stubs, 5 * n):
+                self.pm_vectors.pop(n, None)
+            else:
+                self.pm_vectors[n] = (seg, off)
+            self.trace[-1] += f" INT {n:#x} -> {seg:#x}:{off:#x}"
+            return {}, None
+        if ah == 0x35:
+            # GET INTERRUPT VECTOR: DOSVM_GetPMHandler16(AL) in ES:BX, the default stub if unset.
+            n = ax & 0xFF
+            seg, off = self.pm_vectors.get(n, (self.int_stubs, 5 * n))
+            self.trace[-1] += f" INT {n:#x} is {seg:#x}:{off:#x}"
+            return {"es": seg, "bx": off}, None
+        if ah == 0x30:
+            # GET DOS VERSION: GetVersion16's DOS word, BH OEM 0xFF or flag 0x08, BL:CX Wine's serial.
+            dos = self.contract("KERNEL", 3).value[1]
+            bh = 0xFF if (ax & 0xFF) == 0 else 0x08
+            return {"ax": (dos & 0xFF) << 8 | dos >> 8, "bx": bh << 8 | 0x12, "cx": 0x3456}, None
+        if ah in (0x2A, 0x2C):
+            # GetLocalTime: the host's clock, as Wine reads it.
+            now = time.time()
+            t = time.localtime(now)
+            if ah == 0x2A:
+                # GET SYSTEM DATE: CX year, DH month, DL day, AL day of week (Sunday 0).
+                return {"cx": t.tm_year, "dx": t.tm_mon << 8 | t.tm_mday,
+                        "ax": (ax & 0xFF00) | (t.tm_wday + 1) % 7}, None
+            # GET SYSTEM TIME: CH hour, CL minute, DH second, DL hundredths.
+            ms = int(now * 1000) % 1000
+            return {"cx": t.tm_hour << 8 | t.tm_min, "dx": t.tm_sec << 8 | ms // 10}, None
+        return {}, f"INT 21h AH={ah:#04x} (AX={ax:#06x}): this DOSVM_Int21Handler function is not in neww yet"
 
     def resolve(self, path):
         """The host file a guest path opens, or None.
@@ -925,8 +992,9 @@ class Wine(KernelState):
         if index not in HOOKS16:
             # Wine: "hook type %d broken in Win16".
             return 0, 0, None
-        if task:
-            return 0, 0, f"USER.291 SetWindowsHookEx hTask={task:#x}: Wine compares it with GetCurrentTask, and neww has no task handle"
+        if task and task != self.htask:
+            # Wine: "setting hook (%d) on other task not supported".
+            return 0, 0, None
         if index in self.hooks:
             # Wine: "Multiple hooks (%d) for the same task not supported yet".
             return 0, 0, None
@@ -1054,7 +1122,8 @@ class Wine(KernelState):
 
     def resources(self, handle):
         """The resource table of the module a handle names (Wine get_module: NE_GetPtr), or None."""
-        module = self._exe_ptr(handle) if handle else 0
+        # get_module: hModule 0 is the current task's module.
+        module = self._exe_ptr(handle) if handle else self.modules.get(self.exe_name, 0)
         path = self.owner(module) if module else None
         if path is None:
             return None
@@ -1070,6 +1139,7 @@ class Wine(KernelState):
             # FindResource(word hModule, str name, str type)
             table = self.resources(arg(4))
             if table is None:
+                self.trace[-1] += f" hModule {arg(4):#x}: no NE module"
                 return 0, 0, None
             name = res_name(arg(2), arg(3), arg.machine.string)
             type_ = res_name(arg(0), arg(1), arg.machine.string)
@@ -1077,7 +1147,7 @@ class Wine(KernelState):
                 hrsrc = table.find(name, type_)
             except ResourceStop as why:
                 return 0, 0, f"KERNEL.60 FindResource({name!r}, {type_!r}): {why}"
-            self.trace[-1] += f" {name!r} type {type_!r} -> {hrsrc:#x}"
+            self.trace[-1] += f" {name!r} type {type_!r} in {arg(4):#x} -> {hrsrc:#x}"
             return hrsrc, 0, None
         if ordinal == 61:
             # LoadResource(word hModule, word hRsrc): NE_DefResourceHandler reads it into a new block.
@@ -1167,6 +1237,26 @@ class Wine(KernelState):
                 return size
         return self.size(sel)
 
+    def local_heap(self, ds, word):
+        """The local heap in DS, able to grow its segment as LOCAL_GrowHeap does."""
+        return LocalHeap(ds, word, self.write, grow=self._local_grow)
+
+    def _local_grow(self, ds):
+        """local.c LOCAL_GrowHeap's GlobalHandle16, GlobalSize16 and GlobalReAlloc16(hseg, 0x10000,
+        GMEM_FIXED). Returns (oldsize, newsize), or None when nothing can be gained."""
+        from .kernel16 import resize_block
+        sel = self.selector_of(ds)
+        if sel is None:
+            return None
+        handle = self.handle_of(sel)
+        oldsize = self._global_size(handle)
+        if oldsize > 0xFFF0:
+            return None
+        why = resize_block(self, handle, 0x10000)
+        if why:
+            raise LocalStop(f"LOCAL_GrowHeap: GlobalReAlloc({handle:#x}, 0x10000): {why}")
+        return oldsize, self._global_size(handle)
+
     def selector_of(self, handle):
         """GlobalHandleToSel16 in neww's numbering, moveable_handle's inverse. None if no block."""
         sel = handle & ~7
@@ -1239,12 +1329,17 @@ class Wine(KernelState):
 
     def _device_caps(self, hdc, cap):
         """Wine gdi.exe16/gdi.c GetDeviceCaps16 of a screen DC. Returns (ax, dx, stop)."""
-        if hdc not in self.dcs:
+        gdi = getattr(self, "gdi", None)
+        dc = gdi.objects.get(hdc) if gdi is not None else None
+        if hdc not in self.dcs and (dc is None or dc.kind != 3):
             return 0, 0, f"GDI.80 GetDeviceCaps({hdc:#x}, {cap}): not a DC neww made"
+        if dc is not None and dc.memory:
+            return 0, 0, f"GDI.80 GetDeviceCaps({hdc:#x}, {cap}) of a memory DC: Wine's dib driver answers for the selected bitmap"
         value = SCREEN_CAPS.get(cap, 0)
         if cap == 24 and value == -1:
             # NUMCOLORS: "some apps don't expect -1 and think it's a B&W screen".
             value = 2048
+        self.trace[-1] += f" {cap} -> {value}"
         return value & 0xFFFF, 0, None
 
     def _gdi(self, ordinal, arg):
@@ -1283,4 +1378,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res  # noqa: E402,F401

@@ -9,6 +9,8 @@ class Entry:
     segment: int
     offset: int
     movable: bool = False
+    # Entry table flags byte: 0x01 exported, 0x02 uses the shared DGROUP.
+    flags: int = 0
 
 
 @dataclass
@@ -30,6 +32,9 @@ class Segment:
     base: int = 0
     # The segment table's minimum allocation, before DGROUP gains the stack and heap.
     minsize: int = 0
+    # Linear bytes reserved for the segment. A DGROUP gets 64K, so GlobalReAlloc can grow it
+    # at the same base, as LOCAL_GrowHeap needs while DS still holds the old descriptor.
+    room: int = 0
 
 
 @dataclass
@@ -165,15 +170,16 @@ def _entries(data, ne):
                 ordinal += 1
                 continue
             if seg == 0xFF:
-                _flags = data[off]
+                flags = data[off]
                 seg_i = data[off + 3]
                 ip = _u16(data, off + 4)
                 off += 6
-                out[ordinal] = Entry(seg_i, ip, True)
+                out[ordinal] = Entry(seg_i, ip, True, flags)
             else:
+                flags = data[off]
                 ip = _u16(data, off + 1)
                 off += 3
-                out[ordinal] = Entry(seg, ip, False)
+                out[ordinal] = Entry(seg, ip, False, flags)
             ordinal += 1
     return out
 
