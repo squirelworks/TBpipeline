@@ -34,6 +34,8 @@ That is as far as `newl` has gone. The book is not open. Nobody has rerun startu
 
 The first run on real binaries, with `TBK_BIN` pointing at the packed install files, never reached a Windows call. `TB80RTM.EXE` is self-loading (NE flag `0x0800`), and its segment 2 has the iterated flag `0x0008`. `newl` leaves that segment as zeros, so the entry at `2:0x35A` ran zero bytes until it hit the instruction cap at `0x178:0x8628`. That is the earlier "cap at `0x178` offset `0x862A` with no Windows call taken". `newl` now refuses a packed file before the CPU starts. Run it on files that `tbpipeline_bf.nehost --unpack` wrote.
 
+On unpacked copies the run gets through 33 Windows calls. `TB80RCR` segment 2 (`0x1420`) then allocates a block at `0xBDA3`: `GlobalAlloc(0x2002, 0x1000)`, `GlobalLock`, and `GlobalSize` on the selector `GlobalLock` returned. `newl` kept sizes by handle only, so `GlobalSize` answered 0. A zero there sends `TB80RCR` down its error path with code `0x12` (`0xBDFB`). That path looks up the message for `0x12` in a table of word id and ASCIIZ text at offset `0x1276` (`0xBE06`), using the new 4K block as the segment. That lookup is the "scan for `0x0012` from `0x1276`" above. It was never a record the runtime forgot to write. It was the error message for a failed allocation. With `GlobalSize` answering for the selector, startup goes past it and stops at `gap USER.291 far call at 0x1428:0xc9a0`, which is `TB80RCR` segment 3 asking for `SetWindowsHookEx`.
+
 ### How a newl run ends
 
 Every run ends on one of these lines. A line that matches none of them is an anonymous fault, and that is a bug in `newl`.
