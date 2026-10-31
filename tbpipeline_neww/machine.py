@@ -120,6 +120,7 @@ class Machine:
             limit_b = 0xFFFF if len(seg.data) >= 0x10000 else max(len(seg.data) - 1, 0)
             self.uc.mem_write(seg.selector, _descriptor(seg.base, limit_b, access))
         self.box.wine.allocate = self._allocate
+        self.box.wine.size = self._size
         self.box.wine.write = self._write_guest
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
@@ -128,7 +129,7 @@ class Machine:
         psp = self._psp()
         # Wine ne_module.c NE_StartTask: the handle of a moveable DGROUP is selector - 1.
         instance = data.selector - 1 if data.flags & 0x0010 else data.selector
-        self.box.wine.task = {"psp": psp, "instance": instance, "dlls": self._dlls_to_init()}
+        self.box.wine.task = {"psp": psp, "instance": instance, "dgroup": data.selector, "dlls": self._dlls_to_init()}
         gdtr_at = 0xF0E0
         self.uc.mem_write(gdtr_at, struct.pack("<HI", 0xFFFF, 0))
         self.uc.mem_write(0xF000, bytes([
@@ -212,6 +213,11 @@ class Machine:
         if seg is None or offset + len(data) > len(seg.data):
             return
         self.uc.mem_write(seg.base + offset, data)
+
+    def _size(self, sel):
+        """GlobalSize16 of the block behind a selector."""
+        seg = self.box.selectors.get(sel)
+        return len(seg.data) if seg is not None else None
 
     def _allocate(self, size):
         """Map size bytes behind consecutive data selectors, 64K apart in linear memory.

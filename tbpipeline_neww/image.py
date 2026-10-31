@@ -106,9 +106,11 @@ class Sandbox:
         for image in self.images.values():
             for seg in image.segments:
                 if image is self.exe and seg.index == auto:
-                    extra = heap + stack
-                    if len(seg.data) + extra < 0x10000:
-                        seg.data.extend(b"\x00" * extra)
+                    # Wine ne_segment.c NE_CreateSegment: minsize + stack + heap, and
+                    # global.c GLOBAL_Alloc rounds a block up to 32 bytes.
+                    size = (len(seg.data) + heap + stack + 0x1F) & ~0x1F
+                    if size <= 0x10000:
+                        seg.data.extend(b"\x00" * (size - len(seg.data)))
                 self._place_segment(seg)
             if image.synthetic and image.segments:
                 sel = image.segments[0].selector

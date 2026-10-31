@@ -5,7 +5,7 @@ is not 0, then the DLL entry points (ne_segment.c NE_InitializeDLLs),
 then fills INSTANCEDATA and answers in registers: AX 1, BX the command
 line in the PSP, CX the stack top, DX nCmdShow, SI the previous
 instance, DI this instance, ES the PSP, and one zero word pushed.
-neww has no local heap and does not run LibMain, so those two stop.
+neww runs LocalInit16 itself and does not run LibMain, so a DLL with init code stops.
 No binary needed.
 """
 
@@ -90,19 +90,19 @@ class InitTask(unittest.TestCase):
         self.assertEqual(host.stop, "dos exit 0x0")
         self.assertEqual(host.uc.reg_read(UC_X86_REG_BX), 0x80)
 
-    def test_heap_size_stops_on_localinit_and_writes_nothing(self):
-        # mov ax, 0x5555 before the call: a stop leaves it.
-        host = self.run_program(heap=0x100, before=neww_ne.mov_ax(0x5555))
-        uc = host.uc
-        ds = uc.reg_read(UC_X86_REG_DS)
-        self.assertEqual(
-            host.stop,
-            f"KERNEL.91 InitTask calls LocalInit16(DS={ds:#x}, 0, CX=0x100) first (Wine task.c InitTask16). "
-            "neww has no local heap, KERNEL.4 LocalInit has no contract",
-        )
-        self.assertEqual(uc.reg_read(UC_X86_REG_AX), 0x5555)
-        self.assertEqual(uc.reg_read(UC_X86_REG_SP), 256 + 0x40 - 4)
-        self.assertEqual([host.word(ds, o) for o in (0x0A, 0x0C, 0x0E)], [0, 0, 0])
+    def test_heap_size_runs_localinit_at_the_end_of_dgroup(self):
+        host = self.run_program(heap=0x100)
+        self.assertEqual(host.stop, "dos exit 0x0")
+        ds = host.uc.reg_read(UC_X86_REG_DS)
+        # DGROUP is 256 + stack 0x40 + heap 0x100 = 0x240. Wine local.c LocalInit16(DS, 0, 0x100):
+        # start 0x140, heap info arena 0x14C, free arena 0x17C, last arena 0x234.
+        self.assertEqual(host.word(ds, 0x06), 0x150)
+        self.assertEqual(host.word(ds, 0x150 + 0x28), 0x484C)
+        self.assertEqual([host.word(ds, 0x150 + o) for o in (0x04, 0x06, 0x0A, 0x26)], [4, 0x140, 0x234, 0xB8])
+        self.assertEqual([host.word(ds, 0x17C + o) for o in (0, 2, 4)], [0x14C, 0x234, 0xB8])
+        self.assertEqual([host.word(ds, 0x234 + o) for o in (0, 2)], [0x17C, 0x234])
+        # The heap is above the stack: the InitTask return still worked.
+        self.assertEqual(host.word(ds, 0x20), 1)
 
     def test_dll_with_init_code_stops(self):
         host = self.run_program(modules=("KERNEL", "TB80BAS"))
