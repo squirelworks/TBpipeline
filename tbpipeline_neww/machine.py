@@ -155,6 +155,13 @@ class Machine:
         return sel
 
     def _out(self, uc, port, size, value, user):
+        if port == 0xE5:
+            slot = uc.reg_read(UC_X86_REG_DX)
+            traps = self.box.traps
+            text = traps[slot] if slot < len(traps) else f"trap {slot}"
+            self.stop = f"not linked: {text}. A ToolBook call with no target is a stop, not a gate"
+            uc.emu_stop()
+            return
         if port != 0xE4:
             return
         cs = uc.reg_read(UC_X86_REG_CS)
