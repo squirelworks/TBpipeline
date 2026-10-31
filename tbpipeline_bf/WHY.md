@@ -146,6 +146,8 @@ The default is still `AX = 1`. These are the calls that could not stay that way.
 
 **Resources and LoadLibrary.** `FindResource`, `LoadResource`, `LockResource`, `FreeResource`, `SizeofResource`, `AccessResource` read the NE resource table of a module the host indexed. `LoadLibrary` looks in `TBK_UNPACKED` for the file. `TB80ENU` is an alias of `TB80ENU1.DLL`. The handle is that module's DGROUP selector, which is also how a Win16 DLL's `HINSTANCE` works. `USER.176` `LoadString` walks the string table: block `(id >> 4) + 1`, sixteen counted strings, copy into the caller's buffer, return the character count. The ids at the call sites that motivated it are `0xBB8` = `EXTENSIONS` in `TB80OLE`, and `0x69` / `0x6A` = `TB80CVT.DLL` and ` -TB300%s,%u,%u,%u` in `TB80BAS`. If the instance handle does not match, the search tries `DS`, then every loaded module. A missing string returns 0. It does not return 1.
 
+**KEYBOARD.5** `AnsiToOem` is answered. TB80BAS segment 10 builds the book's path at `0x2C0A`: `lstrlen` of the name, then `AnsiToOem` into one stack buffer, then `OemToAnsi` (`KEYBOARD.6`) into another, then `OpenFile` through TB80W16. With both at `AX = 1` the buffers kept stack garbage and `OpenFile` got `'P\x07'`; the runtime said "Not a valid file name." The conversion maps 1252 to 437 byte by byte and keeps a byte either side cannot name. `KEYBOARD` has a pop table entry now, so the call is dispatched by module; `-1` is the return Wine gives.
+
 **USER.179** `GetSystemMetrics` returns a small table. Metric `0x29` is `SM_PENWINDOWS`. A non-zero value makes startup call `RegisterPenApp` through a null pointer. It stays 0.
 
 **USER.266** `SetMessageQueue` is the ordinal `run.py` prints by name. The return is 1. There is no queue.
