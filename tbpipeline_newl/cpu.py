@@ -54,6 +54,7 @@ class Cpu:
         self.stop = ""
         self.exe = None
         self.glock = {}
+        self.packed = []  # self-loading files in --b whose segments are still packed
         self.ignored = []  # system-module files found in --b and not loaded
         self.recent = deque(maxlen=20)  # (cs, ip) of the last basic blocks
         self.blocks = {}  # linear base -> {"handle", "selector", "size", "written"}
@@ -84,6 +85,9 @@ class Cpu:
             exes = [img for img in images.values() if img["path"].upper().endswith(".EXE")]
             self.exe = exes[0] if exes else None
         self.images = by_name
+        # A self-loading image (NE flag 0x0800) keeps its segments packed until
+        # its own loader runs. newl does not run it, so those bytes are not code.
+        self.packed = sorted(Path(img["path"]).name for img in by_name.values() if img["ne_flags"] & 0x0800)
         self._gates()
         self._place()
         self._link()
@@ -123,7 +127,7 @@ class Cpu:
         return {
             "path": str(path), "name": name or path.stem.upper(), "data": data, "ne": ne,
             "entry_seg": (csip >> 16) & 0xFFFF, "entry_ip": csip & 0xFFFF,
-            "auto": _u16(data, ne + 0x0E), "heap": _u16(data, ne + 0x10), "stack": _u16(data, ne + 0x12),
+            "ne_flags": _u16(data, ne + 0x0C), "auto": _u16(data, ne + 0x0E), "heap": _u16(data, ne + 0x10), "stack": _u16(data, ne + 0x12),
             "modules": [m.upper() for m in imported_modules(data, ne)],
             "entries": entries, "names": names, "segments": segments, "fixups": fixups,
         }
@@ -312,6 +316,10 @@ class Cpu:
         if exe is None:
             self.stop = "no executable"
             return self
+        if self.packed:
+            self.stop = (f"packed {', '.join(self.packed)}: self-loading (NE flag 0x0800), and newl does not "
+                         f"unpack. Unpack first: python3 -m tbpipeline_bf.nehost --unpack FILE -o FILE")
+            return self
         self.uc = Uc(UC_ARCH_X86, UC_MODE_16)
         self.uc.mem_map(0, 0x100000)
         flat = self._map_selector(0, 0xFFFF, 0x9A)
@@ -464,6 +472,8 @@ class Cpu:
             uc.hook_add(UC_HOOK_MEM_WRITE, self._block_write, base, base, base + size - 1)
             uc.hook_add(UC_HOOK_MEM_READ, self._block_read, base, base, base + size - 1)
             self.layer.gsizes[ax] = size
+            # GlobalSize takes the selector GlobalLock returned as well as the handle.
+            self.layer.gsizes[self.glock[ax]] = size
         if module == "KERNEL" and ordinal == 18:
             uc.reg_write(UC_X86_REG_DX, self.glock.get(args[0] if args else 0, 0))
             ax = 0
@@ -483,7 +493,8 @@ class Cpu:
             if seg is not None:
                 uc.mem_write(seg["base"] + args[1], self.layer.last_read)
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
-        if module == "KERNEL" and ordinal == 84:
+        if module == "KERNEL" and ordinal in (20, 84):
+            # DWORD answers: GlobalSize and _llseek return DX:AX.
             uc.reg_write(UC_X86_REG_DX, (ax >> 16) & 0xFFFF)
         elif not (module == "KERNEL" and ordinal in (18, 91, 131)):
             uc.reg_write(UC_X86_REG_DX, 0)
