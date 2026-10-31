@@ -281,7 +281,7 @@ def win_exec(wine, arg):
     """ne_module.c WinExec16(lpCmdLine, nCmdShow) -> LoadModule16 -> NE_CreateThread.
 
     SearchPathA finds the file, ".exe" added when it has no extension, in the application's
-    directory first, which is --b. A missing file is 21 for a bare name and
+    directory first, which is --b. A missing file is 1 for a bare name (winoldap's exit code) and
     ERROR_FILE_NOT_FOUND, 2, for a name with a path.
     For an executable, TASK_SpawnTask makes the task and PostEvent16 posts its event. The
     caller then loops on DirectedYield16(hTask): the child runs until it first waits, and
@@ -295,15 +295,18 @@ def win_exec(wine, arg):
     if why:
         return 0, 0, f"KERNEL.166 WinExec({line!r}): {why}"
     if image is None:
-        # SearchPathA failed. A name with no path is tried as a 16-bit builtin, which neww's
-        # gates are not, and ERROR_FILE_NOT_FOUND becomes 21 ("might be a 32-bit builtin").
-        # Wine then hands 21 to winoldap.mod, which neww does not have, so 21 is the answer.
-        # A name with a drive or a slash is ERROR_FILE_NOT_FOUND, 2.
+        # SearchPathA failed. A name with a drive or a slash is ERROR_FILE_NOT_FOUND, 2. A bare
+        # name is tried as a 16-bit builtin, which fails, and ERROR_FILE_NOT_FOUND becomes 21
+        # (ne_module.c:1462-1467). With 21, WinExec16 loads winoldap.mod with the whole string
+        # and returns what that gives (:1477-1497). Wine's winoldap.mod16 WinMain16 starts with
+        # exit_code = 1, CreateProcessA fails for a missing file, and it calls ExitThread(1)
+        # before it ever waits (programs/winoldap.mod16/winoldap.c:65,72,88). NE_CreateThread's
+        # DirectedYield16 loop then finds the task dead and returns its exit code (:928-935): 1.
         if contains_path(name):
             wine.trace[-1] += " not found"
             return 2, 0, None
-        wine.trace[-1] += " not found, no 16-bit builtin: 21"
-        return 21, 0, None
+        wine.trace[-1] += " not found: winoldap.mod's task ends with exit code 1"
+        return 1, 0, None
     child = wine.spawn(image, cmdline, show)
     if isinstance(child, str):
         return 0, 0, f"KERNEL.166 WinExec({line!r}): {child}"

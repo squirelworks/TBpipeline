@@ -139,9 +139,10 @@ class Spawn(unittest.TestCase):
         self.assertEqual(len(host.box.wine.tasks), 1)
         return word(host, host.box.exe.segments[1].selector, 0x40)
 
-    def test_missing_bare_name_is_21(self):
-        # WinExec16: no path, so the 16-bit builtin is tried and ERROR_FILE_NOT_FOUND becomes 21.
-        self.assertEqual(self.missing("CHILD.EXE hello"), 21)
+    def test_missing_bare_name_is_winoldaps_exit_code_1(self):
+        # WinExec16: no path, so the 16-bit builtin is tried, 21 hands the string to winoldap.mod,
+        # whose WinMain16 fails CreateProcessA and ends with exit code 1, which NE_CreateThread returns.
+        self.assertEqual(self.missing("CHILD.EXE hello"), 1)
 
     def test_missing_name_with_a_path_is_error_2(self):
         self.assertEqual(self.missing("C:\\TBK\\CHILD.EXE hello"), 2)
