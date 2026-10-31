@@ -3,7 +3,10 @@
 import struct
 from pathlib import Path
 
-from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_UNMAPPED
+from unicorn import (
+    Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ,
+    UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE,
+)
 from unicorn.x86_const import (
     UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS,
     UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DX, UC_X86_REG_ES,
@@ -47,6 +50,7 @@ class Cpu:
         self.stop = ""
         self.exe = None
         self.glock = {}
+        self.blocks = {}  # linear base -> {"handle", "selector", "size", "written"}
         self._load()
 
     def _selector(self):
@@ -418,6 +422,9 @@ class Cpu:
             self.linear += size
             uc.mem_map(base, size)
             self.glock[ax] = self._map_selector(base, size - 1, 0x92)
+            self.blocks[base] = {"handle": ax, "selector": self.glock[ax], "size": size, "written": bytearray(size)}
+            uc.hook_add(UC_HOOK_MEM_WRITE, self._block_write, base, base, base + size - 1)
+            uc.hook_add(UC_HOOK_MEM_READ, self._block_read, base, base, base + size - 1)
             self.layer.gsizes[ax] = size
         if module == "KERNEL" and ordinal == 18:
             uc.reg_write(UC_X86_REG_DX, self.glock.get(args[0] if args else 0, 0))
@@ -453,6 +460,66 @@ class Cpu:
             except UcError:
                 pass
         return cs, ip, "return"
+
+    def _block_write(self, uc, access, address, size, value, base):
+        block = self.blocks[base]
+        at = address - base
+        block["written"][at:at + size] = b"\x01" * size
+
+    def _block_read(self, uc, access, address, size, value, base):
+        """A string scan over GlobalAlloc memory nothing wrote is the stop.
+
+        The layer hands back zeros. A lods/scas/cmps that reads them is
+        looking for a record the runtime never made, and walking on only
+        reaches the segment limit.
+        """
+        block = self.blocks[base]
+        at = address - base
+        if any(block["written"][at:at + size]):
+            return
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        op, after = self._string_op(cs, ip)
+        if op is None:
+            return
+        want = self._compared(cs, after)
+        self.stop = (f"scan {op} at {cs:#x}:{ip:#x} read {block['selector']:#x}:{at:#x}, "
+                     f"GlobalAlloc block {block['handle']:#x} that nothing wrote")
+        if want is not None:
+            self.stop += f", looking for {want:#06x}"
+        uc.emu_stop()
+
+    def _code(self, cs, ip, n):
+        seg = self.selectors.get(cs)
+        if seg is None:
+            return b""
+        try:
+            return bytes(self.uc.mem_read(seg["base"] + ip, n))
+        except UcError:
+            return b""
+
+    def _string_op(self, cs, ip):
+        raw = self._code(cs, ip, 6)
+        names = {0xAC: "lodsb", 0xAD: "lodsw", 0xAE: "scasb", 0xAF: "scasw", 0xA6: "cmpsb", 0xA7: "cmpsw"}
+        prefix = ""
+        for i, byte in enumerate(raw):
+            if byte in (0xF2, 0xF3):
+                prefix = "repne " if byte == 0xF2 else "repe "
+                continue
+            if byte in (0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67):
+                continue
+            if byte in names:
+                return prefix + names[byte], ip + i + 1
+            return None, ip
+        return None, ip
+
+    def _compared(self, cs, ip):
+        raw = self._code(cs, ip, 4)
+        if raw[:1] == b"\x3d" and len(raw) >= 3:
+            return struct.unpack_from("<H", raw, 1)[0]
+        if raw[:2] == b"\x83\xf8" and len(raw) >= 3:
+            return raw[2] - 0x100 & 0xFFFF if raw[2] & 0x80 else raw[2]
+        return None
 
     def _unmapped(self, uc, access, address, size, value, user):
         self.stop = f"unmapped {address:#x}"
