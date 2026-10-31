@@ -14,6 +14,7 @@ from .local import LocalHeap, Stop as LocalStop
 WINE_COMMIT = "2528aff26208257fdbf980666a4f0e66d47563ce"
 KERNEL_SPEC = "dlls/krnl386.exe16/krnl386.exe16.spec"
 USER_SPEC = "dlls/user.exe16/user.exe16.spec"
+GDI_SPEC = "dlls/gdi.exe16/gdi.exe16.spec"
 WIN87EM_SPEC = "dlls/win87em.dll16/win87em.dll16.spec"
 
 # Bytes on the 16-bit Pascal stack for each Wine argument type.
@@ -163,6 +164,45 @@ METRICS_FROM_HOST = frozenset([
     68, 69, 70, 71, 72, 76, 77, 78, 79, 80,
 ])
 
+GDI = _table("GDI", GDI_SPEC, [
+    "80  pascal -ret16 GetDeviceCaps(word s_word) GetDeviceCaps16",
+])
+
+# win32u driver.c nulldrv_GetDeviceCaps, for the screen DC with no display driver: the
+# null user driver's DC functions are nulldrv's. The display is default_update_display_devices'
+# modes[2], 1024x768 at 32 bits and 60 Hz, and a Win16 task is DPI unaware, 96 dpi. Sizes in
+# millimetres are win32u mapping.c muldiv(res, 254, dpi * 10), which rounds to nearest.
+# SIZEPALETTE is 0, so RASTERCAPS has no RC_PALETTE. A cap with no case is 0.
+SCREEN_CAPS = {
+    0: 0x4000,      # DRIVERVERSION
+    2: 1,           # TECHNOLOGY, DT_RASDISPLAY
+    4: 271,         # HORZSIZE, muldiv(1024, 254, 960)
+    6: 203,         # VERTSIZE, muldiv(768, 254, 960)
+    8: 1024,        # HORZRES
+    10: 768,        # VERTRES
+    12: 32,         # BITSPIXEL, get_display_depth of the current mode
+    14: 1,          # PLANES
+    16: -1,         # NUMBRUSHES
+    18: -1,         # NUMPENS
+    24: -1,         # NUMCOLORS, -1 above 4 bits
+    28: 0x01FF,     # CURVECAPS
+    30: 0x00FE,     # LINECAPS
+    32: 0x00FF,     # POLYGONALCAPS
+    34: 0x79F7,     # TEXTCAPS
+    36: 1,          # CLIPCAPS, CP_RECTANGLE
+    38: 0xBE99,     # RASTERCAPS
+    40: 36,         # ASPECTX
+    42: 36,         # ASPECTY
+    44: 51,         # ASPECTXY, (int)(hypot(36, 36) + 0.5)
+    88: 96,         # LOGPIXELSX
+    90: 96,         # LOGPIXELSY
+    106: 20,        # NUMRESERVED
+    108: 24,        # COLORRES, min(24, 32)
+    116: 60,        # VREFRESH
+    117: 768,       # DESKTOPVERTRES
+    118: 1024,      # DESKTOPHORZRES
+}
+
 WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
     "1 pascal -register __fpMath()",
 ])
@@ -243,6 +283,8 @@ class Wine:
             return KERNEL.get(ordinal)
         if module == "USER":
             return USER.get(ordinal)
+        if module == "GDI":
+            return GDI.get(ordinal)
         if module == "WIN87EM":
             return WIN87EM.get(ordinal)
         return None
@@ -276,6 +318,8 @@ class Wine:
             return self._kernel(ordinal, arg)
         if module == "USER":
             return self._user(ordinal, arg)
+        if module == "GDI":
+            return self._gdi(ordinal, arg)
         if module == "WIN87EM" and ordinal == 1:
             return self._fpmath(arg)
         return 0, 0, self.missing(module, ordinal)
@@ -705,6 +749,22 @@ class Wine:
             )
         # The switch's default.
         return 0, 0, None
+
+    def _device_caps(self, hdc, cap):
+        """Wine gdi.exe16/gdi.c GetDeviceCaps16 of a screen DC. Returns (ax, dx, stop)."""
+        if hdc not in self.dcs:
+            return 0, 0, f"GDI.80 GetDeviceCaps({hdc:#x}, {cap}): not a DC neww made"
+        value = SCREEN_CAPS.get(cap, 0)
+        if cap == 24 and value == -1:
+            # NUMCOLORS: "some apps don't expect -1 and think it's a B&W screen".
+            value = 2048
+        return value & 0xFFFF, 0, None
+
+    def _gdi(self, ordinal, arg):
+        if ordinal == 80:
+            cap = arg(0) - 0x10000 if arg(0) & 0x8000 else arg(0)
+            return self._device_caps(arg(1), cap)
+        return 0, 0, self.missing("GDI", ordinal)
 
     def _user(self, ordinal, arg):
         if ordinal == 118:
