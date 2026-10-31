@@ -6,6 +6,10 @@ Not a release. `1.0.0r6` stays the version.
 
 - `OpenFile` with `OF_DELETE` removes a file the guest created and returns 1. Any other path, the book included, returns `0xFFFF` with error 2.
 - `OpenFile` with `OF_CREATE` creates or truncates a file the host keeps, never on disk. Later opens of the same path find it, and every handle shares its bytes.
+- `OpenFile` with `OF_REOPEN` opens the `szPathName` the `OFSTRUCT` already holds and leaves it there. It used to qualify the NULL name and write `C:\TOOLBOOK\` over the path.
+- `LoadLibrary` of a module Windows has loaded (KERNEL, USER, GDI, KEYBOARD, SYSTEM, SOUND, DISPLAY, MOUSE) returns that module's handle. It used to return 2, file not found, and TB80W16 asked for KERNEL again until the instruction cap.
+- int 2Fh `AX = 150Bh`, the MSCDEX CD-ROM drive check, comes back with every register unchanged, as DOS does with nothing on the multiplex, so `BX` is not `ADADh`. Every other int 2Fh call still stops the run.
+- `USER.471` `lstrcmpi` compares the two strings without case and returns -1, 0 or 1. It used to fall through to `AX = 1`, "greater" for every pair, so TB80NET never matched its command line "ToolBook".
 - `KERNEL.21` `GlobalHandle` returns the handle in AX and the selector in DX; in this host they are the same value. TB80UTL's heap maker keeps DX as the new heap's selector, and DX = 0 gave TB80BAS a heap at selector 0.
 - `USER.420` `wsprintf` formats into the caller's buffer, and its pop size is 0: it is cdecl, and the caller does `add sp, 0xE`. The table had 8. The message box the book open stops on now reads "A internal error has occurred in File 'Unknown' line 629." The `TB80enu` open was the unformatted buffer: the entry asks for `C:\TOOLBOOK\TB80enu1.DLL`.
 - `USER.1` `MessageBox` stops the run, and the stop quotes the caption, the type and the text. It used to return `AX = 1`, which is `IDOK`: TB80UTL's internal-error box says "Press OK to continue", so the runtime ran past its own assertion and exited 0 without asking for the book.
@@ -16,6 +20,7 @@ Not a release. `1.0.0r6` stays the version.
 - `KEYBOARD.5` `AnsiToOem` copies the string into the destination, ANSI (1252) to OEM (437), and returns `-1`. Its pop, 8, is in the table. `AX = 1` copied nothing, so the book's path was whatever TB80BAS's stack buffer held.
 - `InitTask` makes the PSP command tail ASCIIZ, the way Windows does: the carriage return after the book name becomes a NUL. TB80RTM's C startup passes the tail to WinMain as `lpCmdLine`, and its name parser stopped only at space, tab or NUL, so the book open asked for `fixture.tbk\r`.
 - `OpenFile` fills the caller's `OFSTRUCT` (`cBytes` 136, `nErrCode`, the qualified `szPathName`) and honours two styles: `OF_PARSE` returns 0 and opens nothing, `OF_EXIST` closes the file again. A relative name is qualified with `C:\TOOLBOOK\`, the directory `GetModuleFileName` already reports.
+- `KERNEL.166` `WinExec` stops the run and quotes the command line. It is the wall of item 27: TB80BAS starts its book file manager, `TB80NET.EXE`, as a second task, and `known-bugs.md` says what the way past would take.
 - Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files`. The known bug that they disagreed without saying why is gone.
 - Every far call that falls through to `AX = 1` is a line in the debug folder's `02_launch.txt`: module, ordinal, call site, and the first four argument words. It is written on every launch, not only when the run dies.
 - Kind-04 polygons are placed in `render.html` as SVG, at the record's twips / 15 from the page's top-left corner. Stage 2b says how many. Curve runs are still only files.
