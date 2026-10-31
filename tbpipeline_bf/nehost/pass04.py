@@ -356,6 +356,13 @@ class Pass04:
         if ordinal == 19:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
+        # GlobalUnWire(handle). Wine's GlobalUnWire16 is !GlobalUnlock16:
+        # TRUE once the lock count is 0, and TRUE for a handle that is not a
+        # block, since GlobalUnlock16 gives FALSE there. This host keeps no
+        # lock counts (GlobalUnlock above answers 0), so it is always TRUE.
+        if ordinal == 112:
+            uc.reg_write(UC_X86_REG_AX, 1)
+            return True
         if ordinal == 21:
             # GlobalHandle: AX is the handle, DX the selector, and here they
             # are one value. TB80UTL keeps DX as a heap's selector; DX = 0

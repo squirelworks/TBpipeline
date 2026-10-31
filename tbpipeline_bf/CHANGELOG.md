@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `KERNEL.112` `GlobalUnWire` is answered with TRUE, as Wine's `GlobalUnWire16` (`!GlobalUnlock16`) is once no lock is left. This host keeps no lock counts. TBFILE32's `CopyFile32` and `getShortFileName32`, which `tb80axf.sbk` links, call it. It used to fall through to `AX = 1` unanswered.
 - `KERNEL.127` `GetPrivateProfileInt` reads the key's number from the INI `TBK_INI` supplies, the way Wine's `GetPrivateProfileInt16` does (`RtlUnicodeStringToInteger`, base 0, cast to INT16). A missing or empty value returns the default. It used to fall through to `AX = 1`, so every numeric key read as 1.
 - `KERNEL.513` `LoadLibraryEx32W` maps a 32-bit DLL from `TBK_UNPACKED` at its image base, binds its imports to stubs, and runs its entry point with `DLL_PROCESS_ATTACH` as 32-bit code. It returns the image base, or 0 when the file is missing or `DllMain` says FALSE, as Wine's `LoadLibraryEx32W16` returns `LoadLibraryExA`'s handle. A Win32 system DLL returns its handle without a file. A Win32 import with no answer stops the run and is named. The real run never reaches it yet: `GetProcAddress(KERNEL, 513)` still returns 0.
 - `KERNEL.516` `GetVDMPointer32W` returns the 32-bit linear address of a 16:16 pointer in DX:AX, as Wine's `GetVDMPointer32W16` (`K32WOWGetVDMPointer`) does: the selector's base plus the offset in protected mode, `seg * 16 + off` in real mode. It used to fall through to `AX = 1`.
