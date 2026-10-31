@@ -837,20 +837,21 @@ class Pass04:
         return True
 
     def _keyboard(self, ordinal):
-        # AnsiToOem(src, dst). AX=1 copied nothing, and TB80BAS opened the
-        # book under whatever its stack buffer held.
-        if ordinal != 5:
+        # AnsiToOem(src, dst) and OemToAnsi(src, dst). AX=1 copied nothing,
+        # and TB80BAS opened the book under whatever its stack buffer held.
+        if ordinal not in (5, 6):
             return False
+        codecs = ("cp1252", "cp437") if ordinal == 5 else ("cp437", "cp1252")
         dst, src = (self._word(1), self._word(0)), (self._word(3), self._word(2))
         text = self._string(*src).encode("latin1")
-        oem = bytearray()
+        out = bytearray()
         for ch in text:
             try:
-                oem += bytes([ch]).decode("cp1252").encode("cp437")
+                out += bytes([ch]).decode(codecs[0]).encode(codecs[1])
             except (UnicodeDecodeError, UnicodeEncodeError):
-                oem.append(ch)
+                out.append(ch)
         if dst[0] in self.arena.segs:
-            self.arena.write(dst[0], dst[1], bytes(oem) + b"\x00")
+            self.arena.write(dst[0], dst[1], bytes(out) + b"\x00")
         self.uc.reg_write(UC_X86_REG_AX, 0xFFFF)
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
