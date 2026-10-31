@@ -30,6 +30,7 @@ SYSTEM_MODULES = {"KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND", "DISPL
 INITTASK = 91
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
+OF_REOPEN = 0x8000
 
 # Names other than *.ini the entry opens that TBK_INI may answer. The
 # pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
@@ -467,6 +468,10 @@ class Pass04:
         if ordinal == 74:
             style = self._word(0)
             path = self._string(self._word(4), self._word(3))
+            if style & OF_REOPEN:
+                # The name is the szPathName an earlier OpenFile left in
+                # the OFSTRUCT; lpFileName is not read.
+                path = self._string(self._word(2), (self._word(1) + 8) & 0xFFFF)
             self.opens.append(path)
             self.open_styles.append((path, style))
             print(f"  open {path}", file=sys.stderr, flush=True)

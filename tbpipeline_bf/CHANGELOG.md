@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `OpenFile` with `OF_REOPEN` opens the `szPathName` the `OFSTRUCT` already holds and leaves it there. It used to qualify the NULL name and write `C:\TOOLBOOK\` over the path.
 - `LoadLibrary` of a module Windows has loaded (KERNEL, USER, GDI, KEYBOARD, SYSTEM, SOUND, DISPLAY, MOUSE) returns that module's handle. It used to return 2, file not found, and TB80W16 asked for KERNEL again until the instruction cap.
 - int 2Fh `AX = 150Bh`, the MSCDEX CD-ROM drive check, comes back with every register unchanged, as DOS does with nothing on the multiplex, so `BX` is not `ADADh`. Every other int 2Fh call still stops the run.
 - `USER.471` `lstrcmpi` compares the two strings without case and returns -1, 0 or 1. It used to fall through to `AX = 1`, "greater" for every pair, so TB80NET never matched its command line "ToolBook".
