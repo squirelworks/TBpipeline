@@ -51,7 +51,7 @@ def run(book_path, out, dbgrender=False, theme="default", render="new"):
     html_path = out / "render.html"
     html_path.write_text(render_new(book, theme, manifest, resources, opened.handlers), encoding="utf-8")
     wrote = [f"  wrote {html_path} ({html_path.stat().st_size} bytes) engine"]
-    wrote.append(f"  render/ {len(manifest)} pages")
+    wrote.append(f"  render/ {len(manifest)} pages with a drawing")
     wrote.append(f"  resources/ {len(resources['book'])} book, {sum(len(v) for v in resources['pages'].values())} in pages")
     if render == "old":
         old_path = out / "render-old.html"
@@ -78,7 +78,7 @@ def run(book_path, out, dbgrender=False, theme="default", render="new"):
         "stage 2c",
         f"  {prompt}",
         f"  {', '.join(files)}",
-        f"  render/ {len(drawn)} pages that can be drawn and are not placed",
+        f"  render/ {len(drawn)} PNG files, drawn and not placed",
     ]
     (out / "02c.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
     lines.extend(block)
