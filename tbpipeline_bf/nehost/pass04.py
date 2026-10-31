@@ -411,11 +411,30 @@ class Pass04:
             return False
         self.arena.grow(seg, (need + 0xFFF) & ~0xFFF)
         heap["end"] = self.arena.segs[seg]["size"]
-        # The descriptor moved. Reload any segment register holding it.
-        for reg in (UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS):
-            if self.uc.reg_read(reg) == seg:
-                self.uc.reg_write(reg, seg)
+        # The descriptor moved, and DS or ES still caches the old base.
+        # Unicorn loads a segment register written from the host as a
+        # real-mode paragraph, so the guest has to reload it: the thunk's
+        # retf goes through a stub that does, then returns to the caller.
+        if seg in (self.uc.reg_read(UC_X86_REG_DS), self.uc.reg_read(UC_X86_REG_ES)):
+            self._return_through_reload()
         return True
+
+    def _return_through_reload(self):
+        if not getattr(self, "reload_sel", 0):
+            stub = bytes([
+                0x50,              # push ax
+                0x8C, 0xD8,        # mov ax, ds
+                0x8E, 0xD8,        # mov ds, ax
+                0x8C, 0xC0,        # mov ax, es
+                0x8E, 0xC0,        # mov es, ax
+                0x58,              # pop ax
+                0xCB,              # retf
+            ])
+            self.reload_sel = self.arena.alloc_selector(0x10, 0x9A, stub)
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        sp = (self.uc.reg_read(UC_X86_REG_SP) - 4) & 0xFFFF
+        self.arena.write(ss, sp, struct.pack("<HH", 0, self.reload_sel))
+        self.uc.reg_write(UC_X86_REG_SP, sp)
 
     def _local_realloc(self, handle, size, flags):
         uc = self.uc
