@@ -36,7 +36,7 @@ def name_offsets(modules, imports):
 
 
 def build(path, name, segments, modules=(), imports=(), entries=(), exe=True,
-          entry=(1, 0), auto=0, heap=0, stack=0, names=()):
+          entry=(1, 0), auto=0, heap=0, stack=0, names=(), ne_flags=None):
     """Write an NE image. imports are the names a BY_NAME reloc points at.
     names are (text, ordinal) for the resident name table after the module name.
     Returns {import name: offset in the imported names table}."""
@@ -92,7 +92,7 @@ def build(path, name, segments, modules=(), imports=(), entries=(), exe=True,
     hdr = bytearray(0x40)
     hdr[0:2] = b"NE"
     struct.pack_into("<HH", hdr, 0x04, enttab, len(ent))
-    struct.pack_into("<H", hdr, 0x0C, 0x0002 if exe else 0x8000)
+    struct.pack_into("<H", hdr, 0x0C, ne_flags if ne_flags is not None else (0x0002 if exe else 0x8000))
     struct.pack_into("<HHH", hdr, 0x0E, auto, heap, stack)
     struct.pack_into("<I", hdr, 0x14, (entry[0] << 16) | entry[1])
     struct.pack_into("<HHH", hdr, 0x1C, nseg, len(modules), 0)

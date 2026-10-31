@@ -38,10 +38,11 @@ class Tb80enuOpen(unittest.TestCase):
     def test_open_reads_the_supplied_file(self):
         host = fake_host()
         with mock.patch.dict(os.environ, {"TBK_INI": self.tmp.name}):
-            handle = open_file(host, style=0x4000)
+            # OF_READ. An OF_EXIST open (0x4000) is closed again, as on Windows.
+            handle = open_file(host, style=0)
         self.assertNotEqual(handle, 0xFFFF)
         self.assertEqual(host.files[handle], ENU)
-        self.assertEqual(host.open_styles, [("C:\\TOOLBOOK\\TB80enu", 0x4000)])
+        self.assertEqual(host.open_styles, [("C:\\TOOLBOOK\\TB80enu", 0)])
 
     def test_without_tbk_ini_the_open_still_refuses(self):
         host = fake_host()
@@ -74,9 +75,13 @@ class Tb80enuStartup(unittest.TestCase):
                 host = pass06.Pass06(str(root / "TB80RTM.EXE"), str(book))
                 host.run()
         names = [p.lower().replace("/", "\\").split("\\")[-1] for p in host.opens]
-        self.assertIn("tb80enu", names, f"the entry did not ask for TB80enu: {host.opens}")
-        after = host.opens[names.index("tb80enu") + 1:]
-        print(f"\nTB80enu open answered; styles {host.open_styles}; next opens {after or 'none'}; "
+        # The extensionless TB80enu was the wsprintf buffer before USER.420
+        # formatted it. With wsprintf answered, the entry asks for the
+        # language DLL by its full name.
+        self.assertIn("tb80enu1.dll", names, f"the entry did not ask for TB80enu1.DLL: {host.opens}")
+        self.assertNotIn("tb80enu", names)
+        after = host.opens[names.index("tb80enu1.dll") + 1:]
+        print(f"\nTB80enu1.DLL asked for; styles {host.open_styles}; next opens {after or 'none'}; "
               f"stop {host.fault}; last ax=1 {host.ax1[-1] if host.ax1 else 'none'}")
 
 
