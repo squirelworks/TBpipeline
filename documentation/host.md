@@ -30,7 +30,25 @@ That `GlobalAlloc` reading was wrong, and the cap only hid it. Wine's spec is `p
 
 What is written down about that scan: it starts at offset `0x1276`, it wants the word `0x0012`, and the block is one `GlobalAlloc` handed back. The selector was never recorded. The bytes the runtime would have found there on a real Windows boot are not in any note, so `newl` does not plant them. Instead, a `lods`, `scas`, or `cmps` that reads `GlobalAlloc` memory nothing has written ends the run at that first read: `scan lodsw at CS:IP read SEL:0x1276, GlobalAlloc block H that nothing wrote, looking for 0x0012`. The wanted word is taken from a `cmp ax` right after the string instruction, when there is one. The stop can fire earlier than the old fault did, if startup string-reads zeroed memory on purpose. If it does, the stop names that read too.
 
-That is as far as `newl` has gone. The book is not open. The next useful change is the data those startup scans are looking for, or a stop that names the scan, not another guessed return value.
+That is as far as `newl` has gone. The book is not open. Nobody has rerun startup since the stops below were added, so the next stop line on the real `TB80RTM` is not known yet. The next useful change is the data those startup scans are looking for, or a stop that names the scan, not another guessed return value.
+
+### How a newl run ends
+
+Every run ends on one of these lines. A line that matches none of them is an anonymous fault, and that is a bug in `newl`.
+
+| Stop | Meaning |
+|---|---|
+| `gap KERNEL.999 Name far call at CS:IP` | No contract for that ordinal. The name appears when the layer or the import has one. `returning to CS:IP` replaces `far call at` when the call was not a direct `9A` |
+| `scan lodsw at CS:IP read SEL:OFF, GlobalAlloc block H that nothing wrote, looking for 0x0012` | A string scan reached memory nobody wrote |
+| `OpenFile NAME: no book on the command line (--c)` | The guest asked for a `.tbk` or `.sbk` and `--c` was not given. With `--c`, that handle is the book |
+| `dos exit 0xNN` | `DOS3Call` with `AH = 4Ch` |
+| `hlt at CS:IP` | The guest halted |
+| `instruction cap 1000000 reached at CS:IP, ...` | The cap. The line says how many Windows calls were taken and the last one, or `no Windows call taken`. The CLI then prints the last 20 basic blocks |
+| `time cap 15 s reached at CS:IP, ...` | The timeout, with the same detail |
+
+### Seen and not changed
+
+`LocalAlloc` is `pascal16 LocalAlloc(word word)`, so its size is the word on top of the stack. The layer reads the other word. `GetModuleFileName`'s count has the same swap. Neither one has been the stop in a run, so neither one was changed. If either one turns into the wall, this is where to look first.
 
 ## neww
 
