@@ -34,10 +34,10 @@ Many later pages do not name the next page. They say `go to page (nextpage) of b
 
 ## What the reader can draw
 
-Curves that are already decoded use marker `14 00 00`, a fill at `+4`, a count at `+0x1A`, and twip pairs at `+0x22`. The screen coordinate is twips divided by 15. Each curve is its own file under `render/`. They are not placed on the page. The record-to-bounds step was never found, so a widget is known to exist and not known to sit anywhere.
+Curves that are already decoded use marker `14 00 00`, a fill at `+4`, a count at `+0x1A`, and twip pairs at `+0x22`. The screen coordinate is twips divided by 15. Each curve is its own file under `render/`. A kind-04 polygon (`+0x0C = 04 00`) is also drawn in `render.html` as SVG at those twips / 15 from the page's top-left corner. The runs found by length, like P420's flame, are only files. The record-to-bounds step was never found, so a widget is known to exist and not known to sit anywhere.
 
 `runtime/debug/resources.py` copies pictures that are already Windows bitmaps. ToolBook's own compressed pictures stay in the book. `TB80BMP` ordinal 3 (`TBKBITMAP`) is the decoder. The probe calls it and stops at the unbound far call `0x1FCD`. The reader does not call it.
 
-Stage 2b counts pages that had something to draw. The file count counts PNGs. P420 has four curves, so the two numbers disagree. Both are reported. That is still a bug, written in [known-bugs.md](../tbpipeline_bf/known-bugs.md).
+Stage 2b says `render/ N pages with a drawing`. Stage 2c says `render/ M PNG files`. Stage 2b also says `placed K polygons on J pages, at record twips / 15`. On `nida81.tbk` those are 18 and 23, because P420 has four curves. The numbers differ and each line says which count it is.
 
 `render.html` is written only with `--dbgrender`. `--theme default` is a Windows 95 window. `--theme modern` is the dark reader. `--render old` also writes `render-old.html`. Each run gets `tbpipeline_bf/_debug/db-YYYYMMDD-HHMMSS/` so a later run does not erase the log.
