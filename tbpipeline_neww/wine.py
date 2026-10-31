@@ -15,6 +15,7 @@ WINE_COMMIT = "2528aff26208257fdbf980666a4f0e66d47563ce"
 KERNEL_SPEC = "dlls/krnl386.exe16/krnl386.exe16.spec"
 USER_SPEC = "dlls/user.exe16/user.exe16.spec"
 GDI_SPEC = "dlls/gdi.exe16/gdi.exe16.spec"
+MMSYSTEM_SPEC = "dlls/mmsystem.dll16/mmsystem.dll16.spec"
 WIN87EM_SPEC = "dlls/win87em.dll16/win87em.dll16.spec"
 
 # Bytes on the 16-bit Pascal stack for each Wine argument type.
@@ -209,6 +210,13 @@ SCREEN_CAPS = {
     118: 1024,      # DESKTOPHORZRES
 }
 
+MMSYSTEM = _table("MMSYSTEM", MMSYSTEM_SPEC, [
+    # winmm waveform.c waveOutGetNumDevs is g_outmmdevices_count, mmdevapi's render endpoints.
+    # neww has no audio driver. With none of pulse, alsa, oss or coreaudio loaded, mmdevapi
+    # init_driver loads no devices, so the count is 0.
+    ("401 pascal waveOutGetNumDevs() waveOutGetNumDevs16", (0, 0)),
+])
+
 WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
     "1 pascal -register __fpMath()",
 ])
@@ -307,6 +315,8 @@ class Wine:
             return USER.get(ordinal)
         if module == "GDI":
             return GDI.get(ordinal)
+        if module == "MMSYSTEM":
+            return MMSYSTEM.get(ordinal)
         if module == "WIN87EM":
             return WIN87EM.get(ordinal)
         return None
