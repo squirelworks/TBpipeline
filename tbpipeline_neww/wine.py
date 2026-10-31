@@ -327,37 +327,45 @@ class Wine:
     def _init_task(self, arg):
         """Wine krnl386.exe16/task.c InitTask16, a register contract.
 
-        Wine calls LocalInit16 and the DLL entry points before it answers.
-        neww has neither, so either one is a stop, and a stop writes nothing.
+        Wine fills INSTANCEDATA, calls LocalInit16 when CX is not 0, runs the
+        DLL entry points, then answers in registers. The entry points are
+        guest code, so the machine runs them and calls init_task_answer().
         """
         task = self.task
         if task is None:
             return 0, 0, "KERNEL.91 InitTask with no task: the machine did not start one"
-        if task["dlls"]:
-            return 0, 0, (
-                f"KERNEL.91 InitTask runs the DLL entry points next (Wine ne_segment.c NE_InitializeDLLs): "
-                f"{', '.join(task['dlls'])}. neww does not call a DLL's LibMain"
-            )
+        if task.get("dll_stop"):
+            return 0, 0, task["dll_stop"]
         ds = arg.regs("ds")
-        heap = arg.regs("cx")
-        if heap:
-            # Wine: LocalInit16(GlobalHandleToSel16(hInstance), 0, CX). The instance's selector is DGROUP.
-            self.local_init(task["dgroup"], 0, heap, ds)
         # Wine's CURRENT_SP + sizeof(STACK16FRAME) is the caller's SP past the far return address.
         stackmin = (arg.regs("sp") + 4) & 0xFFFF
         stack = arg.regs("bx")
         stacktop = ((stackmin - stack) if stackmin > stack else 0) + 150
         # INSTANCEDATA at DS:0: stacktop 0x0A, stackmin 0x0C, stackbottom 0x0E.
         self.write(ds, 0x0A, struct.pack("<HHH", stacktop, stackmin, stackmin))
+        heap = arg.regs("cx")
+        if heap:
+            # Wine: LocalInit16(GlobalHandleToSel16(hInstance), 0, CX). The instance's selector is DGROUP.
+            self.local_init(task["dgroup"], 0, heap, ds)
+        task["stacktop"] = stacktop
+        if task["dll_init"]:
+            # Wine ne_segment.c NE_InitializeDLLs. The machine calls each LibMain, then the answer.
+            self.registers = {"init_dlls": task["dll_init"]}
+            return 0, 0, None
+        return self.init_task_answer(arg.word)
+
+    def init_task_answer(self, word):
+        """The registers InitTask16 returns, once the DLLs are initialized."""
+        task = self.task
         psp = task["psp"]
-        line = arg.word(psp, 0x80) & 0xFF
+        line = word(psp, 0x80) & 0xFF
         bx = 0x80
         if line:
             p = 0x81
-            while arg.word(psp, p) & 0xFF in (0x20, 0x09):
+            while word(psp, p) & 0xFF in (0x20, 0x09):
                 p += 1
             bx = p
-        self.registers = {"bx": bx, "cx": stacktop, "si": 0, "di": task["instance"], "es": psp, "push": 0}
+        self.registers = {"bx": bx, "cx": task["stacktop"], "si": 0, "di": task["instance"], "es": psp, "push": 0}
         return 1, SW_SHOWNORMAL, None
 
     def local_init(self, selector, start, end, ds):
