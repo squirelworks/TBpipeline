@@ -1,6 +1,7 @@
 """Run TB80RTM. ToolBook code is real. Windows is the layer."""
 
 import struct
+import time
 from pathlib import Path
 
 from unicorn import (
@@ -16,6 +17,8 @@ from unicorn.x86_const import (
 from .layer import EQUATES, TABLES, Gap, Layer, Refused
 from .ne import load as ne_load
 from .ne import imported_modules
+
+TIMEOUT_US = 15_000_000
 
 SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
 
@@ -354,15 +357,32 @@ class Cpu:
         self.uc.mem_write(data["base"] + 0x1B02, b"\x00\x00")
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
+        began = time.monotonic()
         try:
-            self.uc.emu_start(0xF000, 0, timeout=15_000_000, count=limit)
+            self.uc.emu_start(0xF000, 0, timeout=TIMEOUT_US, count=limit)
         except UcError as exc:
             if not self.stop:
                 self.stop = str(exc)
         else:
             if not self.stop:
-                self.stop = "returned"
+                self.stop = self._ended(limit, time.monotonic() - began)
         return self
+
+    def _ended(self, limit, elapsed):
+        """emu_start came back on its own: a hlt, or one of the two caps."""
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        ip = self.uc.reg_read(UC_X86_REG_IP)
+        if ip and self._code(cs, ip - 1, 1) == b"\xf4":
+            return f"hlt at {cs:#x}:{ip - 1:#x}"
+        if elapsed * 1_000_000 >= TIMEOUT_US * 0.95:
+            cap = f"time cap {TIMEOUT_US // 1_000_000} s"
+        else:
+            cap = f"instruction cap {limit}"
+        cap += f" reached at {cs:#x}:{ip:#x}"
+        if not self.layer.trace:
+            return cap + ", no Windows call taken"
+        module, ordinal, label, _args = self.layer.trace[-1]
+        return cap + f", {len(self.layer.trace)} Windows calls taken, last {module}.{ordinal} {label}".rstrip()
 
     def _word(self, sel, offset):
         seg = self.selectors.get(sel)
