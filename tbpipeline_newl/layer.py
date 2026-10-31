@@ -15,6 +15,8 @@ KERNEL = {
     15: ("GlobalAlloc", 6),
     17: ("GlobalFree", 2),
     18: ("GlobalLock", 2),
+    # pascal -ret16 GlobalUnlock(word). Added for "gap KERNEL.19 far call at 0x218:0x1ed5".
+    19: ("GlobalUnlock", 2),
     20: ("GlobalSize", 2),
     36: ("GetCurrentTask", 0),
     49: ("GetModuleFileName", 8),
@@ -203,6 +205,9 @@ class Layer:
             return handle
         if ordinal == 18:
             return args[0] if args else 0
+        if ordinal == 19:
+            # No lock counts here, and no block ever moves: FALSE, "not still locked".
+            return 0
         if ordinal == 17:
             self.heap.pop(args[0] if args else 0, None)
             return 0
