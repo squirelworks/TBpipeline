@@ -472,6 +472,8 @@ class Cpu:
             uc.hook_add(UC_HOOK_MEM_WRITE, self._block_write, base, base, base + size - 1)
             uc.hook_add(UC_HOOK_MEM_READ, self._block_read, base, base, base + size - 1)
             self.layer.gsizes[ax] = size
+            # GlobalSize takes the selector GlobalLock returned as well as the handle.
+            self.layer.gsizes[self.glock[ax]] = size
         if module == "KERNEL" and ordinal == 18:
             uc.reg_write(UC_X86_REG_DX, self.glock.get(args[0] if args else 0, 0))
             ax = 0
@@ -491,7 +493,8 @@ class Cpu:
             if seg is not None:
                 uc.mem_write(seg["base"] + args[1], self.layer.last_read)
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
-        if module == "KERNEL" and ordinal == 84:
+        if module == "KERNEL" and ordinal in (20, 84):
+            # DWORD answers: GlobalSize and _llseek return DX:AX.
             uc.reg_write(UC_X86_REG_DX, (ax >> 16) & 0xFFFF)
         elif not (module == "KERNEL" and ordinal in (18, 91, 131)):
             uc.reg_write(UC_X86_REG_DX, 0)
