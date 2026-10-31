@@ -847,6 +847,25 @@ class Pass04:
             self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
             self.uc.emu_stop()
             return True
+        # GetSysColor(index). Wine's GetSysColor16 reads system_colors in
+        # win32u/sysparams.c, COLOR_SCROLLBAR to COLOR_MENUBAR, and gives 0
+        # out of range. AX = 1 was a near-black red for every element.
+        if ordinal == 180:
+            index = self._word(0)
+            colors = (
+                (212, 208, 200), (58, 110, 165), (10, 36, 106), (128, 128, 128),
+                (212, 208, 200), (255, 255, 255), (0, 0, 0), (0, 0, 0),
+                (0, 0, 0), (255, 255, 255), (212, 208, 200), (212, 208, 200),
+                (128, 128, 128), (10, 36, 106), (255, 255, 255), (212, 208, 200),
+                (128, 128, 128), (128, 128, 128), (0, 0, 0), (212, 208, 200),
+                (255, 255, 255), (64, 64, 64), (212, 208, 200), (0, 0, 0),
+                (255, 255, 225), (181, 181, 181), (0, 0, 200), (166, 202, 240),
+                (192, 192, 192), (10, 36, 106), (212, 208, 200),
+            )
+            r, g, b = colors[index] if index < len(colors) else (0, 0, 0)
+            self.uc.reg_write(UC_X86_REG_AX, r | (g << 8))
+            self.uc.reg_write(UC_X86_REG_DX, b)
+            return True
         # wsprintf(out, fmt, ...) is cdecl, so the caller pops. AX=1 left
         # the buffer as it was, and the error box the runtime raised read
         # as garbage.
