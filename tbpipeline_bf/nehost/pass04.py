@@ -798,6 +798,14 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, 0 if good else 1)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # WinExec(cmdline, show). TB80BAS starts the book file manager,
+        # TB80NET.EXE, a second Win16 task that calls back into TB80BAS with
+        # its window. This host runs one task, so the call is the wall.
+        if ordinal == 166:
+            cmd = self._string(self._word(2), self._word(1))
+            self.fault = f"winexec {cmd!r} show {self._word(0)}"
+            uc.emu_stop()
+            return True
         if ordinal == 50:
             noff, nseg, hmod = self._word(0), self._word(1), self._word(2)
             mod = self.mods.get(hmod) or (self.mods.get(self.exe_inst) if hmod == 0 else None)
@@ -837,6 +845,14 @@ class Pass04:
         return True
 
     def _user(self, ordinal):
+        # lstrcmpi(lpsz1, lpsz2), Pascal, pop 8. AX = 1 said "greater" for
+        # every pair: TB80NET never matched its command line "ToolBook".
+        if ordinal == 471:
+            one = self._cstring(self._word(3), self._word(2)).lower()
+            two = self._cstring(self._word(1), self._word(0)).lower()
+            self.uc.reg_write(UC_X86_REG_AX, (one > two) - (one < two) & 0xFFFF)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # LoadString(hinst, id, far buf, cch). The call sites push 10 bytes.
         # AX=1 left the buffer empty, so the caller treated the string as missing.
         if ordinal == 176:
@@ -1152,6 +1168,11 @@ class Pass04:
         if intno == 3:
             uc.emu_stop()
             return
+        # int 2Fh AX = 150Bh asks MSCDEX whether drive CX is a CD-ROM, and
+        # BX = ADADh back says MSCDEX is there. There is no MSCDEX: like DOS
+        # with nothing on the multiplex, every register comes back as it was.
+        if intno == 0x2F and uc.reg_read(UC_X86_REG_AX) == 0x150B:
+            return
         cs = uc.reg_read(UC_X86_REG_CS)
         ip = uc.reg_read(UC_X86_REG_IP)
         info = self.arena.segs.get(cs)
@@ -1215,6 +1236,16 @@ class Pass04:
         self.calls.append(f"dos{ah:02x}")
         uc.reg_write(UC_X86_REG_AX, 0)
         self._clear()
+
+    def _cstring(self, sel, offset):
+        """The whole NUL-terminated string, to the end of the segment."""
+        if sel not in self.arena.segs:
+            return ""
+        size = self.arena.segs[sel]["size"]
+        if offset >= size:
+            return ""
+        raw = self.arena.read(sel, offset, size - offset)
+        return raw.split(b"\x00", 1)[0].decode("cp1252", "replace")
 
     def _string(self, sel, offset):
         if sel not in self.arena.segs:
