@@ -102,6 +102,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "23  pascal -ret16 LockSegment(word) LockSegment16",
     "24  pascal -ret16 UnlockSegment(word) UnlockSegment16",
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
+    "47  pascal   GetModuleHandle(segstr) WIN16_GetModuleHandle",
     "49  pascal -ret16 GetModuleFileName(word ptr s_word) GetModuleFileName16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
     "74  pascal -ret16 OpenFile(str ptr word) OpenFile16",
@@ -184,6 +185,9 @@ class Wine:
         self.registers = None
         # Set by the machine: selector -> size of its block in bytes, or None.
         self.size = None
+        # Module name -> module handle, and the head of the module list. Set by the machine.
+        self.modules = {}
+        self.first_module = 0
         # Set by the machine: selector -> path of the NE file whose segment it is, or None.
         self.owner = None
         # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
@@ -277,6 +281,11 @@ class Wine:
             if sel is not None:
                 self.locks[sel] = self.locks.get(sel, 0) - 1
             return arg.regs("ax"), 0, None
+        if ordinal == 47:
+            # WIN16_GetModuleHandle(segstr name): the module in AX, hFirstModule in DX.
+            if arg(1) == 0:
+                return self._exe_ptr(arg(0)), self.first_module, None
+            return self._module_handle(arg.string(0))
         if ordinal == 49:
             # GetModuleFileName(word hModule, ptr buffer, s_word size)
             size = arg(0) - 0x10000 if arg(0) & 0x8000 else arg(0)
@@ -477,6 +486,36 @@ class Wine:
             f"WIN87EM.1 __fpMath BX={bx}: Wine win87em.c reads or rounds on the host x87 here "
             "(6 frndint, 7 fistp, 8 fstsw), or has no case. neww does not answer it"
         )
+
+    def _exe_ptr(self, handle):
+        """GetExePtr: the module handle of whatever module owns the handle's block, or 0."""
+        sel = self.selector_of(handle)
+        owner = self.owner(sel) if sel is not None else None
+        if owner is None:
+            return 0
+        for name, module in self.modules.items():
+            if self.owner(module) == owner:
+                return module
+        return 0
+
+    def _module_handle(self, name):
+        """Wine ne_module.c GetModuleHandle16, over neww's modules. Returns (ax, dx, stop)."""
+        if not name:
+            return 0, self.first_module, None
+        base = name.replace("/", "\\").rsplit("\\", 1)[-1].rsplit(":", 1)[-1]
+        stem = base.rsplit(".", 1)[0]
+        if name.upper() in SYSTEM or stem.upper() in SYSTEM:
+            # Wine's builtin modules are on the same list, by module name and by file name.
+            return 0, 0, f"KERNEL.47 GetModuleHandle({name!r}): Wine returns its builtin {stem.upper()}, and neww's {stem.upper()} is a gate with no module"
+        # The module name without case (Wine's exact and upper-cased passes), then the base
+        # name against the base name of the loaded file.
+        for module, handle in self.modules.items():
+            if name.upper() == module:
+                return handle, self.first_module, None
+        for module, handle in self.modules.items():
+            if Path(self.owner(handle)).name.upper() == base.upper():
+                return handle, self.first_module, None
+        return 0, self.first_module, None
 
     def _module_file_name(self, handle, sel, off, size):
         """Wine ne_module.c GetModuleFileName16: the module's path, lstrcpynA into the buffer."""
