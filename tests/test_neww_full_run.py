@@ -12,7 +12,9 @@ from tests import neww_ne
 
 NAMED = re.compile(
     r"^(unimplemented \w+\.\d+|register \w+\.\d+ |KERNEL\.\d+ |USER\.\d+ |contract disagrees |not linked: |dos exit |"
-    r"instruction cap |\d+ second cap |packed image )"
+    r"instruction cap |\d+ second cap |packed image |call limit$|"
+    # A CPU fault names where it happened: CS:IP, the module and segment.
+    r"Unhandled CPU exception \(UC_ERR_\w+\) at 0x[0-9a-f]+:0x[0-9a-f]+ in \w+ segment \d+)"
 )
 
 

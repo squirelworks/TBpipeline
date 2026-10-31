@@ -43,9 +43,14 @@ class FpMath(unittest.TestCase):
         host, (ax, _dx, _cw, _sw) = run(5)
         self.assertEqual(ax, 0)
 
-    def test_host_x87_cases_stop(self):
+    def test_host_x87_round_stops(self):
+        host, _ = run(6)
+        self.assertTrue(host.stop.startswith("WIN87EM.1 __fpMath BX=6: Wine win87em.c rounds"), host.stop)
+
+    def test_pop_as_integer_is_wines_zero(self):
+        # Wine's fistp is commented out, so DX:AX is 0 whatever the x87 holds.
         host, _ = run(7)
-        self.assertTrue(host.stop.startswith("WIN87EM.1 __fpMath BX=7: Wine win87em.c reads or rounds"), host.stop)
+        self.assertTrue(host.stop.startswith("dos exit"), host.stop)
 
 
 if __name__ == "__main__":

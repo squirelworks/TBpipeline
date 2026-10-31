@@ -9,7 +9,11 @@ import struct
 from pathlib import Path
 
 from .local import LocalHeap, Stop as LocalStop
+from .resource import NE_SEGFLAGS_MOVEABLE, Resources, Stop as ResourceStop, res_name
 from .spec_rows import SPEC_ROWS
+from .handlers import HANDLERS
+from .kstate import KernelState
+from .guest import Call, GuestCalls
 
 # Wine Win16 spec files, read at this commit. A row cites file and ordinal.
 WINE_COMMIT = "2528aff26208257fdbf980666a4f0e66d47563ce"
@@ -51,9 +55,11 @@ class Contract:
         # Wine's C function returns void, so there is no answer to give.
         self.void = void
 
+    caller_pops = False
+
     @property
     def pop(self):
-        return sum(self.args)
+        return 0 if self.caller_pops else sum(self.args)
 
     @property
     def disagreement(self):
@@ -68,8 +74,8 @@ class Contract:
         head, _, rest = line.partition("(")
         words = head.split()
         ordinal = int(words[0])
-        if words[1] != "pascal":
-            raise ValueError(f"{path}:{ordinal} is {words[1]}, not a pascal entry")
+        if words[1] not in ("pascal", "varargs"):
+            raise ValueError(f"{path}:{ordinal} is {words[1]}, not a pascal or varargs entry")
         flags = words[2:-1]
         name = words[-1]
         types = rest.partition(")")[0].split()
@@ -80,8 +86,11 @@ class Contract:
             ret = "word"
         else:
             ret = "long"
-        return cls(module, ordinal, name, args, ret, spec=(path, line), binary=binary, value=value,
-                   default=default, void=void)
+        row = cls(module, ordinal, name, args, ret, spec=(path, line), binary=binary, value=value,
+                  default=default, void=void)
+        # A varargs entry is cdecl: the caller pops, so the gate's retf pops nothing.
+        row.caller_pops = words[1] == "varargs"
+        return row
 
     def __repr__(self):
         return f"Contract({self.module}.{self.ordinal} {self.name} args={self.args} pop={self.pop} ret={self.ret})"
@@ -115,9 +124,16 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
     "36  pascal   GetCurrentTask() WIN16_GetCurrentTask",
     "55  pascal -register Catch(ptr) Catch16",
+    "56  pascal -register Throw(ptr word) Throw16",
     "47  pascal   GetModuleHandle(segstr) WIN16_GetModuleHandle",
     "49  pascal -ret16 GetModuleFileName(word ptr s_word) GetModuleFileName16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
+    "60  pascal -ret16 FindResource(word str str) FindResource16",
+    "61  pascal -ret16 LoadResource(word word) LoadResource16",
+    "62  pascal LockResource(word) WIN16_LockResource16",
+    "63  pascal -ret16 FreeResource(word) FreeResource16",
+    "64  pascal -ret16 AccessResource(word word) AccessResource16",
+    "65  pascal SizeofResource(word word) SizeofResource16",
     "74  pascal -ret16 OpenFile(str ptr word) OpenFile16",
     "81  pascal -ret16 _lclose(word) _lclose16",
     "82  pascal -ret16 _lread(word segptr word) WIN16_lread",
@@ -128,13 +144,14 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "131 pascal GetDOSEnvironment() GetDOSEnvironment16",
     "95  pascal -ret16 LoadLibrary(str) LoadLibrary16",
     "102 pascal -register DOS3Call() DOS3Call",
-    "128 pascal -ret16 GetPrivateProfileString(str str str ptr word str) GetPrivateProfileString16",
     # The enhanced-mode word, the same as the __WINFLAGS equate below. DX 0, as in newl.
     ("132 pascal GetWinFlags() GetWinFlags16", (0x0C25, 0)),
 ])
 
 USER = _table("USER", USER_SPEC, [
     "1   pascal -ret16 MessageBox(word str str word) MessageBox16",
+    "5   pascal -ret16 InitApp(word) InitApp16",
+    "420 varargs -ret16 _wsprintf(ptr str) wsprintf16",
     "66  pascal -ret16 GetDC(word) GetDC16",
     "68  pascal -ret16 ReleaseDC(word word) ReleaseDC16",
     "108 pascal -ret16 GetMessage(ptr word word word) GetMessage16",
@@ -248,11 +265,18 @@ SPEC_PATHS = {
     "DDEML": "dlls/ddeml.dll16/ddeml.dll16.spec",
     "VER": "dlls/ver.dll16/ver.dll16.spec",
 }
+def _loaded(module, line, void, value=None):
+    """A loaded row. A Wine stub's constant return is the row's value: its answer, not a default."""
+    row = Contract.from_spec(module, SPEC_PATHS[module], line, default=True, void=void)
+    if value is not None and row.ret != "register":
+        value &= 0xFFFFFFFF
+        row.value = (value & 0xFFFF, (value >> 16) if row.ret == "long" else 0)
+        row.default = False
+    return row
+
+
 LOADED = {
-    module: {
-        row.ordinal: row
-        for row in (Contract.from_spec(module, SPEC_PATHS[module], line, default=True, void=void) for line, void in rows)
-    }
+    module: {row.ordinal: row for row in (_loaded(module, *item) for item in rows)}
     for module, rows in SPEC_ROWS.items()
 }
 HAND = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "MMSYSTEM": MMSYSTEM, "WIN87EM": WIN87EM}
@@ -300,7 +324,7 @@ def moveable_handle(sel):
     return sel | 4
 
 
-class Wine:
+class Wine(KernelState):
     def __init__(self, root):
         self.root = root
         # The book a .tbk or .sbk path opens. Set from --c.
@@ -336,9 +360,40 @@ class Wine:
         # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
         self.hooks = {}
         self.dcs = {}
+        # NE file path -> its Resources, read the first time a resource call names the module.
+        self.tables = {}
+        # Set by the machine: read(sel, off, n), linear(sel), write_linear(addr, bytes),
+        # resize(sel, new, old) -> stop or None, is_code(sel), is_dll(path).
+        self.read = None
+        self.linear = None
+        self.write_linear = None
+        self.resize = None
+        self.is_code = None
+        self.is_dll = None
+        # Set by the machine: instance_of(path) -> the module's instance handle,
+        # entry_point(path, ordinal or name) -> (selector, offset) or None.
+        self.instance_of = None
+        self.entry_point = None
+        self.exe_name = "TB80RTM"
+        # Gate module name -> its module handle, and gate_address(module, ordinal) -> (sel, off).
+        self.system_modules = {}
+        # (text, caption, type) of each MessageBox the guest showed.
+        self.messageboxes = []
+        self.gate_address = None
+        # Set by the machine: load_module(base name) -> (module handle or None, [Call]).
+        self.load_module = None
+        # Set by the machine: a code selector for MakeProcInstance thunks, and the next free offset.
+        self.thunk_block = None
+        self.thunk_next = 0
+        self.alloc_code = None
+        self._kstate()
         self.htask = 0
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
         self.messages = {}
+        # Original name -> atom, references per atom, and the next number to give.
+        self.atom_names = {}
+        self.atom_refs = {}
+        self.next_atom = 0xC000
         # selector -> lockCount, Wine's GLOBALARENA field, for LockSegment.
         self.locks = {}
         # Selector of the DOS environment block, set by the machine with the PSP.
@@ -359,9 +414,14 @@ class Wine:
         row = self.contract(module, ordinal)
         if row is None or row.disagreement:
             return None
-        if row.default and row.ret == "register":
+        if self.defaulted(row) and row.ret == "register":
             return None
         return row
+
+    @staticmethod
+    def defaulted(row):
+        """A loaded row that no hand row and no handler answers."""
+        return row.default and (row.module, row.ordinal) not in HANDLERS
 
     def equate(self, module, ordinal):
         return EQUATES.get(module.upper(), {}).get(ordinal)
@@ -381,6 +441,9 @@ class Wine:
             return 0, 0, f"contract disagrees {label.disagreement}"
         if label.value is not None:
             return label.value[0], label.value[1], None
+        handler = HANDLERS.get((label.module, label.ordinal))
+        if handler is not None:
+            return handler(self, arg)
         if label.default:
             return self._default(label, arg)
         if module == "KERNEL":
@@ -464,8 +527,12 @@ class Wine:
             if sel is not None:
                 self.locks[sel] = self.locks.get(sel, 0) - 1
             return arg.regs("ax"), 0, None
+        if ordinal in (60, 61, 62, 63, 64, 65):
+            return self._resource(ordinal, arg)
         if ordinal == 55:
             return self._catch(arg)
+        if ordinal == 56:
+            return self._throw(arg)
         if ordinal == 36:
             # WIN16_GetCurrentTask: the current task in AX, hFirstTask in DX.
             return self.htask, self.htask, None
@@ -519,7 +586,13 @@ class Wine:
         if ordinal == 84:
             # _llseek(word file, long offset, word origin)
             return self._llseek(arg(3), arg(1) | (arg(2) << 16), arg(0))
-        if ordinal in (50, 95, 128, 176):
+        if ordinal == 95:
+            return self._load_library(arg.string(0))
+        if ordinal == 50:
+            # GetProcAddress(word hModule, str name): an ordinal when the selector is 0.
+            name = arg(0) if arg(1) == 0 else arg.string(0)
+            return self._get_proc_address(arg(2), name)
+        if ordinal == 176:
             return 0, 0, None
         if ordinal == 102:
             ax = arg.regs("ax")
@@ -549,13 +622,42 @@ class Wine:
     def _handle(self, path, host):
         handle = self.next_file
         self.next_file += 1
-        self.files[handle] = [path, host, Path(host).read_bytes(), 0]
+        name = path.replace("/", "\\").rsplit("\\", 1)[-1].upper()
+        if host is None and name in self.written:
+            # A file the guest created this run: read and written in memory.
+            self.files[handle] = [path, None, self.written[name], 0]
+        else:
+            self.files[handle] = [path, host, Path(host).read_bytes(), 0]
         return handle
 
     def _open_file(self, path, ofs_sel, ofs_off, mode):
-        """Wine file.c OpenFile16. Read access only; any other mode stops."""
-        if mode & ~(OF_SHARE_MASK | 0x0003) or mode & 0x0003:
+        """Wine file.c OpenFile16. Read, OF_EXIST, OF_CREATE; any other mode stops."""
+        OF_EXIST, OF_CREATE = 0x4000, 0x1000
+        if mode & OF_CREATE:
+            if mode & ~(OF_SHARE_MASK | 0x0003 | OF_CREATE):
+                return 0, 0, f"KERNEL.74 OpenFile {path!r} mode {mode:#06x}: neww has OF_CREATE only on its own"
+            handle = self.create_file(path)
+            ofs = bytearray(136)
+            ofs[0] = 136
+            name = path.encode("latin1", "replace")[:127]
+            ofs[8:8 + len(name)] = name
+            self._put(ofs_sel, ofs_off, ofs)
+            return handle, 0, None
+        if mode & ~(OF_SHARE_MASK | 0x0003 | OF_EXIST) or mode & 0x0003:
             return 0, 0, f"KERNEL.74 OpenFile {path!r} mode {mode:#06x}: neww opens files to read and nothing else"
+        name_only = path.replace("/", "\\").rsplit("\\", 1)[-1]
+        if not name_only:
+            # A directory: GetFullPathName gives it, and _lopen of a directory fails, ERROR_ACCESS_DENIED.
+            ofs = bytearray(136)
+            ofs[0] = 136
+            struct.pack_into("<H", ofs, 2, 5)
+            self._put(ofs_sel, ofs_off, ofs)
+            return HFILE_ERROR, 0, None
+        if name_only.upper() in self.written:
+            handle = self._handle(path, None)
+            if mode & OF_EXIST:
+                self.files.pop(handle, None)
+            return handle, 0, None
         host = self.resolve(path)
         ofs = bytearray(136)
         ofs[0] = 136
@@ -569,6 +671,9 @@ class Wine:
         self._put(ofs_sel, ofs_off, ofs)
         handle = self._handle(path, host)
         self.trace.append(f"  OpenFile {path!r} -> {handle} {Path(host).name}")
+        if mode & OF_EXIST:
+            # Wine returns the handle, but closes it first.
+            self.files.pop(handle, None)
         return handle, 0, None
 
     def _lopen(self, path, mode):
@@ -660,6 +765,17 @@ class Wine:
         if bx == 5:
             self.registers = {}
             return self.ctrl_word_1, 0, None
+        if bx == 7:
+            # Wine's fistp is commented out ("could someone who really understands asm() fix
+            # this"): dw stays 0, DX:AX is 0, and the x87 stack is not popped.
+            self.registers = {"dx": 0}
+            return 0, 0, None
+        if bx == 8:
+            # fstsw into StatusWord_1, its low 6 bits OR StatusWord_2, bits 13-15 cleared.
+            ax = ((arg.regs("fpsw") & 0x3F) | self.status_word_2) & ~0xE000
+            self.status_word_2 = ax
+            self.registers = {}
+            return ax, 0, None
         if bx == 9:
             self.status_word_2 = 0
             self.registers = {"fpsw": 0}
@@ -674,9 +790,79 @@ class Wine:
             self.registers = {}
             return ax, 0, None
         return 0, 0, (
-            f"WIN87EM.1 __fpMath BX={bx}: Wine win87em.c reads or rounds on the host x87 here "
-            "(6 frndint, 7 fistp, 8 fstsw), or has no case. neww does not answer it"
+            f"WIN87EM.1 __fpMath BX={bx}: Wine win87em.c rounds on the host x87 here "
+            "(6 frndint), or has no case. neww does not answer it"
         )
+
+    def alloc_thunk(self):
+        """TASK_AllocThunk: 8 bytes in a thunk segment, a new segment when one is full."""
+        if self.thunk_block is None or self.thunk_next + 8 > 0x1000:
+            self.thunk_block = self.alloc_code(0x1000)
+            self.thunk_next = 0
+        off = self.thunk_next
+        self.thunk_next += 8
+        return self.thunk_block, off
+
+    def _load_library(self, name):
+        """Wine ne_module.c LoadLibrary16 -> LoadModule16(name, -1).
+
+        A module neww already loaded is found by module name, then by file base name, as
+        GetModuleHandle16 finds it, and the answer is its instance (NE_GetInstance: the DGROUP
+        handle, or the module handle when there is none). neww loads every NE file in --b at the
+        start, so a name that is none of them is not found, error 2. A system module stops.
+        """
+        base = name.replace("/", "\\").rsplit("\\", 1)[-1].rsplit(":", 1)[-1]
+        stem = base.rsplit(".", 1)[0].upper()
+        if stem in SYSTEM:
+            # Wine's builtin. neww's is the gate module, with a module handle of its own.
+            handle = self.system_modules.get(stem)
+            if handle is None:
+                return 0, 0, f"KERNEL.95 LoadLibrary({name!r}): nothing imports {stem}, so neww made no gate for it"
+            self.trace[-1] += f" {name!r} -> gate module {handle:#x}"
+            return handle, 0, None
+        module = self.modules.get(stem)
+        if module is None:
+            for mname, handle in self.modules.items():
+                if Path(self.owner(handle)).name.upper() == base.upper():
+                    module = handle
+                    break
+        calls = []
+        if module is None and self.load_module is not None:
+            # A file in --b that nothing imported: Wine's NE_LoadModule loads it now, and
+            # NE_InitializeDLLs runs its LibMain and those of DLLs it loads first.
+            module, calls = self.load_module(base)
+        if module is None:
+            self.trace[-1] += f" {name!r} not found"
+            return 2, 0, None
+        instance = self.instance_of(self.owner(module)) or module
+        self.trace[-1] += f" {name!r} -> {instance:#x}"
+        if calls:
+            self.trace[-1] += f", LibMain of {', '.join(c.name for c in calls)}"
+            self.registers = {"guest": GuestCalls(calls, lambda results: (instance, 0))}
+        return instance, 0, None
+
+    def _get_proc_address(self, handle, name):
+        """Wine ne_module.c GetProcAddress16: GetExePtr, then NE_GetOrdinal for a name (resident,
+        then nonresident names, the name upper-cased), then NE_GetEntryPoint. 0 when not found."""
+        for stem, sys_handle in self.system_modules.items():
+            if handle == sys_handle:
+                # A gate module: the stub of the spec row with that ordinal or name.
+                if isinstance(name, str):
+                    want = name.upper()
+                    rows = {**LOADED.get(stem, {}), **HAND.get(stem, {})}
+                    name = next((o for o, r in rows.items() if r.name.upper() == want), None)
+                found = self.gate_address(stem, name) if name is not None else None
+                self.trace[-1] += f" {stem}.{name} -> {'%#x:%#x' % found if found else 'none'}"
+                return (found[1], found[0], None) if found else (0, 0, None)
+        module = self._exe_ptr(handle) if handle else self.modules.get(self.exe_name, 0)
+        path = self.owner(module) if module else None
+        if path is None:
+            return 0, 0, None
+        found = self.entry_point(path, name)
+        self.trace[-1] += f" {name!r} -> {'%#x:%#x' % found if found else 'none'}"
+        if not found:
+            return 0, 0, None
+        return found[1], found[0], None
 
     def _exe_ptr(self, handle):
         """GetExePtr: the module handle of whatever module owns the handle's block, or 0."""
@@ -697,7 +883,10 @@ class Wine:
         stem = base.rsplit(".", 1)[0]
         if name.upper() in SYSTEM or stem.upper() in SYSTEM:
             # Wine's builtin modules are on the same list, by module name and by file name.
-            return 0, 0, f"KERNEL.47 GetModuleHandle({name!r}): Wine returns its builtin {stem.upper()}, and neww's {stem.upper()} is a gate with no module"
+            handle = self.system_modules.get(stem.upper())
+            if handle is None:
+                return 0, 0, f"KERNEL.47 GetModuleHandle({name!r}): nothing imports {stem.upper()}, so neww made no gate for it"
+            return handle, self.first_module, None
         # The module name without case (Wine's exact and upper-cased passes), then the base
         # name against the base name of the loaded file.
         for module, handle in self.modules.items():
@@ -780,12 +969,34 @@ class Wine:
         """
         if not name or len(name) > 255:
             return 0
+        return self.add_atom(name)
+
+    def add_atom(self, name):
+        """A string atom in the global table, one reference more. The same name, without case,
+        is the same atom. Atoms are numbered from 0xC000 in the order names first arrive."""
         key = name.lower()
         if key not in self.messages:
-            if 0xC000 + len(self.messages) > 0xFFFF:
+            if self.next_atom > 0xFFFF:
                 return 0
-            self.messages[key] = 0xC000 + len(self.messages)
-        return self.messages[key]
+            self.messages[key] = self.next_atom
+            self.atom_names[name] = self.next_atom
+            self.next_atom += 1
+        atom = self.messages[key]
+        self.atom_refs[atom] = self.atom_refs.get(atom, 0) + 1
+        return atom
+
+    def delete_atom(self, atom):
+        """GlobalDeleteAtom: 0 when the reference was dropped, the atom when it is not one."""
+        if atom < 0xC000:
+            return 0
+        if atom not in self.atom_refs:
+            return atom
+        self.atom_refs[atom] -= 1
+        if self.atom_refs[atom] <= 0:
+            del self.atom_refs[atom]
+            self.messages = {k: v for k, v in self.messages.items() if v != atom}
+            self.atom_names = {k: v for k, v in self.atom_names.items() if v != atom}
+        return 0
 
     def init_task_answer(self, word):
         """The registers InitTask16 returns, once the DLLs are initialized."""
@@ -840,6 +1051,104 @@ class Wine:
         )
         self.write(sel, off, struct.pack("<9H", *words))
         return 0, 0, None
+
+    def resources(self, handle):
+        """The resource table of the module a handle names (Wine get_module: NE_GetPtr), or None."""
+        module = self._exe_ptr(handle) if handle else 0
+        path = self.owner(module) if module else None
+        if path is None:
+            return None
+        table = self.tables.get(path)
+        if table is None:
+            table = self.tables[path] = Resources(path)
+        return table
+
+    def _resource(self, ordinal, arg):
+        """Wine resource.c FindResource16, LoadResource16, WIN16_LockResource16, FreeResource16,
+        SizeofResource16, for NE modules. Returns (ax, dx, stop)."""
+        if ordinal == 60:
+            # FindResource(word hModule, str name, str type)
+            table = self.resources(arg(4))
+            if table is None:
+                return 0, 0, None
+            name = res_name(arg(2), arg(3), arg.machine.string)
+            type_ = res_name(arg(0), arg(1), arg.machine.string)
+            try:
+                hrsrc = table.find(name, type_)
+            except ResourceStop as why:
+                return 0, 0, f"KERNEL.60 FindResource({name!r}, {type_!r}): {why}"
+            self.trace[-1] += f" {name!r} type {type_!r} -> {hrsrc:#x}"
+            return hrsrc, 0, None
+        if ordinal == 61:
+            # LoadResource(word hModule, word hRsrc): NE_DefResourceHandler reads it into a new block.
+            hrsrc = arg(0)
+            table = self.resources(arg(1))
+            if not hrsrc or table is None or table.entry(hrsrc) is None:
+                return 0, 0, None
+            got = table.loaded.get(hrsrc)
+            if got and got[0] in self.heap:
+                got[1] += 1
+                return got[0], 0, None
+            data = table.bytes_of(hrsrc)
+            flags = 0x0002 if table.entry(hrsrc)[2] & NE_SEGFLAGS_MOVEABLE else 0
+            handle, _dx, why = self._global_alloc(flags, max(len(data), 1))
+            if why:
+                return 0, 0, f"KERNEL.61 LoadResource({hrsrc:#x}): {why}"
+            self._put(self.heap[handle][0], 0, data)
+            table.loaded[hrsrc] = [handle, 1]
+            return handle, 0, None
+        if ordinal == 62:
+            # WIN16_LockResource16 is WOWGlobalLock16: the SEGPTR (selector, 0).
+            sel = self.selector_of(arg(0)) if arg(0) else None
+            return 0, sel or 0, None
+        if ordinal == 63:
+            # FreeResource16: the usage count goes down and the block is freed at 0. FALSE either way.
+            handle = arg(0)
+            for table in self.tables.values():
+                for hrsrc, got in list(table.loaded.items()):
+                    if got[0] == handle:
+                        got[1] -= 1
+                        if got[1] <= 0:
+                            self.heap.pop(handle, None)
+                            del table.loaded[hrsrc]
+                        return 0, 0, None
+            return 0, 0, f"KERNEL.63 FreeResource({handle:#x}): not a resource, and Wine would call USER.DestroyIcon32"
+        if ordinal == 64:
+            # AccessResource(word hModule, word hRsrc): the module's file, opened and at the resource.
+            table = self.resources(arg(1))
+            hrsrc = arg(0)
+            if table is None or not table.rsrctab or not hrsrc or table.entry(hrsrc) is None:
+                return 0xFFFF, 0, None
+            path = self.owner(self._exe_ptr(arg(1)))
+            handle = self._handle(Path(path).name, path)
+            self.files[handle][3] = table.entry(hrsrc)[0] << table.shift
+            return handle, 0, None
+        if ordinal == 65:
+            # SizeofResource(word hModule, word hRsrc)
+            table = self.resources(arg(1))
+            size = table.size(arg(0)) if table is not None and arg(0) else 0
+            return size & 0xFFFF, size >> 16, None
+        return 0, 0, f"unimplemented KERNEL.{ordinal}"
+
+    def _throw(self, arg):
+        """Wine thunk.c Throw16(lpbuf, retval): AX = retval, then the CATCHBUF's registers.
+
+        Wine sets IP, CS, BP, SI, DI and DS from the buffer and Esp to lpbuf[2] + 4 words - 1
+        word. The relay then returns through the new stack as it returns from any register
+        function: CS:IP at SS:Esp and the stub's retf pops Throw's 6 argument bytes, which leaves
+        SP where Catch's own return left it. Wine logs an ERR and goes on when lpbuf[8] is not
+        SS. neww stops there.
+        """
+        off, sel, retval = arg(1), arg(2), arg(0)
+        size = self.size(sel)
+        if size is None or off + 18 > size:
+            return 0, 0, f"KERNEL.56 Throw({sel:#x}:{off:#x}): the CATCHBUF is not in a block neww has"
+        buf = [arg.word(sel, off + 2 * i) for i in range(9)]
+        if buf[8] != arg.regs("ss"):
+            return 0, 0, f"KERNEL.56 Throw: CATCHBUF SS {buf[8]:#x} is not SS {arg.regs('ss'):#x}, and Wine does not switch stacks"
+        sp = (buf[2] + 4 * 2 - 2) & 0xFFFF
+        self.registers = {"sp": sp, "bp": buf[3], "si": buf[4], "di": buf[5], "ds": buf[6], "frame": (buf[0], buf[1])}
+        return retval, 0, None
 
     def _global_size(self, handle):
         """Wine global.c GlobalSize16: the arena's size, 0 for handle 0 or an invalid handle.
@@ -956,10 +1265,22 @@ class Wine:
             return self._system_metrics(index)
         if ordinal == 266:
             return 1, 0, None
+        if ordinal == 5:
+            # Wine user.c InitApp16: InitThreadInput16(0, 0) != 0. The queue is made, so TRUE.
+            return 1, 0, None
         if ordinal == 291:
             # SetWindowsHookEx(s_word id, segptr proc, word hInst, word hTask)
             id_ = arg(4) - 0x10000 if arg(4) & 0x8000 else arg(4)
             return self._set_windows_hook(id_, arg(2) | (arg(3) << 16), arg(0))
-        if ordinal in (1, 108, 111, 176):
+        if ordinal == 1:
+            # MessageBox(word hwnd, str text, str caption, word type): the text goes to the trace.
+            self.trace[-1] += f" {arg.string(3)!r} caption {arg.string(1)!r} type {arg(0):#x}"
+            self.messageboxes.append((arg.string(3), arg.string(1), arg(0)))
+            return 0, 0, None
+        if ordinal in (108, 111, 176):
             return 0, 0, None
         return 0, 0, f"unimplemented USER.{ordinal}"
+
+
+# Handler modules register themselves in HANDLERS when imported.
+from . import kernel16, user16, shell16  # noqa: E402,F401
