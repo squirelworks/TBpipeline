@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `SHELL.6` `RegQueryValue` answers the way Wine's `RegQueryValue16` does with an empty registry. A named subkey is `ERROR_FILE_NOT_FOUND`. A root's missing default value is `""` with `*count` 1 and `ERROR_SUCCESS`. Any other key is `ERROR_INVALID_HANDLE`. It pops 16. TBREG's `RegistryGetKey` (linked by `tb80axf.sbk`) calls it, and the runtime calls it twice before the WinExec wall. It used to fall through to `AX = 1`.
 - `SHELL.3` `RegCloseKey` returns `ERROR_SUCCESS` for a predefined root (Win16 0 and 1 included) and `ERROR_INVALID_HANDLE` for any other key, in DX:AX, as Wine's `RegCloseKey16` does when no other key has been opened. It pops 4. TBREG's `RegistryGetKey` (linked by `tb80axf.sbk`) calls it. It used to fall through to `AX = 1`.
 - `SHELL.1` `RegOpenKey` is answered the way Wine's `RegOpenKey16` answers with an empty registry. An empty name gives back the key itself, a named subkey is `ERROR_FILE_NOT_FOUND` with `*retkey` cleared, and a key that isn't a root is `ERROR_INVALID_HANDLE`, in DX:AX. It pops 12. TBREG's `RegistryGetKey` (linked by `tb80axf.sbk`) calls it, and the runtime calls it once before the WinExec wall. It used to fall through to `AX = 1`.
 - `KERNEL.127` `GetPrivateProfileInt` reads the key's number from the INI `TBK_INI` supplies, the way Wine's `GetPrivateProfileInt16` does (`RtlUnicodeStringToInteger`, base 0, cast to INT16). A missing or empty value returns the default. It used to fall through to `AX = 1`, so every numeric key read as 1.

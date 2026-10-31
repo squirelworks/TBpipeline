@@ -1147,6 +1147,32 @@ class Pass04:
         if ordinal == 3:
             hkey = self._hkey(self._word(0), self._word(1))
             return self._reg_result(0 if hkey >= 0x80000000 else 6)
+        # RegQueryValue(hkey, name, data, count). Wine's RegQueryValue16
+        # fixes the Win16 root, masks *count to 16 bits, and calls
+        # RegQueryValueA. A name opens that subkey first, which fails as
+        # RegOpenKey does. With no name it reads hkey's default value; a
+        # default that is not there is "" with *count 1 and ERROR_SUCCESS.
+        # A root has no value here, and any other key is
+        # ERROR_INVALID_HANDLE.
+        if ordinal == 6:
+            cnt_off, cnt_seg = self._word(0), self._word(1)
+            data_off, data_seg = self._word(2), self._word(3)
+            name_off, name_seg = self._word(4), self._word(5)
+            hkey = self._hkey(self._word(6), self._word(7))
+            has_count = bool(cnt_seg or cnt_off)
+            if has_count and cnt_seg in self.arena.segs:
+                count = struct.unpack("<I", self.arena.read(cnt_seg, cnt_off, 4))[0] & 0xFFFF
+                self._store(cnt_seg, cnt_off, struct.pack("<I", count))
+            name = self._string(name_seg, name_off) if name_seg or name_off else ""
+            if name:
+                return self._reg_result(2 if hkey in self.REG_ROOTS else 6)
+            if hkey not in self.REG_ROOTS:
+                return self._reg_result(6)
+            if data_seg or data_off:
+                self._store(data_seg, data_off, b"\x00")
+            if has_count:
+                self._store(cnt_seg, cnt_off, struct.pack("<I", 1))
+            return self._reg_result(0)
         return False
 
     def _gdi(self, ordinal):

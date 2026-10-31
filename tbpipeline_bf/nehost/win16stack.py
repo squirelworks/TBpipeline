@@ -145,6 +145,7 @@ POP = {
     'SHELL': {
         1: 12,   # RegOpenKey(long str ptr)
         3: 4,    # RegCloseKey(long)
+        6: 16,   # RegQueryValue(long str ptr ptr)
     },
     # GETSTRMGRSTRING(max, far buf, keylo, keyhi). The reloc at RTM
     # segment 22:0x8AA is this, not KERNEL.3 GetVersion.
