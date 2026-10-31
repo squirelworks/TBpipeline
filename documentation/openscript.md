@@ -18,7 +18,7 @@ A back-reference copies bytes from the compressed input, not from the output. Th
 
 That is text reuse. It is not a call. OpenScript calls another handler by writing the name (`ASYM_BlockSuspend()`). The compressor stores the second copy of those letters by pointing at the first. The call, when there is one, is still the text.
 
-Decoding a slice fails when the distance lands before the slice. The expander has to see the whole file. `origin` is where this handler starts. `span` is how far its own bytes go. The back-reference may read anywhere in the file.
+Decoding a slice fails when the distance lands before the slice. The expander has to see the whole file. A copy that lands outside the whole file is still written as `?`, and `decompress(..., misses=[])` records where. `--open` lists those handlers under `unread`, so a handler the expander could not read is reported, not skipped. `origin` is where this handler starts. `span` is how far its own bytes go. The back-reference may read anywhere in the file.
 
 A `?` left in the expanded text is the character `?`. It shows up in sentences (`Right?`), in character lists (`.,;:?!`), and in tests (`chr = "?"`). It is not a function marker. A handler that begins with a stray `?` and a newline was scanned one byte early.
 
@@ -29,10 +29,10 @@ python3 -m tbpipeline_bf --open book.tbk
 python3 -m tbpipeline_bf --open book.tbk --page P20000
 ```
 
-It loads the pages, finds `to handle` as plain text, and expands each one against the whole file. It prints the page map and, with `--page`, the handler source. It does not start Unicorn.
+It loads the pages, finds `to handle` as plain text, and expands each one against the whole file. It prints the page map and, with `--page`, the handler source. Each `click` line is the page, the handler that ran and its offset in the file, and the page it landed on. It does not start Unicorn.
 
 That search finds a handler whose name is still plain text, which is how a lesson is stored. A system book compresses the name too. Those streams start with the keyword opcodes for `to handle` (`80 81`) or `to get` (`80 90 AD`). `--open` expands those as well and lists them under `scripts` when they do not sit inside a page record. `--page scripts` prints the name and the offset, not the whole body.
 
 ## What still does not run
 
-`runtime/engine.py` runs the navigation in that source. A `buttonClick` may set `name of this book` and `name of this page`, then `go to page "P"` or `go to page (nextpage)`. On `nida81.tbk`, clicking `P20000` lands on `P20001` because the handler says so. The same steps are what the buttons in `render.html` run. Anything past that subset is still not executed.
+`runtime/engine.py` runs the navigation in that source. A `buttonClick` may set `name of this book` and `name of this page`, then `go to page "P"` or `go to page (nextpage)`. On `nida81.tbk`, clicking `P20000` lands on `P20001` because the handler says so. The same steps are what the buttons in `render.html` run. `next` and `back` do the same with a page's `to handle next` and `to handle previous` (or `back`); a page without one moves through the page list. Anything past that subset is still not executed.
