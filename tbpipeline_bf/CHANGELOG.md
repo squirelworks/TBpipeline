@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `KERNEL.515` `GetProcAddress32W` returns the address of a loaded 32-bit DLL's export, by name or by ordinal, or 0, as Wine's `GetProcAddress32W16` returns `GetProcAddress`. For a Win32 system DLL it returns an import stub that is answered by name. It used to fall through to `AX = 1`.
 - `KERNEL.127` `GetPrivateProfileInt` reads the key's number from the INI `TBK_INI` supplies, the way Wine's `GetPrivateProfileInt16` does (`RtlUnicodeStringToInteger`, base 0, cast to INT16). A missing or empty value returns the default. It used to fall through to `AX = 1`, so every numeric key read as 1.
 - `KERNEL.513` `LoadLibraryEx32W` maps a 32-bit DLL from `TBK_UNPACKED` at its image base, binds its imports to stubs, and runs its entry point with `DLL_PROCESS_ATTACH` as 32-bit code. It returns the image base, or 0 when the file is missing or `DllMain` says FALSE, as Wine's `LoadLibraryEx32W16` returns `LoadLibraryExA`'s handle. A Win32 system DLL returns its handle without a file. A Win32 import with no answer stops the run and is named. The real run never reaches it yet: `GetProcAddress(KERNEL, 513)` still returns 0.
 - `USER.180` `GetSysColor` returns Wine's default colour for the index in DX:AX, from `system_colors` in `win32u/sysparams.c`, and 0 out of range. It used to fall through to `AX = 1`, `RGB(1, 0, 0)` for every element.
