@@ -121,6 +121,7 @@ USER = _table("USER", USER_SPEC, [
     "1   pascal -ret16 MessageBox(word str str word) MessageBox16",
     "108 pascal -ret16 GetMessage(ptr word word word) GetMessage16",
     "111 pascal   SendMessage(word word word long) SendMessage16",
+    "118 pascal -ret16 RegisterWindowMessage(str) RegisterWindowMessageA",
     "176 pascal -ret16 LoadString(word word ptr s_word) LoadString16",
     "266 pascal -ret16 SetMessageQueue(word) SetMessageQueue16",
 ])
@@ -171,6 +172,8 @@ class Wine:
         self.registers = None
         # Set by the machine: selector -> size of its block in bytes, or None.
         self.size = None
+        # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
+        self.messages = {}
         # selector -> lockCount, Wine's GLOBALARENA field, for LockSegment.
         self.locks = {}
         # Selector of the DOS environment block, set by the machine with the PSP.
@@ -455,6 +458,22 @@ class Wine:
             "(6 frndint, 7 fistp, 8 fstsw), or has no case. neww does not answer it"
         )
 
+    def _register_window_message(self, name):
+        """RegisterWindowMessageA: a string atom, 0xC000 to 0xFFFF, the same for the same name.
+
+        Wine adds the name to the session's global atom table, so the number depends
+        on what the session registered first. neww's table starts empty at 0xC000.
+        An empty name or one over 255 characters is not an atom, and the answer is 0.
+        """
+        if not name or len(name) > 255:
+            return 0
+        key = name.lower()
+        if key not in self.messages:
+            if 0xC000 + len(self.messages) > 0xFFFF:
+                return 0
+            self.messages[key] = 0xC000 + len(self.messages)
+        return self.messages[key]
+
     def init_task_answer(self, word):
         """The registers InitTask16 returns, once the DLLs are initialized."""
         task = self.task
@@ -531,6 +550,8 @@ class Wine:
         return handle, 0, None
 
     def _user(self, ordinal, arg):
+        if ordinal == 118:
+            return self._register_window_message(arg.string(0)), 0, None
         if ordinal == 266:
             return 1, 0, None
         if ordinal in (1, 108, 111, 176):
