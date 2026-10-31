@@ -240,7 +240,8 @@ class Win32:
 
     def _call_proc_ex32(self):
         # CallProcEx32W(nParams, fAddressConvert, lpProc32, p1, ..., pn).
-        # Wine's spec line is `518 varargs -register CallProcEx32W()`: it is
+        # Wine's spec line (dlls/krnl386.exe16/krnl386.exe16.spec:426) is
+        # `518 varargs _CallProcEx32W(long long long) CallProcEx32W16`: it is
         # cdecl, so it pops nothing and the caller cleans up. Its
         # CallProcEx32W16 reads the parameters left to right, maps p(i+1)
         # with MapSL when bit i of the mask is set, calls lpProc32 (stdcall,

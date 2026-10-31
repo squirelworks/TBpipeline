@@ -1,7 +1,7 @@
 """KERNEL.518 CallProcEx32W runs a 32-bit procedure and returns its EAX.
 
-Wine's spec line is `518 varargs -register CallProcEx32W()
-CallProcEx32W16`: cdecl, so the callee pops nothing and the caller adds
+Wine's spec line (dlls/krnl386.exe16/krnl386.exe16.spec:426) is
+`518 varargs _CallProcEx32W(long long long) CallProcEx32W16`: cdecl, so the callee pops nothing and the caller adds
 to SP. CallProcEx32W16 (dlls/krnl386.exe16/wowthunk.c) takes nParams,
 fAddressConvert and lpProc32, then reads the parameters p1 to pn left to
 right. When bit i of fAddressConvert is set, p(i+1) is a 16:16 pointer
