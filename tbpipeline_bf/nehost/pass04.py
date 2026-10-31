@@ -996,6 +996,12 @@ class Pass04:
             print(f"  api ordinal {ordinal}", file=sys.stderr, flush=True)
         if ordinal == INITTASK and self.startup == 0:
             self.startup = 1
+            # Windows' InitTask makes the PSP tail ASCIIZ. The C startup hands
+            # ES:BX to WinMain as lpCmdLine, and TB80RTM's name parser stops
+            # only at space, tab or NUL: with the CR it opened 'fixture.tbk\r'.
+            tail = self.arena.read(self.psp, 0x81, 0x7F)
+            if b"\r" in tail:
+                self.arena.write(self.psp, 0x81 + tail.index(b"\r"), b"\x00")
             uc.reg_write(UC_X86_REG_AX, 1)
             uc.reg_write(UC_X86_REG_BX, 0x80)
             uc.reg_write(UC_X86_REG_CX, 0x1000)
