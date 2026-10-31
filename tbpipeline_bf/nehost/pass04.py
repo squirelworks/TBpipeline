@@ -28,6 +28,8 @@ API_PORT = 0xE0
 # Modules that are part of Windows itself. LoadLibrary finds them loaded.
 SYSTEM_MODULES = {"KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND", "DISPLAY", "MOUSE"}
 INITTASK = 91
+# The task's own file name, as KERNEL.49 GetModuleFileName gives it.
+EXE_PATH = "C:\\TOOLBOOK\\TB80RTM.EXE"
 OF_CREATE = 0x1000
 OF_DELETE = 0x0200
 OF_PARSE = 0x0100
@@ -1416,7 +1418,7 @@ class Pass04:
             return True
         if ordinal == 49:
             seg, off = self._word(2), self._word(1)
-            name = self._copy_to(seg, off, "C:\\TOOLBOOK\\TB80RTM.EXE", self._word(0) or 1)
+            name = self._copy_to(seg, off, EXE_PATH, self._word(0) or 1)
             uc.reg_write(UC_X86_REG_AX, name)
             return True
         if ordinal in (134, 135):

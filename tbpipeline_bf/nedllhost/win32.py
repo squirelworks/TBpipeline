@@ -27,6 +27,8 @@ loop a `jump`.
 import os
 import struct
 
+from ..nehost.pass04 import EXE_PATH
+
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_CS, UC_X86_REG_DX, UC_X86_REG_EAX, UC_X86_REG_EDX,
     UC_X86_REG_ESP, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
@@ -260,6 +262,42 @@ def _virtual_alloc(host, args):
 
 
 WIN32[("KERNEL32", "VirtualAlloc")] = (16, _virtual_alloc)
+
+
+# Wine runs a 16-bit program in winevdm. kernelbase's create_vdm_process
+# (dlls/kernelbase/process.c:378) starts it as
+#   L"%s --app-name \"%s\" %s", winevdm, ImagePathName, CommandLine
+# where winevdm is C:\windows\syswow64\winevdm.exe when the caller is
+# 64-bit or WoW64 (a stock 64-bit Wine) and C:\windows\system32\ on a
+# 32-bit-only Wine. This takes the 64-bit Wine.
+WINEVDM = "C:\\windows\\syswow64\\winevdm.exe"
+
+
+def _command_line(host):
+    """The process command line: winevdm's, around the task's own."""
+    task = f"{EXE_PATH} {os.path.basename(host.book)}"
+    return f'{WINEVDM} --app-name "{EXE_PATH}" {task}'
+
+
+def _get_command_line_a(host, args):
+    # GetCommandLineA(void), stdcall, pops 0. Wine's kernelbase
+    # GetCommandLineA (dlls/kernelbase/process.c:1346) returns command_lineA,
+    # the ANSI copy of the process parameters' CommandLine, made once; the
+    # same pointer every call. The 32-bit side of this 16-bit task is
+    # winevdm's process, so that is winevdm's command line. The task's own
+    # command line is its file name (EXE_PATH, as KERNEL.49 answers) and
+    # the book, as the PSP tail carries it.
+    if not getattr(host, "command_line32", 0):
+        text = _command_line(host).encode("latin1") + b"\0"
+        at = _reserve32(host, len(text))
+        if not at:
+            raise Unanswered("no room for the command line")
+        host.uc.mem_write(at, text)
+        host.command_line32 = at
+    return host.command_line32
+
+
+WIN32[("KERNEL32", "GetCommandLineA")] = (0, _get_command_line_a)
 
 
 def _u32(buf, off):
