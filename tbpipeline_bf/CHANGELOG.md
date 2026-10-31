@@ -7,6 +7,7 @@ Not a release. `1.0.0r6` stays the version.
 - `USER.266` `SetMessageQueue` returns TRUE, as Wine's `SetMessageQueue` does for any size.
 - `GDI.87` `GetStockObject` returns `index + 32`, Wine's stock handle, and 0 for a bad index.
 - `KERNEL.131` `GetDOSEnvironment` returns a far pointer to Wine's environment block layout, with no variables.
+- `KERNEL.517` `CallProc32W` runs a 32-bit procedure with its parameters in Pascal order, maps each one its mask marks from 16:16 to linear, pops `12 + 4 * nParams` for the caller and returns EAX in DX:AX, as Wine's `CallProc32W16` does. A NULL procedure returns 0. The pop table had a fixed 12. It used to fall through to `AX = 1`.
 - `KERNEL.518` `CallProcEx32W` runs a 32-bit procedure with its parameters, maps each one its mask marks from 16:16 to linear, and returns EAX in DX:AX, as Wine's `CallProcEx32W16` does. It is cdecl, so it pops nothing: the pop table had 12. It used to fall through to `AX = 1`.
 - `KERNEL.25` `GlobalCompact` returns `0x00FF0000`, Wine's `GLOBAL_MAX_ALLOC_SIZE`.
 - `KERNEL.198` `GlobalUnfix` is answered and returns nothing, as Wine's void `GlobalUnfix16` does.
