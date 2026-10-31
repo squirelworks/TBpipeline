@@ -14,7 +14,7 @@ A lesson file is not a PE image. It is a Click2learn shell.
 80 65 00 05 00 02 02
 ```
 
-The page name is a C string at record offset `0x0B`. Widgets inside a page are `14 00 00` chunks. Field text is a `Text` property: the bytes `Text\0\0`, a length, then the characters. A quoted page id in the record (`"P1292"`) is a jump the reader can follow without running a handler.
+The page name is a C string at record offset `0x0B`. Widgets inside a page are `14 00 00` chunks. Field text is a `Text` property: the bytes `Text\0\0`, a length, then the characters. Where the field sits is not decoded. `render.html` lists the text and says the position is unknown. A quoted page id in the record (`"P1292"`) is a jump the reader can follow without running a handler.
 
 `.tbk` and `.sbk` are the same container. The extension is the role, not the format. A lesson is a `.tbk`. A system book (`tb80r.sbk`, `tb80hyp.sbk`) is a `.sbk`. Both can carry the `0xC00` shell and the same page marker. System books also hold the shared handlers the lessons call.
 
