@@ -175,6 +175,46 @@ class LocalHeap:
         self._write(self.ds, entry + 2, b"\x00\x00")
         return entry
 
+    def free_handle_entry(self, handle):
+        """LOCAL_FreeHandleEntry: free the entry, and its table when every entry is free."""
+        info = self.info()
+        if info is None:
+            return
+        # The word that points at the table: the heap info's htable, or the previous table's link.
+        link = info + INFO_HTABLE
+        while self.w(link):
+            table = self.w(link)
+            size = self.w(table) * 4
+            if table + 2 <= handle < table + 2 + size:
+                break
+            link = table + 2 + size
+        if not self.w(link):
+            raise Stop(f"LOCAL_FreeHandleEntry: {handle:#x} is in no handle table, Wine's ERR \"Invalid entry\"")
+        self.put(handle, 0)
+        self._write(self.ds, handle + 2, b"\xFF\xFF")
+        table = self.w(link)
+        count = self.w(table)
+        entry = table + 2
+        for _ in range(count):
+            if self.w(entry + 2) >> 8 != 0xFF:
+                return
+            entry += 4
+        self.put(link, self.w(entry))
+        self.free_arena(table - ARENA_HEADER_SIZE)
+
+    def free(self, handle):
+        """LocalFree16: 0 when freed, the handle when it could not be."""
+        if not handle:
+            return 0
+        if handle & 3 == 0:
+            return 0 if not self.free_arena(handle - ARENA_HEADER_SIZE) else handle
+        addr, flags = self.w(handle), self.w(handle + 2) & 0xFF
+        if flags != LMEM_DISCARDED >> 8:
+            if self.free_arena(addr - MOVEABLE_PREFIX - ARENA_HEADER_SIZE):
+                return handle
+        self.free_handle_entry(handle)
+        return 0
+
     def alloc(self, flags, size):
         """LocalAlloc16."""
         if 0 < size <= 4:

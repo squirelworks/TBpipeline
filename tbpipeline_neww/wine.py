@@ -97,6 +97,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     ("3   pascal GetVersion() GetVersion16", (0x0A03, 0)),
     "4   pascal -ret16 LocalInit(word word word) LocalInit16",
     "5   pascal -ret16 LocalAlloc(word word) LocalAlloc16",
+    "7   pascal -ret16 LocalFree(word) LocalFree16",
     "15  pascal -ret16 GlobalAlloc(word long) GlobalAlloc16",
     "17  pascal -ret16 GlobalFree(word) GlobalFree16",
     "18  pascal GlobalLock(word) WIN16_GlobalLock16",
@@ -348,6 +349,13 @@ class Wine:
             ok = self.local_init(arg(2), arg(1), arg(0), arg.regs("ds"))
             self.registers = {"cx": ok}
             return ok, 0, None
+        if ordinal == 7:
+            # LocalFree(word handle) in CURRENT_DS.
+            heap = LocalHeap(arg.regs("ds"), arg.word, self.write)
+            try:
+                return heap.free(arg(0)), 0, None
+            except LocalStop as why:
+                return 0, 0, f"KERNEL.7 LocalFree({arg(0):#x}): {why}"
         if ordinal == 5:
             # LocalAlloc(word flags, word size) in CURRENT_DS. Wine also returns the handle in CX.
             heap = LocalHeap(arg.regs("ds"), arg.word, self.write)
