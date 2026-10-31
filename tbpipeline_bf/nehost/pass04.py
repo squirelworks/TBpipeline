@@ -264,6 +264,11 @@ class Pass04:
         ss = uc.reg_read(UC_X86_REG_SS)
         sp = uc.reg_read(UC_X86_REG_SP)
         ret_ip, ret_cs = struct.unpack("<HH", self.arena.read(ss, sp, 4))
+        stub = getattr(self, "stub_module", {}).get(uc.reg_read(UC_X86_REG_CS))
+        if stub:
+            # A call through a GetProcAddress pointer: the stub names the module.
+            self.callers[(ret_cs, ret_ip)] = (stub, ordinal)
+            self.sites[(ret_cs, ret_ip)] = (stub, ordinal, POP[stub][ordinal])
         site = self.sites.get((ret_cs, ret_ip))
         pop = site[2] if site else self._pushed(ret_cs, ret_ip)
         self.pending = site
@@ -701,8 +706,30 @@ class Pass04:
             if mod["name"] == stem:
                 return handle
         handle = self.arena.alloc_selector(16, 0x92, b"\x00" * 16)
-        self.mods[handle] = {"name": stem, "resources": [], "procs": {}, "ords": {}}
+        self.mods[handle] = {"name": stem, "resources": [], "procs": {}, "ords": {}, "system": True}
         return handle
+
+    def _module_stub(self, name, ordinal):
+        """(offset, selector) of a callable stub for name.ordinal, or None.
+
+        GetProcAddress on a system module hands out a pointer the caller
+        calls through, so no reloc names the call site. Each module gets
+        its own stub selector, laid out like the thunk, and _fix_ret reads
+        the module from the selector the OUT runs in. Only ordinals with a
+        known pop size get a stub.
+        """
+        if POP.get(name, {}).get(ordinal) is None or ordinal * 8 + 8 > 0x2000:
+            return None
+        if not hasattr(self, "stub_module"):
+            self.stub_module = {}
+        sel = next((s for s, m in self.stub_module.items() if m == name), None)
+        if sel is None:
+            blob = bytearray(0x2000)
+            for n in range(1, 0x2000 // 8):
+                blob[n * 8:n * 8 + 8] = bytes([0xBA, n & 0xFF, n >> 8, 0xE6, API_PORT, 0xCA, 0x00, 0x00])
+            sel = self.arena.alloc_selector(len(blob), 0x9A, bytes(blob))
+            self.stub_module[sel] = name
+        return ordinal * 8, sel
 
     def _load_library(self, name):
         system = self._system_module(name)
@@ -801,7 +828,9 @@ class Pass04:
         if ordinal == 50:
             noff, nseg, hmod = self._word(0), self._word(1), self._word(2)
             mod = self.mods.get(hmod) or (self.mods.get(self.exe_inst) if hmod == 0 else None)
-            if nseg == 0:
+            if nseg == 0 and (mod or {}).get("system"):
+                hit = self._module_stub(mod["name"], noff)
+            elif nseg == 0:
                 hit = (mod or {}).get("ords", {}).get(noff)
             else:
                 hit = (mod or {}).get("procs", {}).get(self._string(nseg, noff).lower())
@@ -819,6 +848,14 @@ class Pass04:
         if ordinal == 166:
             cmd = self._string(self._word(2), self._word(1))
             self.fault = f"winexec {cmd!r} show {self._word(0)}"
+            uc.emu_stop()
+            return True
+        # LoadLibraryEx32W(lpszLibFile, hFile, dwFlags), the first generic
+        # thunk call. TB80W16 loads TB80W32.DLL, 32-bit code, through it.
+        # This host runs no 32-bit DLL, so the call is the wall.
+        if ordinal == 513:
+            name = self._string(self._word(5), self._word(4))
+            self.fault = f"LoadLibraryEx32W {name!r}"
             uc.emu_stop()
             return True
         if ordinal != 51:

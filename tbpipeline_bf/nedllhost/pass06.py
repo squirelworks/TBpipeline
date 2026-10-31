@@ -16,6 +16,7 @@ from tbpipeline_bf.binpath import unpacked
 from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, INITTASK, last_call_line
 from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
+from .win32 import Win32
 
 from unicorn import UcError, UC_HOOK_CODE
 from unicorn.x86_const import (
@@ -46,7 +47,7 @@ COUNT = 4_000_000      # instructions, shared by every task
 TIMEOUT = 30_000_000   # microseconds, shared by every task
 
 
-class Pass06(Pass04):
+class Pass06(Win32, Pass04):
     # Set by _run_tasks. The first task is the runtime.
     tasks = ()
     task = None
@@ -487,12 +488,21 @@ class Pass06(Pass04):
         self.task = self.tasks[0]
         self.task_log = []
         self.switch = None
+        self.jump = None
         self.executed = 0
         self.spent = 0
         self.uc.hook_add(UC_HOOK_CODE, self._count)
         self._slice(ip)
-        while self.switch is not None and not self.fault:
-            self._slice(self._switch())
+        while not self.fault:
+            if self.switch is not None:
+                ip = self._switch()
+            elif self.jump is not None:
+                # A host-side transfer, such as entering 32-bit code.
+                go, self.jump = self.jump, None
+                ip = go()
+            else:
+                break
+            self._slice(ip)
         if not self.fault:
             self.fault = "returned"
         elif self.task is not self.tasks[0]:
