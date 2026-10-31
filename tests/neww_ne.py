@@ -31,8 +31,10 @@ def name_offset(modules, imports, want):
     raise KeyError(want)
 
 
-def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, stack=0, exe=True, imports=()):
-    """entries: (ordinal, segment, offset, export name) rows, fixed bundles.
+def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, stack=0, exe=True, imports=(),
+          entry_flags=None):
+    """entries: (ordinal, segment, offset, export name) rows, fixed bundles. entry_flags maps an
+    ordinal to its entry flags byte (default 0x01, exported).
 
     imports are function names for by-name fixups; see name_offset().
     """
@@ -58,7 +60,7 @@ def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, 
     for ordinal, seg, off, _export in sorted(entries):
         if ordinal > last + 1:
             enttab += bytes([ordinal - last - 1, 0])
-        enttab += bytes([1, seg, 0x01]) + struct.pack("<H", off)
+        enttab += bytes([1, seg, (entry_flags or {}).get(ordinal, 0x01)]) + struct.pack("<H", off)
         last = ordinal
     enttab += b"\x00"
     off = 0x40

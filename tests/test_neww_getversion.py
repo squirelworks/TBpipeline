@@ -10,7 +10,7 @@ class GetVersionContract(unittest.TestCase):
     def test_row_holds_the_answer(self):
         from tbpipeline_neww.wine import KERNEL, KERNEL_SPEC
         row = KERNEL[3]
-        self.assertEqual((row.name, row.pop, row.ret, row.value), ("GetVersion", 0, "long", (0x0A03, 0)))
+        self.assertEqual((row.name, row.pop, row.ret, row.value), ("GetVersion", 0, "long", (0x0A03, 0x0616)))
         self.assertEqual(row.spec[0], KERNEL_SPEC)
 
     def test_guest_reads_0a03(self):
@@ -30,7 +30,7 @@ class GetVersionContract(unittest.TestCase):
 
     def test_answer_is_the_row(self):
         from tbpipeline_neww.wine import Wine
-        self.assertEqual(Wine(".").answer("KERNEL", 3, None), (0x0A03, 0, None))
+        self.assertEqual(Wine(".").answer("KERNEL", 3, None), (0x0A03, 0x0616, None))
 
 
 if __name__ == "__main__":

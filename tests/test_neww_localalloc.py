@@ -3,8 +3,8 @@
 Spec: `5 pascal -ret16 LocalAlloc(word word)`, pop 4. A fixed block is
 the first free arena that fits, split off by LOCAL_ShrinkArena. A
 moveable block gets a handle entry from a handle table of hdelta
-entries, made on first use. The handle is also in CX. Where Wine would
-compact or grow the heap, the run stops. No binary needed.
+entries, made on first use. The handle is also in CX. A full heap is
+compacted, then grown to 64K, as LOCAL_GetBlock does. No binary needed.
 """
 
 import tempfile
@@ -70,11 +70,14 @@ class LocalAlloc(unittest.TestCase):
         self.assertEqual(host.word(ds, table), 0x20)
         self.assertEqual(handle, table + 2)
 
-    def test_no_room_stops_and_frees_what_it_took(self):
+    def test_no_room_grows_the_segment_to_64k(self):
+        # The handle table needs 0x88 bytes, more than the heap holds. LOCAL_GetBlock compacts,
+        # then LOCAL_GrowHeap reallocates DGROUP to 64K and the last arena moves to its end.
         host, ds = self.run_program(0xF0, [(0x0002, 8)])
-        self.assertTrue(host.stop.startswith("KERNEL.5 LocalAlloc(flags=0x2, size=0x8): no free block of 0x88 bytes"), host.stop)
-        self.assertEqual(host.word(ds, 0x30 + 4), 4)
-        self.assertEqual([host.word(ds, 0x5C + o) for o in (0, 2, 4)], [0x2C, 0xE4, 0x88])
+        self.assertEqual(host.stop, "dos exit 0x0")
+        self.assertNotEqual(host.word(ds, 0x3F0), 0)
+        self.assertEqual(host.box.wine._global_size(ds), 0x10000)
+        self.assertEqual(host.word(ds, 0x30 + 0x0A), 0xFFF4)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Spec: `66 pascal -ret16 GetDC(word) GetDC16`, pop 2. hwnd 0 is the
 screen. Wine takes a free DCE from its cache, so two GetDC calls with no
 ReleaseDC are two DCs. Wine's HDC is a win32u GDI handle. neww numbers
 its own from 0x1004 by 4, which is never a selector or a moveable handle.
-A window's DC stops, because neww has no windows. No binary needed.
+A handle that is not a window gets 0. No binary needed.
 """
 
 import tempfile
@@ -44,9 +44,11 @@ class GetDC(unittest.TestCase):
         self.assertEqual((first, second), (0x1004, 0x1008))
         self.assertEqual(host.box.wine.dcs, {0x1004: True, 0x1008: True})
 
-    def test_window_dc_stops(self):
-        host, _first, _second = run(0x2000)
-        self.assertEqual(host.stop, "USER.66 GetDC(0x2000): Wine gets a DC for that window, and neww has no windows")
+    def test_no_such_window_is_zero(self):
+        # NtUserGetDCEx of a handle that is not a window fails: GetDC16 returns 0.
+        host, first, second = run(0x2000)
+        self.assertEqual(host.stop, "dos exit 0x0")
+        self.assertEqual((first, second), (0, 0))
 
 
 if __name__ == "__main__":

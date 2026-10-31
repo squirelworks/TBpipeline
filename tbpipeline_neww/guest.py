@@ -29,3 +29,42 @@ class GuestCalls:
         self.calls = list(calls)
         self.finish = finish
         self.after = after
+
+
+def _answer(value):
+    if value is None:
+        return 0, 0, None
+    if isinstance(value, int):
+        value &= 0xFFFFFFFF
+        return value & 0xFFFF, value >> 16, None
+    if len(value) == 2:
+        return value[0] & 0xFFFF, value[1] & 0xFFFF, None
+    return value
+
+
+def drive(gen):
+    """Run a generator handler. It yields a Call to run in the guest and gets back (ax, dx),
+    or yields a string to stop the run there. What it returns is the answer: an int (DX:AX),
+    (ax, dx) or (ax, dx, stop). With no Call yielded, the answer comes back directly."""
+    try:
+        first = gen.send(None)
+    except StopIteration as done:
+        return _answer(done.value)
+    if isinstance(first, str):
+        return 0, 0, first
+    box = {}
+
+    def after(_index, ax, dx):
+        try:
+            nxt = gen.send((ax, dx))
+        except StopIteration as done:
+            box["answer"] = _answer(done.value)
+            return None
+        if isinstance(nxt, str):
+            return nxt
+        return [nxt]
+
+    def finish(_results):
+        return box["answer"]
+
+    return GuestCalls([first], finish, after)

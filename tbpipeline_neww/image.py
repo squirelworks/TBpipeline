@@ -68,19 +68,55 @@ class Sandbox:
         self.trap = Segment(0, 0, bytearray(0x10000))
         self._place_segment(self.trap)
         self._link()
+        self._prologs()
         return self
+
+    def _prologs(self):
+        """Wine ne_segment.c NE_FixupSegmentPrologs, run on every code segment after its fixups.
+
+        An entry whose code starts push ds ; pop ax ; nop becomes mov ax, ds ; nop. Then
+        mov ax, ds ; nop becomes mov ax, DGROUP when the entry's flags have 0x02, or
+        nop ; nop when the module is MULTIPLEDATA and the entry is exported.
+        """
+        for image in self.images.values():
+            if image.synthetic or not image.auto or image.auto > len(image.segments):
+                continue
+            dgroup = image.segments[image.auto - 1].selector
+            if not dgroup:
+                continue
+            for entry in image.entries.values():
+                if not 1 <= entry.segment <= len(image.segments):
+                    continue
+                seg = image.segments[entry.segment - 1]
+                if seg.flags & 0x0001:
+                    continue
+                code, at = seg.data, entry.offset
+                if at + 3 > len(code) or code[at + 2] != 0x90:
+                    continue
+                if code[at:at + 2] == b"\x1e\x58":
+                    code[at:at + 2] = b"\x8c\xd8"
+                if code[at:at + 2] != b"\x8c\xd8":
+                    continue
+                if entry.flags & 0x02:
+                    code[at:at + 3] = bytes([0xB8, dgroup & 0xFF, dgroup >> 8])
+                elif image.flags & 0x0002 and entry.flags & 0x01:
+                    code[at:at + 2] = b"\x90\x90"
 
     def _selector(self):
         sel = self.next_index * 8
         self.next_index += 1
+        if sel >= 0xFFF0:
+            # 0xFFF0 is the machine's INT 21h tail.
+            raise RuntimeError("out of selectors")
         return sel
 
     def _place_segment(self, seg):
         sel = self._selector()
-        size = max(len(seg.data), 16)
+        size = max(len(seg.data), 16, seg.room)
         seg.selector = sel
         seg.base = self.linear
-        self.linear += (size + 0xFFF) & ~0xFFF
+        seg.room = (size + 0xFFF) & ~0xFFF
+        self.linear += seg.room
         self.selectors[sel] = seg
         return sel
 
@@ -151,6 +187,8 @@ class Sandbox:
                     size = (len(seg.data) + heap + stack + 0x1F) & ~0x1F
                     if size <= 0x10000:
                         seg.data.extend(b"\x00" * (size - len(seg.data)))
+                if not image.synthetic and seg.index == image.auto:
+                    seg.room = 0x10000
                 self._place_segment(seg)
             if image.synthetic and image.segments:
                 sel = image.segments[0].selector

@@ -110,7 +110,7 @@ def is_dbcs_lead_byte(wine, arg):
 # ---------------------------------------------------------------- local heap, local.c
 
 def _local_heap(wine, arg):
-    return LocalHeap(arg.regs("ds"), arg.word, wine.write)
+    return wine.local_heap(arg.regs("ds"), arg.word)
 
 
 @handles("KERNEL", 8)
@@ -360,17 +360,27 @@ def global_realloc(wine, arg):
         return 0, 0, f"KERNEL.16 GlobalReAlloc({handle:#x}, 0): Wine discards the block, and neww has no discarded blocks"
     if size > 0x100000:
         return 0, 0, f"KERNEL.16 GlobalReAlloc({handle:#x}, {size:#x}): over 1M"
+    why = resize_block(wine, handle, size)
+    if why:
+        return 0, 0, f"KERNEL.16 GlobalReAlloc({handle:#x}, {(size + 0x1F) & ~0x1F:#x}): {why}"
+    return handle, 0, None
+
+
+def resize_block(wine, handle, size):
+    """GLOBAL_ReAlloc's new size: the block's bytes at the same selector, rounded to 32 bytes.
+    Returns None, or why it could not."""
+    sel = wine.selector_of(handle)
     size = (size + 0x1F) & ~0x1F
     oldsize = wine._global_size(handle)
     if wine.resize is None:
-        return 0, 0, "KERNEL.16 GlobalReAlloc with no CPU to map the block"
+        return "no CPU to map the block"
     why = wine.resize(sel, size, oldsize)
     if why:
-        return 0, 0, f"KERNEL.16 GlobalReAlloc({handle:#x}, {size:#x}): {why}"
+        return why
     key = wine.handle_of(sel)
     prev = wine.heap.get(key, (sel, oldsize, 0))
     wine.heap[key] = (sel, size, prev[2])
-    return handle, 0, None
+    return None
 
 
 # ---------------------------------------------------------------- selectors, selector.c

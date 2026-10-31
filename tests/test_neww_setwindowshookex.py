@@ -51,12 +51,11 @@ class SetWindowsHookEx(unittest.TestCase):
         self.assertEqual(answers, [(0x0001, 0x0001), (0, 0), (0, 0), (0, 0)])
         self.assertEqual(host.box.wine.hooks, {8: (0x00010001, 0x12345678)})
 
-    def test_other_task_stops(self):
-        host, _ = run([(7, 0x99)])
-        self.assertEqual(
-            host.stop,
-            "USER.291 SetWindowsHookEx hTask=0x99: Wine compares it with GetCurrentTask, and neww has no task handle",
-        )
+    def test_other_task_is_zero(self):
+        # Wine: "setting hook (%d) on other task not supported", 0.
+        host, answers = run([(7, 0x99)])
+        self.assertEqual(host.stop, "dos exit 0x0")
+        self.assertEqual(answers, [(0, 0)])
 
 
 if __name__ == "__main__":
