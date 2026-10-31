@@ -110,6 +110,8 @@ The OLE sizes were checked against the `TB80OLE` call sites, not taken from a sp
 
 Anything the table does not name pops 0. The default return is `AX = 1`, `DX = 0`. That default is why so many calls looked fine and were wrong. `AX = 1` is a plausible BOOL and a bad pointer, a bad HRESULT, and a bad selector.
 
+Every call that still takes that default is written to `02_launch.txt` as `ax=1 MODULE.ordinal from CS:IP stack w0 w1 w2 w3`. The module is the one the reloc named at that call site, even when the pop table has no size for it, and `?` when no reloc named it. `w0` is the last word pushed. The list is the inventory of answers that are still guesses.
+
 ## Relocs
 
 NE relocations are chained. The word at the fixup address is the next offset, or `0xFFFF` for the end. The host saves that next pointer, writes the resolved value, and follows the saved pointer. Following the value it just wrote walks off into the address it patched in.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Still `1.0.0r6`. These lines are not a release.
+
+- Every far call that falls through to `AX = 1` is a line in the debug folder's `02_launch.txt`: module, ordinal, call site, and the first four argument words. It is written on every launch, not only when the run dies.
+
 ## 1.0.0r6
 
 The reader is opt-in.
