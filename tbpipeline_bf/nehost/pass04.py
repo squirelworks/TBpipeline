@@ -765,6 +765,16 @@ class Pass04:
     def _kernel_proc(self, ordinal):
         """Pointers must be null or a real thunk. AX=1 was called as 0000:0001."""
         uc = self.uc
+        # GetCurrentTask. Wine's WIN16_GetCurrentTask returns the current
+        # task in AX and the first task in DX; this host runs one task. The
+        # handle is a zeroed block the host keeps. TB80UTL and TB80LNL key
+        # their per-task tables on it, and AX = 1 is not a selector.
+        if ordinal == 36:
+            if not getattr(self, "task_handle", 0):
+                self.task_handle = self.arena.alloc_selector(0x200, 0x92, bytes(0x200))
+            uc.reg_write(UC_X86_REG_AX, self.task_handle)
+            uc.reg_write(UC_X86_REG_DX, self.task_handle)
+            return True
         # IsBadCodePtr(lpfn). AX=1 is "bad": TB80BAS skipped its file
         # manager's handler and the book open failed.
         if ordinal == 336:
