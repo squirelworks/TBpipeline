@@ -1,4 +1,4 @@
-"""python3 -m tbpipeline_neww --b ~/TBK/bin [--c book.tbk]
+"""python3 -m tbpipeline_neww --b ~/TBK/bin [--c book.tbk] [--cap N]
 
 Links every NE module in the directory, then enters TB80RTM.
 Windows ordinals are gates. ToolBook calls land in the other DLL.
@@ -38,12 +38,24 @@ def main(argv=None):
         print(f"  TB80BAS {len(bas.entries)} exports stay in the DLL. neww does not answer them in Python.")
     for line in box.gaps[:12]:
         print(f"  gap {line}")
-    host.run()
+    # --cap raises the instruction and gate-call caps together, for a long real run. The
+    # defaults stay what the tests hold.
+    cap = None
+    for i, a in enumerate(argv):
+        if a == "--cap" and i + 1 < len(argv):
+            cap = int(argv[i + 1])
+    if cap:
+        host.call_limit = cap
+        host.run(limit=cap * 1000)
+    else:
+        host.run()
     from unicorn.x86_const import UC_X86_REG_CS, UC_X86_REG_IP
     cs = host.uc.reg_read(UC_X86_REG_CS) if host.uc else 0
     ip = host.uc.reg_read(UC_X86_REG_IP) if host.uc else 0
     print(f"  stopped {cs:#x}:{ip:#x} {host.stop}")
     print(f"  calls {host.calls}")
+    for text, caption, kind in host.box.wine.messageboxes:
+        print(f"  MessageBox {text!r} caption {caption!r} type {kind:#x}")
     defaults = host.box.wine.defaults
     print(f"  answered by a loaded spec row with no handler: {len(defaults)}")
     for module, ordinal, name, how in defaults[:24]:

@@ -4,7 +4,7 @@ import struct
 from pathlib import Path
 
 from .ne import Image, Segment, import_name, parse
-from .wine import HAND, SYSTEM, Wine
+from .wine import HAND, LOADED, SYSTEM, Wine
 
 
 class Selectors(dict):
@@ -97,6 +97,9 @@ class Sandbox:
                     wanted[module].add(fix.target2)
         for module, ordinals in wanted.items():
             for ordinal in HAND.get(module, {}):
+                ordinals.add(ordinal)
+            # Every loaded spec row gets its stub too, so GetProcAddress can hand out any of them.
+            for ordinal in LOADED.get(module, {}):
                 ordinals.add(ordinal)
             if not ordinals:
                 continue

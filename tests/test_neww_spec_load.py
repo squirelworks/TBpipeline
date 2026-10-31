@@ -39,7 +39,7 @@ class Loaded(unittest.TestCase):
         from tbpipeline_neww.wine import row_for
         total = 0
         for module, rows in SPEC_ROWS.items():
-            for line, _void in rows:
+            for line, _void, _value in rows:
                 row = row_for(module, int(line.split()[0]))
                 self.assertIsNotNone(row, line)
                 total += 1
@@ -74,6 +74,8 @@ class Loaded(unittest.TestCase):
         wine = Wine(".")
         for table in LOADED.values():
             for row in table.values():
+                if not wine.defaulted(row):
+                    continue
                 wine.trace.append("x")
                 ax, dx, stop = wine._default(row, Arg())
                 if row.ret == "register":
@@ -116,12 +118,13 @@ class Gate(unittest.TestCase):
         self.assertIn(("USER", 124, "UpdateWindow", "void"), host.box.wine.defaults)
 
     def test_register_stops_without_pop(self):
-        # KERNEL.56 Throw is -register. The stub has no retf and the run stops on the OUT.
-        host, sp0, sp, stored, ax = run_one("KERNEL", 56, push_word(0) + push_word(0) + push_word(0))
-        self.assertIn("register KERNEL.56 Throw", host.stop)
-        self.assertEqual(sp, sp0 - 6 - 4)
+        # KERNEL.203 DebugBreak is -register and has no handler. The stub has no retf and the
+        # run stops on the OUT.
+        host, sp0, sp, stored, ax = run_one("KERNEL", 203, b"")
+        self.assertIn("register KERNEL.203 DebugBreak", host.stop)
+        self.assertEqual(sp, sp0 - 4)
         self.assertEqual(ax, 0x1234)
-        stub = host.box.images["KERNEL"].segments[0].data[56 * 8:56 * 8 + 8]
+        stub = host.box.images["KERNEL"].segments[0].data[203 * 8:203 * 8 + 8]
         self.assertNotEqual(stub[5], 0xCA)
 
 

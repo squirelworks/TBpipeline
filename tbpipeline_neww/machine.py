@@ -18,6 +18,7 @@ REGISTERS = {
     "fpcw": UC_X86_REG_FPCW, "fpsw": UC_X86_REG_FPSW, "fptag": UC_X86_REG_FPTAG,
 }
 
+from .guest import Call, GuestCalls
 from .image import Sandbox
 from .wine import SYSTEM, moveable_handle
 from .ne import Segment
@@ -84,6 +85,8 @@ class Machine:
         self.calls = 0
         self.trampoline = None
         self.pending = None
+        # Gate calls before the run stops on "call limit". A cap, like the instruction cap.
+        self.call_limit = 400
 
     def _read(self, seg, offset, size):
         # Once the CPU runs, the guest's memory is the truth, not the loaded image.
@@ -133,6 +136,18 @@ class Machine:
         self.box.wine.size = self._size
         self.box.wine.owner = self._owner
         self.box.wine.write = self._write_guest
+        self.box.wine.read = self._read_guest
+        self.box.wine.linear = self._linear
+        self.box.wine.write_linear = lambda addr, data: self.uc.mem_write(addr, bytes(data))
+        self.box.wine.resize = self._resize
+        self.box.wine.is_code = self._is_code
+        self.box.wine.is_dll = self._is_dll
+        self.box.wine.instance_of = self._instance_of
+        self.box.wine.entry_point = self._entry_point
+        self.box.wine.gate_address = self._gate_address
+        self.box.wine.load_module = self._load_module
+        self.box.wine.alloc_code = self._alloc_code
+        self.box.wine.exe_name = exe.name
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._unmapped)
         code = exe.segments[exe.entry_seg - 1]
@@ -148,6 +163,14 @@ class Machine:
             "dlls": names, "dll_init": rows, "dll_stop": why,
         }
         self.trampoline = self._trampoline(rows) if rows else None
+        self.initialized = set(names)
+        # pop ds ; pop es ; retf: how a finished guest-call request returns to its caller.
+        self.guest = []
+        tail_base = self.box.linear
+        self.box.linear += 0x1000
+        self.uc.mem_map(tail_base, 0x1000)
+        self.uc.mem_write(tail_base, bytes([0x1F, 0x07, 0xCB]))
+        self.tail = self._selector(tail_base, 2, 0x9A)
         self.pending = None
         gdtr_at = 0xF0E0
         self.uc.mem_write(gdtr_at, struct.pack("<HI", 0xFFFF, 0))
@@ -227,6 +250,143 @@ class Machine:
                 text += " in the trap segment"
         return text
 
+    def _is_code(self, sel):
+        seg = self.box.selectors.get(sel)
+        if seg is None:
+            return False
+        return any(seg in image.segments and not seg.flags & 1 for image in self.box.images.values() if not image.synthetic)
+
+    def _alloc_code(self, size):
+        """A code block: one segment, readable and executable, in the selector table."""
+        span = (size + 0xFFF) & ~0xFFF
+        base = self.box.linear
+        self.box.linear += span
+        self.uc.mem_map(base, span)
+        seg = Segment(0, 0, bytearray(size))
+        sel = self.box._selector()
+        seg.selector = sel
+        seg.base = base
+        self.box.selectors[sel] = seg
+        self._write_descriptor(sel, _descriptor(base, size - 1, 0x9A))
+        return sel
+
+    def _load_module(self, base):
+        """LoadLibrary of an NE file in --b that has no module handle yet. Returns the handle and
+        the LibMain calls, the DLLs it imports first (NE_InitializeDLLs order), each once."""
+        image = next((img for img in self.box.images.values()
+                      if not img.synthetic and Path(img.path).name.upper() == base.upper()), None)
+        if image is None:
+            image = self.box.images.get(base.rsplit(".", 1)[0].upper())
+        if image is None or image.synthetic:
+            return None, []
+        calls = []
+
+        def visit(img):
+            for dep in img.modules:
+                other = self.box.images.get(dep)
+                if other is None or other.synthetic or other is self.box.exe:
+                    continue
+                visit(other)
+            if img.name not in self.box.wine.modules:
+                sel = self._allocate(0x60)
+                self.box.wine.modules[img.name] = sel
+                self.box.wine.first_module = sel
+            if img.name in self.initialized or img is self.box.exe:
+                return
+            self.initialized.add(img.name)
+            if img.entry_seg and img.flags & 0x8000 and img.flags & 0x0001 and img.auto:
+                seg = img.segments[img.auto - 1]
+                inst = moveable_handle(seg.selector) if seg.flags & 0x0010 else seg.selector
+                code = img.segments[img.entry_seg - 1]
+                call = Call(code.selector, img.entry_ip, frame=True, regs={
+                    "cx": img.heap, "di": inst, "ds": seg.selector, "es": seg.selector,
+                    "ax": 0, "bx": 0, "dx": 0, "si": 0,
+                })
+                call.name = img.name
+                calls.append(call)
+
+        visit(image)
+        return self.box.wine.modules[image.name], calls
+
+    def _gate_address(self, module, ordinal):
+        image = self.box.images.get(module)
+        if image is None or not image.synthetic:
+            return None
+        seg = image.segments[0]
+        if (seg.selector, ordinal) not in self.box.gates:
+            return None
+        return seg.selector, ordinal * 8
+
+    def _image_at(self, path):
+        for image in self.box.images.values():
+            if not image.synthetic and image.path == path:
+                return image
+        return None
+
+    def _instance_of(self, path):
+        """NE_GetInstance: the DGROUP's handle (moveable handle if DGROUP is moveable), else 0."""
+        image = self._image_at(path)
+        if image is None or not image.auto:
+            return 0
+        seg = image.segments[image.auto - 1]
+        return moveable_handle(seg.selector) if seg.flags & 0x0010 else seg.selector
+
+    def _entry_point(self, path, name):
+        """NE_GetOrdinal and NE_GetEntryPoint over the loaded image: (selector, offset) or None."""
+        image = self._image_at(path)
+        if image is None:
+            return None
+        ordinal = name
+        if isinstance(name, str):
+            want = name.upper()
+            ordinal = next((o for o, n in image.names.items() if n.upper() == want), None)
+            if ordinal is None:
+                return None
+        ent = image.entries.get(ordinal)
+        if ent is None or not 1 <= ent.segment <= len(image.segments):
+            return None
+        return image.segments[ent.segment - 1].selector, ent.offset
+
+    def _is_dll(self, path):
+        for image in self.box.images.values():
+            if not image.synthetic and image.path == path:
+                return bool(image.flags & 0x8000)
+        return False
+
+    def _resize(self, sel, size, oldsize):
+        """GlobalReAlloc's move: a new linear block of size, the old bytes copied, the selector's
+        descriptor pointed at it. A block that needs more selectors than it has stops."""
+        seg = self.box.selectors.get(sel)
+        if seg is None:
+            return "not a block"
+        if size > 0x10000 or oldsize > 0x10000:
+            return "a block over 64K would need its selector tiles moved, which neww does not do"
+        data = self._read(seg, 0, min(len(seg.data), size))
+        span = (size + 0xFFF) & ~0xFFF
+        base = self.box.linear
+        self.box.linear += span
+        self.uc.mem_map(base, span)
+        self.uc.mem_write(base, data)
+        seg.base = base
+        seg.data = bytearray(size)
+        self._write_descriptor(sel & ~7, _descriptor(base, size - 1, 0x92))
+        return None
+
+    def _linear(self, sel):
+        """The linear base of a selector's block, or None. A huge block's tiles follow it in order."""
+        seg = self.box.selectors.get(sel)
+        return seg.base if seg is not None else None
+
+    def _read_guest(self, sel, offset, size):
+        """size bytes at sel:offset, b"" when sel is no block. Reads across a huge block's tiles."""
+        seg = self.box.selectors.get(sel)
+        if seg is None or size <= 0:
+            return b""
+        try:
+            return bytes(self.uc.mem_read(seg.base + offset, size))
+        except UcError:
+            return b""
+
     def _write_guest(self, sel, offset, data):
         seg = self.box.selectors.get(sel)
         if seg is None or offset + len(data) > len(seg.data):
@@ -269,6 +429,10 @@ class Machine:
             self.box.wine.modules[image.name] = sel
             base = self.box.selectors[sel].base
             self.uc.hook_add(UC_HOOK_MEM_READ, self._module_read, (image.name, base), base, base + 0x5F)
+        # The gate modules get module handles too, as Wine's builtins have NE_MODULEs.
+        for image in self.box.images.values():
+            if image.synthetic and image.name in SYSTEM:
+                self.box.wine.system_modules[image.name] = self._allocate(0x60)
         # NE_RegisterModule puts each new module at the head of the list.
         self.box.wine.first_module = self.box.wine.modules[order[-1].name]
 
@@ -374,6 +538,113 @@ class Machine:
         self.uc.mem_write(base, bytes(code))
         return self._selector(base, len(code) - 1, 0x9A)
 
+    # ------------------------------------------------------------ guest calls
+
+    REG_MOV = {"ax": 0xB8, "cx": 0xB9, "dx": 0xBA, "bx": 0xBB, "si": 0xBE, "di": 0xBF}
+
+    def _call_code(self, call, ident):
+        """One call of a trampoline, ending in mov cx, ident ; out 0E8h."""
+        code = bytearray()
+        for seg_reg, op in (("ds", 0xD8), ("es", 0xC0)):
+            if seg_reg in call.regs:
+                v = call.regs[seg_reg] & 0xFFFF
+                code += bytes([0xB8, v & 0xFF, v >> 8, 0x8E, op])
+        for word in call.words:
+            code += bytes([0x68, word & 0xFF, (word >> 8) & 0xFF])
+        for name in ("ax", "bx", "cx", "dx", "si", "di"):
+            if name in call.regs:
+                v = call.regs[name] & 0xFFFF
+                code += bytes([self.REG_MOV[name], v & 0xFF, v >> 8])
+        if call.frame:
+            code += bytes([0x55, 0x89, 0xE5])
+        code += bytes([0x9A, call.ip & 0xFF, call.ip >> 8, call.cs & 0xFF, call.cs >> 8])
+        if call.frame:
+            code += bytes([0x5D])
+        code += bytes([0xB9, ident & 0xFF, ident >> 8, 0xE6, 0xE8, 0xCB])
+        return code
+
+    def _trampoline_for(self, call, ident):
+        """A code block that makes one call and reports it. Each block is used once."""
+        code = self._call_code(call, ident)
+        size = (len(code) + 0xFFF) & ~0xFFF
+        base = self.box.linear
+        self.box.linear += size
+        self.uc.mem_map(base, size)
+        self.uc.mem_write(base, bytes(code))
+        return self._selector(base, len(code) - 1, 0x9A)
+
+    def _start_guest(self, uc, request, pop):
+        """The gate answered with a GuestCalls. Its retf (pop bytes) goes to the first call's
+        trampoline instead of the caller."""
+        ss = uc.reg_read(UC_X86_REG_SS)
+        sp = uc.reg_read(UC_X86_REG_SP)
+        ident = len(self.guest)
+        self.guest.append({
+            "request": request, "ss": ss, "after_sp": sp + 4 + pop, "ret": self._read(self.box.selectors[ss], sp, 4),
+            "ds": uc.reg_read(UC_X86_REG_DS), "es": uc.reg_read(UC_X86_REG_ES), "bp": uc.reg_read(UC_X86_REG_BP),
+            "si": uc.reg_read(UC_X86_REG_SI), "di": uc.reg_read(UC_X86_REG_DI),
+            "queue": list(request.calls), "results": [], "done": False,
+        })
+        self._next_guest(uc, ident, sp, pop)
+
+    def _next_guest(self, uc, ident, sp=None, pop=None):
+        state = self.guest[ident]
+        call = state["queue"].pop(0)
+        sel = self._trampoline_for(call, ident)
+        if sp is not None:
+            # Replace the gate's return address: its retf lands on the trampoline.
+            self._write_guest(state["ss"], sp, struct.pack("<HH", 0, sel))
+        else:
+            # From OUT 0E8h: the trampoline's retf takes this far pointer, with SP back where
+            # the gate's retf left it.
+            self._write_guest(state["ss"], state["after_sp"] - 4, struct.pack("<HH", 0, sel))
+            uc.reg_write(UC_X86_REG_SP, state["after_sp"] - 4)
+
+    def _guest_result(self, uc):
+        """OUT 0E8h: one guest call returned. Run the next, or finish the request."""
+        ident = uc.reg_read(UC_X86_REG_CX)
+        if ident >= len(self.guest) or self.guest[ident]["done"]:
+            self.stop = f"out 0xe8 for no pending guest call {self.where()}"
+            uc.emu_stop()
+            return
+        state = self.guest[ident]
+        ax, dx = uc.reg_read(UC_X86_REG_AX), uc.reg_read(UC_X86_REG_DX)
+        index = len(state["results"])
+        state["results"].append((ax, dx))
+        request = state["request"]
+        if uc.reg_read(UC_X86_REG_SS) != state["ss"]:
+            self.stop = f"guest call returned on another stack segment {self.where()}"
+            uc.emu_stop()
+            return
+        if request.after is not None:
+            more = request.after(index, ax, dx)
+            if isinstance(more, str):
+                self.stop = more
+                uc.emu_stop()
+                return
+            if more:
+                state["queue"][0:0] = list(more)
+        if state["queue"]:
+            self._next_guest(uc, ident)
+            return
+        state["done"] = True
+        out = request.finish(state["results"])
+        if len(out) == 3 and out[2]:
+            self.stop = out[2]
+            uc.emu_stop()
+            return
+        # Back to the original caller: the registers a Pascal callee keeps (DS, ES, SI, DI, BP),
+        # the answer in DX:AX, and SP past the popped arguments. The trampoline's retf goes to
+        # the tail, which pops DS and ES and returns.
+        uc.reg_write(UC_X86_REG_AX, out[0] & 0xFFFF)
+        uc.reg_write(UC_X86_REG_DX, out[1] & 0xFFFF)
+        for name in ("bp", "si", "di"):
+            uc.reg_write(REGISTERS[name], state[name])
+        sp = state["after_sp"] - 12
+        frame = struct.pack("<HHHH", 0, self.tail, state["ds"], state["es"]) + state["ret"]
+        self._write_guest(state["ss"], sp, frame)
+        uc.reg_write(UC_X86_REG_SP, sp)
+
     def _dlls_done(self, uc):
         """OUT 0xE6: every LibMain returned. Answer InitTask and return to its caller."""
         saved = self.pending
@@ -464,6 +735,9 @@ class Machine:
         if port == 0xE6:
             self._dlls_done(uc)
             return
+        if port == 0xE8:
+            self._guest_result(uc)
+            return
         if port == 0xE5:
             slot = uc.reg_read(UC_X86_REG_DX)
             traps = self.box.traps
@@ -508,6 +782,15 @@ class Machine:
             es = registers.pop("es", uc.reg_read(UC_X86_REG_ES))
             ds = registers.pop("ds", uc.reg_read(UC_X86_REG_DS))
             self._write_guest(cs, slot, struct.pack("<HH", es, ds))
+        request = registers.pop("guest", None)
+        if isinstance(request, GuestCalls):
+            row = self.box.wine.usable(module, ordinal)
+            if slot is not None:
+                self.stop = f"{module}.{ordinal}: a register contract cannot call the guest"
+                uc.emu_stop()
+                return
+            self._start_guest(uc, request, row.pop)
+            return
         if "init_dlls" in registers:
             # The gate's retf goes to the trampoline instead of the caller.
             ss = uc.reg_read(UC_X86_REG_SS)
@@ -518,9 +801,15 @@ class Machine:
             }
             self._write_guest(ss, sp, struct.pack("<HH", 0, self.trampoline))
             registers = {}
+        frame = registers.pop("frame", None)
         for name, value in registers.items():
             if name != "push":
                 uc.reg_write(REGISTERS[name], value & 0xFFFF)
+        if frame is not None:
+            # A register contract that moves the stack (Throw): the stub's retf returns to the
+            # frame's CS:IP from the new SS:SP.
+            ss = uc.reg_read(UC_X86_REG_SS)
+            self._write_guest(ss, uc.reg_read(UC_X86_REG_SP), struct.pack("<HH", *frame))
         if "push" in registers:
             # A word under the return address: after the retf, SS:SP points at it.
             ss = uc.reg_read(UC_X86_REG_SS)
@@ -528,7 +817,7 @@ class Machine:
             ret = self._read(self.box.selectors[ss], sp, 4)
             self._write_guest(ss, sp - 2, ret + struct.pack("<H", registers["push"]))
             uc.reg_write(UC_X86_REG_SP, sp - 2)
-        if self.calls > 400:
+        if self.calls > self.call_limit:
             self.stop = "call limit"
             uc.emu_stop()
 

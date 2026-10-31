@@ -64,13 +64,12 @@ class GetModuleHandle(unittest.TestCase):
         self.assertEqual(host.stop, "dos exit 0x0")
         self.assertEqual(ax, host.box.wine.modules["TB80RTM"])
 
-    def test_system_module_stops(self):
-        host, _ax, _dx = run(b"USER.EXE")
-        self.assertEqual(
-            host.stop,
-            "KERNEL.47 GetModuleHandle('USER.EXE'): Wine returns its builtin USER, "
-            "and neww's USER is a gate with no module",
-        )
+    def test_system_module_is_its_gate_module(self):
+        # Wine returns its builtin USER. neww's USER is its gate module, which has a handle.
+        host, ax, _dx = run(b"USER.EXE")
+        self.assertTrue(host.stop.startswith("dos exit"), host.stop)
+        self.assertEqual(ax, host.box.wine.system_modules["USER"])
+        self.assertNotEqual(ax, 0)
 
     def test_reading_the_module_block_stops(self):
         # mov es, ax ; mov ax, es:[0x0A]
