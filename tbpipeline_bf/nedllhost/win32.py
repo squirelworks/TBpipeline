@@ -84,6 +84,48 @@ def _get_version(host, args):
 WIN32[("KERNEL32", "GetVersion")] = (0, _get_version)
 
 
+ERROR_MOD_NOT_FOUND = 126
+TEB_LAST_ERROR = 0x34
+
+
+def _cstr32(host, at, limit=260):
+    """A NUL-terminated ANSI string in 32-bit linear memory."""
+    blob = bytes(host.uc.mem_read(at, limit))
+    return blob.split(b"\0", 1)[0].decode("latin1")
+
+
+def _get_module_handle_a(host, args):
+    # GetModuleHandleA(lpModuleName), stdcall, pops 4. Wine's kernelbase
+    # GetModuleHandleA (dlls/kernelbase/loader.c:336) is GetModuleHandleExA
+    # with GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT. For a name,
+    # GetModuleHandleExW (loader.c:386) asks ntdll's LdrGetDllHandleEx
+    # (dlls/ntdll/loader.c:3539), which adds ".dll" when the name has no
+    # extension (append_dll_ext, loader.c:785) and finds a loaded module
+    # by its base name, ignoring case. A name with a path is matched here
+    # by its base name too; Wine resolves the path first. Not loaded: NULL, and
+    # STATUS_DLL_NOT_FOUND becomes ERROR_MOD_NOT_FOUND in the TEB.
+    # NULL asks for the process image, Peb->ImageBaseAddress. This
+    # process is 16-bit and has no 32-bit image here, so NULL is not
+    # answered.
+    if not args[0]:
+        raise Unanswered("NULL: the process has no 32-bit image")
+    name = _cstr32(host, args[0]).replace("/", "\\").rsplit("\\", 1)[-1]
+    if "." not in name:
+        name += ".dll"
+    name = name.upper()
+    for dll, handle in SYSTEM_HANDLES.items():
+        if name == dll + ".DLL":
+            return handle
+    for mod in getattr(host, "pe32", {}).values():
+        if os.path.basename(mod["path"]).upper() == name:
+            return mod["base"]
+    host.uc.mem_write(TEB + TEB_LAST_ERROR, struct.pack("<I", ERROR_MOD_NOT_FOUND))
+    return 0
+
+
+WIN32[("KERNEL32", "GetModuleHandleA")] = (4, _get_module_handle_a)
+
+
 def _u32(buf, off):
     return struct.unpack_from("<I", buf, off)[0]
 
