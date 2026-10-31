@@ -29,6 +29,7 @@ import struct
 
 from ..nehost.pass04 import EXE_PATH
 
+from unicorn import UcError
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_CS, UC_X86_REG_DX, UC_X86_REG_EAX, UC_X86_REG_EDX,
     UC_X86_REG_ESP, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
@@ -712,3 +713,53 @@ class Win32:
             uc.reg_write(UC_X86_REG_ESP, esp + pop)
         uc.reg_write(UC_X86_REG_EAX, eax & 0xFFFFFFFF)
         uc.reg_write(UC_X86_REG_EDX, 0)
+
+
+# STARTUPINFOA is 68 bytes.
+STARTUPINFOA_SIZE = 68
+STARTF_USESHOWWINDOW = 0x1
+SW_SHOWNORMAL = 1
+INVALID_HANDLE_VALUE = 0xFFFFFFFF
+
+
+def _startup_info_a(host):
+    """Wine's startup_infoA, made once at process attach by
+    copy_startup_info (dlls/kernel32/kernel_main.c:87) from the process
+    parameters. A 16-bit program started as `wine PROGRAM.EXE` goes through
+    start.exe /exec (dlls/ntdll/unix/env.c:1936), whose wmain
+    (programs/start/start.c:571) calls CreateProcessW with dwFlags
+    STARTF_USESHOWWINDOW, wShowWindow SW_SHOWNORMAL and no title, desktop
+    or std handles. create_process_params (dlls/kernelbase/process.c:176)
+    then makes the title the program's own path, before create_vdm_process
+    swaps the image for winevdm, and leaves the desktop empty. An empty
+    string still converts to an allocated "" (RtlUnicodeStringToAnsiString,
+    dlls/ntdll/rtlstr.c:637), so lpDesktop is not NULL. With no
+    STARTF_USESTDHANDLES the three handles are INVALID_HANDLE_VALUE."""
+    if not getattr(host, "startup_info32", None):
+        title = EXE_PATH.encode("latin1") + b"\0"
+        at = _reserve32(host, len(title) + 1)
+        if not at:
+            raise Unanswered("no room for the startup strings")
+        host.uc.mem_write(at, title + b"\0")
+        desktop = at + len(title)
+        host.startup_info32 = struct.pack(
+            "<IIIIIIIIIIIIHHIIII",
+            STARTUPINFOA_SIZE, 0, desktop, at,     # cb, lpReserved, lpDesktop, lpTitle
+            0, 0, 0, 0,                            # dwX, dwY, dwXSize, dwYSize
+            0, 0, 0,                               # dwX/YCountChars, dwFillAttribute
+            STARTF_USESHOWWINDOW, SW_SHOWNORMAL,   # dwFlags, wShowWindow
+            0, 0,                                  # cbReserved2, lpReserved2
+            INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE)
+    return host.startup_info32
+
+
+def _get_startup_info_a(host, args):
+    # GetStartupInfoA(LPSTARTUPINFOA), stdcall, pops 4 (kernel32.spec:836).
+    # Wine's (dlls/kernel32/kernel_main.c:82) is `*info = startup_infoA;`:
+    # the same struct, and so the same string pointers, every call.
+    try:
+        host.uc.mem_write(args[0], _startup_info_a(host))
+    except UcError:
+        raise Unanswered(f"info {args[0]:#x} not writable")
+    return 0
+WIN32[("KERNEL32", "GetStartupInfoA")] = (4, _get_startup_info_a)
