@@ -119,6 +119,12 @@ EQUATES = {
     "KERNEL": {113: ("__AHSHIFT", 3), 114: ("__AHINCR", 8), 178: ("__WINFLAGS", 0x0C25)},
 }
 
+INITTASK_STOP = (
+    "KERNEL.91 InitTask has no contract neww can fill: Wine task.c InitTask16 returns "
+    "AX=1, CX=stack top, DX=nCmdShow, SI=previous instance, DI=hInstance, ES:BX=command line "
+    "in the PSP, and pushes one zero word. neww has no PSP. Pop size 0 from the spec, nothing guessed"
+)
+
 SYSTEM = ("KERNEL", "USER", "GDI", "SHELL", "KEYBOARD", "WIN87EM", "COMMDLG", "TOOLHELP", "COMPOBJ", "OLE2")
 
 
@@ -171,7 +177,9 @@ class Wine:
 
     def _kernel(self, ordinal, arg):
         if ordinal == 91:
-            return 1, 0, None
+            # A register contract. AX = 1 alone is not it. Wine krnl386.exe16/task.c InitTask16
+            # also sets CX, DX, SI, DI, ES:BX and pushes a zero word.
+            return 0, 0, INITTASK_STOP
         if ordinal == 30:
             if self.events > 0:
                 self.events -= 1
