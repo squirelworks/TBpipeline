@@ -124,9 +124,24 @@ USER = _table("USER", USER_SPEC, [
     "108 pascal -ret16 GetMessage(ptr word word word) GetMessage16",
     "111 pascal   SendMessage(word word word long) SendMessage16",
     "118 pascal -ret16 RegisterWindowMessage(str) RegisterWindowMessageA",
+    "179 pascal -ret16 GetSystemMetrics(s_word) GetSystemMetrics16",
     "176 pascal -ret16 LoadString(word word ptr s_word) LoadString16",
     "266 pascal -ret16 SetMessageQueue(word) SetMessageQueue16",
     "291 pascal   SetWindowsHookEx(s_word segptr word word) SetWindowsHookEx16",
+])
+
+# win32u sysparams.c get_system_metrics: the indices that return a constant. SM_CXBORDER and
+# SM_CYBORDER are 1 "regardless of 'BorderWidth' value in registry". SM_CMETRICS is 90.
+METRICS = {
+    5: 1, 6: 1, 7: 3, 8: 3, 18: 0, 19: 1, 22: 0, 24: 0, 25: 0, 26: 0, 27: 0, 41: 0, 43: 3, 44: 0,
+    63: 3, 67: 0, 73: 0, 74: 0, 75: 1, 81: 1, 82: 0, 83: 1, 84: 1, 86: 0, 87: 0, 90: 90,
+}
+
+# The other cases of that switch. Any index that is not a case returns 0.
+METRICS_FROM_HOST = frozenset([
+    0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 23, 28, 29, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 42, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+    68, 69, 70, 71, 72, 76, 77, 78, 79, 80,
 ])
 
 WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
@@ -646,9 +661,24 @@ class Wine:
         self.heap[handle] = (sel, size, flags)
         return handle, 0, None
 
+    def _system_metrics(self, index):
+        """Wine user.c GetSystemMetrics16 is win32u sysparams.c get_system_metrics. Returns (ax, dx, stop)."""
+        if index in METRICS:
+            return METRICS[index], 0, None
+        if index in METRICS_FROM_HOST:
+            return 0, 0, (
+                f"USER.179 GetSystemMetrics({index}): Wine reads it from the registry, "
+                "fonts, or display, and neww has none of them"
+            )
+        # The switch's default.
+        return 0, 0, None
+
     def _user(self, ordinal, arg):
         if ordinal == 118:
             return self._register_window_message(arg.string(0)), 0, None
+        if ordinal == 179:
+            index = arg(0) - 0x10000 if arg(0) & 0x8000 else arg(0)
+            return self._system_metrics(index)
         if ordinal == 266:
             return 1, 0, None
         if ordinal == 291:
