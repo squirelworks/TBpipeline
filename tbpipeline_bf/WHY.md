@@ -148,6 +148,8 @@ The default is still `AX = 1`. These are the calls that could not stay that way.
 
 **USER.1** `MessageBox` is a stop, not an answer. With the unpacked binaries, the book open in `TB80BAS` (segment 7, `0x2FC`) hits its assertion at line `0x275` five times. Each one calls TB80UTL's internal-error box, `MB_OKCANCEL|MB_ICONHAND|MB_SYSTEMMODAL`, "Press OK to continue; Cancel to Exit Toolbook". `AX = 1` was `IDOK`, so the runtime went on, the open failed before any file was read, `InitInstance` (`00c0:0890`) returned 0, and `main` exited 0. Neither button is the host's to press. The run stops at the box and `fault` quotes it. The text is the `wsprintf` buffer, so it reads as garbage until `USER.420` is answered.
 
+**USER.420** `wsprintf` is answered: `%s` is a far pointer, `%d %i %u %x %X %c` take one word, an `l` takes two, and `-`, `0`, `#`, the width and the precision apply. It is cdecl, so the pop is 0; the table said 8, the Pascal size of its two fixed pointers. Before it was answered, every formatted name kept whatever the buffer held. The extensionless `C:\TOOLBOOK\TB80enu` open in the recorded run was that: the real name is `TB80enu1.DLL`, the language DLL. `TB80enu` stays in the `TBK_INI` list, but the entry no longer asks for it.
+
 **USER.179** `GetSystemMetrics` returns a small table. Metric `0x29` is `SM_PENWINDOWS`. A non-zero value makes startup call `RegisterPenApp` through a null pointer. It stays 0.
 
 **USER.266** `SetMessageQueue` is the ordinal `run.py` prints by name. The return is 1. There is no queue.
