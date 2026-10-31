@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `GDI.80` `GetDeviceCaps` answers for the screen as Wine's `GetDeviceCaps16` over `nulldrv_GetDeviceCaps` does: 32 bits per pixel, 96 DPI, one plane, no palette, `NUMCOLORS` 2048, 800 by 600, and 0 for an unknown index. It used to fall through to `AX = 1`, one bit per pixel and one pixel per inch.
 - `USER.180` `GetSysColor` returns Wine's default colour for the index in DX:AX, from `system_colors` in `win32u/sysparams.c`, and 0 out of range. It used to fall through to `AX = 1`, `RGB(1, 0, 0)` for every element.
 - `KERNEL.36` `GetCurrentTask` returns one task handle, a zeroed block the host keeps, in AX and DX, as Wine's `WIN16_GetCurrentTask` returns the current and first task. It used to fall through to `AX = 1`, which TB80UTL and TB80LNL stored as the key of their per-task tables.
 - `USER.118` `RegisterWindowMessage` returns one atom from `0xC000` per message name, compared without case, as Wine's `RegisterWindowMessageA` (`GlobalAddAtomA`) does. It used to fall through to `AX = 1`, so every registered message got message number 1.

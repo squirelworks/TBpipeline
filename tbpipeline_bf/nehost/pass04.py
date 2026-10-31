@@ -1040,6 +1040,29 @@ class Pass04:
         self.uc.reg_write(UC_X86_REG_DX, 0)
         return True
 
+    def _gdi(self, ordinal):
+        # GetDeviceCaps(hdc, index). The only device is the screen. Wine's
+        # GetDeviceCaps16 returns nulldrv_GetDeviceCaps cast to INT16, with
+        # NUMCOLORS -1 turned into 2048: 32 bits per pixel when no display
+        # reports a mode, 96 DPI for an application that is not DPI aware,
+        # and 0 for an index it does not know. HORZRES and VERTRES are the
+        # screen GetSystemMetrics reports. AX = 1 was one bit per pixel and
+        # one pixel per inch.
+        if ordinal != 80:
+            return False
+        width, height, dpi = 800, 600, 96
+        value = {
+            0: 0x4000, 2: 1,
+            4: (width * 254 + dpi * 5) // (dpi * 10), 6: (height * 254 + dpi * 5) // (dpi * 10),
+            8: width, 10: height, 12: 32, 14: 1, 16: -1, 18: -1, 24: 2048,
+            28: 0x1FF, 30: 0xFE, 32: 0xFF, 34: 0x79F7, 36: 1, 38: 0xBE99,
+            40: 36, 42: 36, 44: 51, 88: dpi, 90: dpi, 106: 20, 108: 24,
+            116: 1, 117: height, 118: width,
+        }.get(self._word(0), 0)
+        self.uc.reg_write(UC_X86_REG_AX, value & 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+        return True
+
     def _com_unk(self):
         """One IUnknown whose Query/AddRef/Release just return."""
         pair = getattr(self, "_com_pair", None)
@@ -1243,6 +1266,8 @@ class Pass04:
         if self.pending and self.pending[0] == "USER" and self._user(ordinal):
             return
         if self.pending and self.pending[0] == "KEYBOARD" and self._keyboard(ordinal):
+            return
+        if self.pending and self.pending[0] == "GDI" and self._gdi(ordinal):
             return
         if self.pending and self.pending[0] in ("COMPOBJ", "OLE2", "OLE2DISP") and self._oleapi():
             return
