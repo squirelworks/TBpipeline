@@ -12,6 +12,6 @@ When the guest calls `OpenFile` or `_lopen` on a path ending in `.tbk` or `.sbk`
 
 `--list` prints the import report and does not start the CPU. It also counts the `TB80BAS` imports that have a name, by layer: `HEAP`, `STACK`, `RESMGR`, `CDB`, `OBJ`, or other. The name is the import's own, or the export name in `TB80BAS.DLL` when that file is in `--b`. An import with neither is counted as unnamed. The count does not answer the call. The export stays in the DLL.
 
-Running the CPU needs `unicorn`. `--list` does not.
+`--help` prints the usage and exits 0. Neither `--list` nor `--help` imports `unicorn`. A run needs it.
 
 A run that ends without a gap says how it ended. `hlt at CS:IP` means a halt. `instruction cap 1000000 reached at CS:IP` and `time cap 15 s reached at CS:IP` mean the run hit one of the caps. A cap stop also says how many Windows calls were taken and which was last, or says `no Windows call taken`. The caps stay where they are. On a cap, the CLI also prints `last blocks`: the CS:IP of the last 20 basic blocks the CPU entered, oldest first.

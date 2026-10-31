@@ -6,7 +6,7 @@ Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It
 python3 -m tbpipeline_bf --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk
 ```
 
-`--b` is the ToolBook directory. Default is `bin/` beside this package. `--c` is the book. A bare filename is looked up in `--b/courses/`.
+`--b` is the ToolBook directory. Default is `bin/` beside this package. `--c` is the book. A bare filename is looked up in `--b/courses/`. `--help` prints the usage and exits 0. It does not import `unicorn`.
 
 ```
 python3 -m tbpipeline_bf --open book.tbk
@@ -57,7 +57,7 @@ Each run writes its own folder beside the script: `tbpipeline_bf/_debug/db-YYYYM
 | `02c.txt` | The prompt |
 | `render.html` | Engine reader: `go`, `next`, `back`, `buttonClick` |
 | `render-old.html` | Old index reader, only with `--render old` |
-| `render/` | Shapes that can be drawn but are not placed in `render.html` |
+| `render/` | One PNG per drawing. Kind-04 polygons are also placed in `render.html`; curve runs are not |
 | `resources/` | BMPs the book holds that the reader cannot place |
 | `bmp_bitmap.txt` | The `TB80BMP` ordinal 3 stop |
 | `dll_probe.txt` | Ordinal 1 of every DLL, `FFFF` bound |
@@ -67,7 +67,7 @@ Each run writes its own folder beside the script: `tbpipeline_bf/_debug/db-YYYYM
 
 This cut is 1.0.0r6. The reader is written only with `--dbgrender`. The host still exits before a book open.
 
-`render/` holds shapes that can be drawn and are not placed, one file per curve. `resources/` holds the BMPs the book already has. Two buttons under the reader show them. The probe logs are copied into the debug run.
+`render/` holds one file per drawing. Kind-04 polygons are also on the page in `render.html`, at their twips / 15. Curve runs are only files. `resources/` holds the BMPs the book already has. A BMP inside a page is also drawn on that page, in book order, not placed. Two buttons under the reader show them. The probe logs are copied into the debug run.
 
 
 Known bugs are in `known-bugs.md`. The plan is `plannedmilestones.md`. `v1.0.1` is the work that was waiting. `v2.0.0` is total functionality.

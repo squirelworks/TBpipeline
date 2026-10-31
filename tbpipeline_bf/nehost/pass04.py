@@ -15,7 +15,7 @@ from .unfold import AHINCR, Arena, _u16
 from .win16stack import POP
 
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16
-from unicorn import UC_HOOK_INSN, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED
+from unicorn import UC_HOOK_INSN, UC_HOOK_INTR, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
@@ -25,6 +25,17 @@ from unicorn.x86_const import (
 
 API_PORT = 0xE0
 INITTASK = 91
+
+# Names other than *.ini the entry opens that TBK_INI may answer. The
+# pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
+# two rounds of TB80.INI opens. What the file should hold is not known.
+SUPPLIED = {"tb80enu"}
+
+
+def ax1_line(module, ordinal, words, cs, ip):
+    """One line of 02_launch.txt for a call that got the AX = 1 default."""
+    stack = " ".join(f"{w:04x}" for w in words)
+    return f"ax=1 {module}.{ordinal} from {cs:#06x}:{ip:#06x} stack {stack}"
 
 
 class Pass04:
@@ -37,6 +48,7 @@ class Pass04:
         self.shift = _u16(self.file, self.ne + 0x32)
         self.segoff = _u16(self.file, self.ne + 0x22)
         self.opens = []
+        self.open_styles = []
         self.skipped = []
         self.misses = []
         self.named = []
@@ -65,6 +77,9 @@ class Pass04:
         self.thunk = self.arena.alloc_selector(0x1000, 0x9A)
         self.segs = {}
         self.sites = {}
+        self.callers = {}
+        self.caller = None
+        self.ax1 = []
         self.pending = None
         self.modnames = self._module_names()
         auto = _u16(self.file, self.ne + 0x0E)
@@ -175,6 +190,7 @@ class Pass04:
         if self.arena.read(sel, disp - 1, 1) != b"\x9a":
             return
         name = self.modnames[module - 1]
+        self.callers[(sel, (disp + 4) & 0xFFFF)] = (name, ordinal)
         pop = POP.get(name, {}).get(ordinal)
         if pop is None:
             return
@@ -228,6 +244,7 @@ class Pass04:
         site = self.sites.get((ret_cs, ret_ip))
         pop = site[2] if site else self._pushed(ret_cs, ret_ip)
         self.pending = site
+        self.caller = (ret_cs, ret_ip)
         # Snapshot arguments first. Sliding the return address overwrites
         # the words it lands on, and the handlers read them after this.
         self._args = self.arena.read(ss, (sp + 4) & 0xFFFF, 32)
@@ -381,6 +398,7 @@ class Pass04:
         if ordinal == 74:
             path = self._string(self._word(4), self._word(3))
             self.opens.append(path)
+            self.open_styles.append((path, self._word(0)))
             print(f"  open {path}", file=sys.stderr, flush=True)
             handle = self._take_file(path)
             uc.reg_write(UC_X86_REG_AX, handle if handle is not None else 0xFFFF)
@@ -426,13 +444,34 @@ class Pass04:
 
     def _take_file(self, path):
         low = path.lower().replace("/", "\\")
-        if not low.endswith((".tbk", ".sbk")):
+        if low.endswith((".tbk", ".sbk")):
+            blob = self.book_bytes
+        else:
+            blob = self._ini_bytes(low)
+        if blob is None:
             return None
         handle = self.next_handle
         self.next_handle += 1
-        self.files[handle] = self.book_bytes
+        self.files[handle] = blob
         self.pos[handle] = 0
         return handle
+
+    def _ini_bytes(self, low):
+        """An INI from TBK_INI, matched by its file name. Unset means 0xFFFF.
+
+        Read at the moment of the open, like TBK_UNPACKED for LoadLibrary.
+        Only a name ending in .ini, or one of SUPPLIED, is looked for. The
+        directory is the caller's; the host never writes an INI and never
+        looks in /Toolbook/.
+        """
+        root = os.environ.get("TBK_INI", "")
+        base = low.split("\\")[-1]
+        if not root or not (base.endswith(".ini") or base in SUPPLIED) or not os.path.isdir(root):
+            return None
+        for entry in os.listdir(root):
+            if entry.lower() == base:
+                return open(os.path.join(root, entry), "rb").read()
+        return None
 
     def _copy_to(self, seg, offset, text, limit):
         raw = text.encode("latin1", "replace")[: max(limit - 1, 0)] + b"\x00"
@@ -891,8 +930,20 @@ class Pass04:
             if ((uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF) == 0x4C:
                 self._dos()
                 return
+        self._note_ax1(ordinal)
         uc.reg_write(UC_X86_REG_AX, 1)
         uc.reg_write(UC_X86_REG_DX, 0)
+
+    def _note_ax1(self, ordinal):
+        """Every far call that falls through to the AX = 1 default, as a line.
+
+        The module comes from the reloc that named the call site, not from
+        the pop table, so a call with no pop size is still named.
+        """
+        cs, ip = self.caller or (0, 0)
+        module = self.callers.get((cs, ip), ("?", ordinal))[0]
+        words = [_u16(self._args, n * 2) if (n + 1) * 2 <= len(self._args) else 0 for n in range(4)]
+        self.ax1.append(ax1_line(module, ordinal, words, cs, ip))
 
     def _strmgr(self):
         """TB80UTL.3 GETSTRMGRSTRING. Pascal, five words.
@@ -949,7 +1000,6 @@ class Pass04:
                 uc.reg_write(UC_X86_REG_AX, 2)
                 uc.reg_write(UC_X86_REG_EFLAGS, uc.reg_read(UC_X86_REG_EFLAGS) | 1)
                 return
-            self.files[handle] = self.book_bytes
             uc.reg_write(UC_X86_REG_AX, handle)
             self._clear()
             return
@@ -994,13 +1044,32 @@ class Pass04:
     def _clear(self):
         self.uc.reg_write(UC_X86_REG_EFLAGS, self.uc.reg_read(UC_X86_REG_EFLAGS) & ~1)
 
-    def run(self):
-        self.build()
+    def _make_psp(self):
+        """The fake PSP. The book name is the command tail at 0x80, the way
+        DOS hands WinExec arguments across. Every guest read of the tail is
+        recorded in tail_reads as (cs, ip, offset), so a run says whether
+        the entry ever looked at the book name.
+        """
         tail = (" " + os.path.basename(self.book)).encode("ascii") + b"\r"
         psp = bytearray(0x100)
         psp[0x80] = len(tail) - 1
         psp[0x81:0x81 + len(tail)] = tail
         self.psp = self.arena.alloc_selector(0x100, 0x92, bytes(psp))
+        self.tail_reads = []
+        base = self.arena.segs[self.psp]["base"]
+        self.uc.hook_add(UC_HOOK_MEM_READ, self._on_tail, None, base + 0x80, base + 0xFF)
+        return self.psp
+
+    def _on_tail(self, uc, access, address, size, value, user):
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        offset = address - self.arena.segs[self.psp]["base"]
+        if len(self.tail_reads) < 64:
+            self.tail_reads.append((cs, ip, offset))
+
+    def run(self):
+        self.build()
+        self._make_psp()
         dgroup = self.segs[139]
         code = self.segs[2]
         # The GDT lives at linear 0 and selector 0x80 is segment 14.
