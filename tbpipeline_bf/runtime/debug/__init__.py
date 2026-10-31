@@ -7,7 +7,7 @@ Stage 2c says the debug files are there. Off unless the caller passed
 
 from pathlib import Path
 
-from .play import render_new, render_old
+from .play import placed, render_new, render_old
 from .resources import write as write_resources
 from .shapes import write as write_shapes
 from ..openbook import open_book
@@ -51,7 +51,11 @@ def run(book_path, out, dbgrender=False, theme="default", render="new"):
     html_path = out / "render.html"
     html_path.write_text(render_new(book, theme, manifest, resources, opened.handlers), encoding="utf-8")
     wrote = [f"  wrote {html_path} ({html_path.stat().st_size} bytes) engine"]
-    wrote.append(f"  render/ {len(manifest)} pages")
+    wrote.append(f"  render/ {len(manifest)} pages with a drawing")
+    shapes = {page.name: len(placed(page.blob)) for page in book.pages}
+    wrote.append(
+        f"  placed {sum(shapes.values())} polygons on {sum(1 for n in shapes.values() if n)} pages, at record twips / 15"
+    )
     wrote.append(f"  resources/ {len(resources['book'])} book, {sum(len(v) for v in resources['pages'].values())} in pages")
     if render == "old":
         old_path = out / "render-old.html"
@@ -78,7 +82,7 @@ def run(book_path, out, dbgrender=False, theme="default", render="new"):
         "stage 2c",
         f"  {prompt}",
         f"  {', '.join(files)}",
-        f"  render/ {len(drawn)} pages that can be drawn and are not placed",
+        f"  render/ {len(drawn)} PNG files",
     ]
     (out / "02c.txt").write_text("\n".join(block) + "\n", encoding="utf-8")
     lines.extend(block)

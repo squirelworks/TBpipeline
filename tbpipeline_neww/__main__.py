@@ -7,11 +7,12 @@ Windows ordinals are gates. ToolBook calls land in the other DLL.
 import sys
 from pathlib import Path
 
-from .machine import Machine
-
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--help" in argv or "-h" in argv:
+        print(__doc__.strip())
+        return 0
     root = None
     book = None
     for i, arg in enumerate(argv):
@@ -22,6 +23,8 @@ def main(argv=None):
     if root is None or not root.is_dir():
         print("usage: python3 -m tbpipeline_neww --b ~/TBK/bin", file=sys.stderr)
         return 2
+    from .machine import Machine
+
     host = Machine(root, book)
     box = host.box
     if box.exe is None:
