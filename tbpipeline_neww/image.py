@@ -124,9 +124,13 @@ class Sandbox:
         if (fix.flags & 3) == 3:
             return
         kind, *rest = self._target(image, fix)
-        for disp in self._chain(seg, fix.disp):
+        # Additive (flag 4): one location, and the word there is an addend, not the next link.
+        additive = bool(fix.flags & 4)
+        sites = [fix.disp] if additive else self._chain(seg, fix.disp)
+        for disp in sites:
+            addend = struct.unpack_from("<H", seg.data, disp)[0] if additive and disp + 2 <= len(seg.data) else 0
             if kind == "equate":
-                self._write(seg, disp, fix.atype, rest[0], 0)
+                self._write(seg, disp, fix.atype, rest[0] + addend, 0)
                 self.equates += 1
             elif kind == "code":
                 target, index, offset = rest
@@ -134,7 +138,7 @@ class Sandbox:
                     self.gaps.append(f"{image.name} -> {target.name} segment {index}")
                     continue
                 sel = target.segments[index - 1].selector
-                self._write(seg, disp, fix.atype, offset, sel)
+                self._write(seg, disp, fix.atype, offset + addend, sel)
                 self.linked += 1
             elif kind == "gate":
                 module, ordinal = rest
@@ -143,7 +147,7 @@ class Sandbox:
                     self.gaps.append(f"{module}.{ordinal}")
                     continue
                 sel = gate.segments[0].selector
-                self._write(seg, disp, fix.atype, ordinal * 8, sel)
+                self._write(seg, disp, fix.atype, ordinal * 8 + addend, sel)
                 self.linked += 1
             else:
                 module, ordinal = rest
