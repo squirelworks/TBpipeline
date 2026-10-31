@@ -61,6 +61,11 @@ def note(name, text):
     return path
 
 
+def launch_ax1(host):
+    """Every far call that still got AX = 1, written whether or not the run died."""
+    return [f"  {line}" for line in host.ax1]
+
+
 def stages(bin_dir, book_path, dbgrender=False, theme="default", render="new"):
     lines = []
 
@@ -86,7 +91,9 @@ def stages(bin_dir, book_path, dbgrender=False, theme="default", render="new"):
     block.append(f"  stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
     block.append(f"  user {host.user_hits or 'none'}")
     block.append(f"  engine opens {host.opens or 'none'}")
-    note("02_launch.txt", "\n".join(block))
+    block.append(f"  command tail reads {len(host.tail_reads)} (PSP {host.psp:#x}:0x80)")
+    block.append(f"  ax=1 calls {len(host.ax1)}")
+    note("02_launch.txt", "\n".join(block + launch_ax1(host)))
     lines.extend(block)
     fallback, prompt = reader_debug.run(book_path, DEBUG, dbgrender, theme, render)
     lines.extend(fallback)

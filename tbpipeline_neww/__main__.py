@@ -7,11 +7,12 @@ Windows ordinals are gates. ToolBook calls land in the other DLL.
 import sys
 from pathlib import Path
 
-from .machine import Machine
-
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--help" in argv or "-h" in argv:
+        print(__doc__.strip())
+        return 0
     root = None
     for i, arg in enumerate(argv):
         if arg in ("--b", "--bin") and i + 1 < len(argv):
@@ -19,6 +20,8 @@ def main(argv=None):
     if root is None or not root.is_dir():
         print("usage: python3 -m tbpipeline_neww --b ~/TBK/bin", file=sys.stderr)
         return 2
+    from .machine import Machine
+
     host = Machine(root)
     box = host.box
     if box.exe is None:
@@ -27,6 +30,9 @@ def main(argv=None):
     code = box.exe.segments[box.exe.entry_seg - 1]
     print(f"sandbox {box.exe.name} {box.exe.entry_seg}:{box.exe.entry_ip:#x} sel {code.selector:#x}")
     print(f"  modules {len(box.images)}  linked {box.linked}  equates {box.equates}  gaps {len(box.gaps)}")
+    bas = box.images.get("TB80BAS")
+    if bas is not None and not bas.synthetic:
+        print(f"  TB80BAS {len(bas.entries)} exports stay in the DLL. neww does not answer them in Python.")
     for line in box.gaps[:12]:
         print(f"  gap {line}")
     host.run()
