@@ -1,12 +1,14 @@
 """KERNEL.518 CallProcEx32W runs a 32-bit procedure and returns its EAX.
 
-Wine's spec line (dlls/krnl386.exe16/krnl386.exe16.spec:426) is
-`518 varargs _CallProcEx32W(long long long) CallProcEx32W16`: cdecl, so the callee pops nothing and the caller adds
-to SP. CallProcEx32W16 (dlls/krnl386.exe16/wowthunk.c) takes nParams,
+Wine's spec line (dlls/krnl386.exe16/krnl386.exe16.spec:426, Wine
+commit 2528aff2) is
+`518 varargs _CallProcEx32W(long long long) CallProcEx32W16`:
+cdecl, so the callee pops nothing and the caller adds to SP. CallProcEx32W16 (dlls/krnl386.exe16/thunk.c:2609) takes nParams,
 fAddressConvert and lpProc32, then reads the parameters p1 to pn left to
 right. When bit i of fAddressConvert is set, p(i+1) is a 16:16 pointer
 and is passed through MapSL. It calls lpProc32 and returns EAX in DX:AX.
 The top bit of nParams, CPEX_DEST_CDECL, says the target is cdecl.
+WOW_CallProc32W16 returns 0 for a NULL lpProc32 without calling it.
 
 The DLL is loaded with LoadLibraryEx32W (#144) and is a tiny original PE
 built by tests/pe32.py.
@@ -77,6 +79,11 @@ class CallProcEx32W(unittest.TestCase):
     def test_a_cdecl_target(self):
         result, sp = call_ex(self.h, BASE + 0x1030, [9, 4], cdecl=True)
         self.assertEqual(result, 5)
+        self.assertEqual(sp, STACK_TOP)
+
+    def test_a_null_procedure_returns_zero(self):
+        result, sp = call_ex(self.h, 0, [5, 7])
+        self.assertEqual(result, 0)
         self.assertEqual(sp, STACK_TOP)
 
 
