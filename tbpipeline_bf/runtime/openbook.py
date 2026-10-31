@@ -31,6 +31,7 @@ class Handler:
     offset: int
     goto: str = ""
     book: str = ""
+    unread: int = 0
 
 
 @dataclass
@@ -84,8 +85,9 @@ def _compressed(data: bytes, words, taken: set[int]) -> list[Handler]:
             start = origin + 1
             if origin in taken:
                 continue
+            misses: list[int] = []
             try:
-                source = _body(decompress(data, words, origin=origin, span=8000, max_out=8000))
+                source = _body(decompress(data, words, origin=origin, span=8000, max_out=8000, misses=misses))
             except Exception:
                 continue
             low = source.lstrip().lower()
@@ -99,6 +101,7 @@ def _compressed(data: bytes, words, taken: set[int]) -> list[Handler]:
                 offset=origin,
                 goto=goto.group(1) if goto else "",
                 book=goto.group(2) or "" if goto else "",
+                unread=len(misses),
             ))
     found.sort(key=lambda h: h.offset)
     return found
@@ -116,7 +119,8 @@ def open_book(path: str | Path) -> Opened:
         for match in _HANDLE.finditer(page.blob):
             origin = page.offset + match.start()
             span = max(1, len(page.blob) - match.start())
-            source = _body(decompress(data, words, origin=origin, span=span, max_out=8000))
+            misses: list[int] = []
+            source = _body(decompress(data, words, origin=origin, span=span, max_out=8000, misses=misses))
             taken.add(origin)
             goto = _GOTO.search(source)
             found.append(Handler(
@@ -125,6 +129,7 @@ def open_book(path: str | Path) -> Opened:
                 offset=origin,
                 goto=goto.group(1) if goto else "",
                 book=goto.group(2) or "" if goto else "",
+                unread=len(misses),
             ))
         if found:
             opened.handlers[page.name] = found
@@ -241,6 +246,14 @@ def report(opened: Opened, page: str | None = None) -> str:
     lines.append("map")
     for page in book.pages:
         lines.append(f"  {page.name}  -> {_forward(opened, page.name) or '-'}")
+    lines.append("unread")
+    unread = [
+        (name, h) for name, found in opened.handlers.items() for h in found if h.unread
+    ]
+    for name, h in sorted(unread, key=lambda pair: pair[1].offset):
+        lines.append(f"  {name} {h.name} {h.offset:#x} {h.unread} bytes copied from outside the book")
+    if not unread:
+        lines.append("  none")
     lines.append("click")
     lines.extend("  " + row for row in click(opened))
     lines.append("trace")

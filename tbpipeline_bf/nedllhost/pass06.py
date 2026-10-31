@@ -12,7 +12,7 @@ import struct
 import sys
 
 from tbpipeline_bf.binpath import unpacked
-from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT
+from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, last_call_line
 from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
 
@@ -341,6 +341,7 @@ def main():
     used = sorted(set(host.dll_calls))
     print(f"stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
     print(f"opens: {host.opens or 'none'}")
+    print(last_call_line(host.last_call))
     print(f"dll entries bound {len(used)}")
     return 0
 

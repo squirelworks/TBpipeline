@@ -46,6 +46,7 @@ def fake_host(cls=Pass06, book=b""):
     host.sites, host.callers = {}, {}
     host.caller = None
     host.ax1 = []
+    host.last_call = None
     host.pending = None
     host.modnames = []
     host.uc.reg_write(UC_X86_REG_SS, host.stack)

@@ -18,7 +18,7 @@ A back-reference copies bytes from the compressed input, not from the output. Th
 
 That is text reuse. It is not a call. OpenScript calls another handler by writing the name (`ASYM_BlockSuspend()`). The compressor stores the second copy of those letters by pointing at the first. The call, when there is one, is still the text.
 
-Decoding a slice fails when the distance lands before the slice. The expander has to see the whole file. `origin` is where this handler starts. `span` is how far its own bytes go. The back-reference may read anywhere in the file.
+Decoding a slice fails when the distance lands before the slice. The expander has to see the whole file. A copy that lands outside the whole file is still written as `?`, and `decompress(..., misses=[])` records where. `--open` lists those handlers under `unread`, so a handler the expander could not read is reported, not skipped. `origin` is where this handler starts. `span` is how far its own bytes go. The back-reference may read anywhere in the file.
 
 A `?` left in the expanded text is the character `?`. It shows up in sentences (`Right?`), in character lists (`.,;:?!`), and in tests (`chr = "?"`). It is not a function marker. A handler that begins with a stray `?` and a newline was scanned one byte early.
 

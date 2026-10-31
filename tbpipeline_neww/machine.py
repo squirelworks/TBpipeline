@@ -132,10 +132,15 @@ class Machine:
             self.stop = why
             uc.emu_stop()
             return
+        if why:
+            # A stop answers nothing. The guest's registers stay as the call left them.
+            self.stop = why
+            uc.emu_stop()
+            return
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
         uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
-        if why or self.calls > 400:
-            self.stop = why or "call limit"
+        if self.calls > 400:
+            self.stop = "call limit"
             uc.emu_stop()
 
     def _unmapped(self, uc, access, address, size, value, user):

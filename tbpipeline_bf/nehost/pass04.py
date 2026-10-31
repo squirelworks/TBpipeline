@@ -32,6 +32,23 @@ INITTASK = 91
 SUPPLIED = {"tb80enu"}
 
 
+REGS = (
+    ("ax", UC_X86_REG_AX), ("bx", UC_X86_REG_BX), ("cx", UC_X86_REG_CX), ("dx", UC_X86_REG_DX),
+    ("si", UC_X86_REG_SI), ("di", UC_X86_REG_DI), ("ds", UC_X86_REG_DS), ("es", UC_X86_REG_ES),
+)
+
+
+def last_call_line(call):
+    """The last Windows call the entry made, and the registers it got back."""
+    if not call:
+        return "last call none"
+    module, ordinal, cs, ip, words, regs, defaulted = call
+    stack = " ".join(f"{w:04x}" for w in words)
+    back = " ".join(f"{k}={v:04x}" for k, v in regs.items())
+    tag = " (AX = 1 default)" if defaulted else ""
+    return f"last call {module}.{ordinal} from {cs:#06x}:{ip:#06x} stack {stack} -> {back}{tag}"
+
+
 def ax1_line(module, ordinal, words, cs, ip):
     """One line of 02_launch.txt for a call that got the AX = 1 default."""
     stack = " ".join(f"{w:04x}" for w in words)
@@ -80,6 +97,7 @@ class Pass04:
         self.callers = {}
         self.caller = None
         self.ax1 = []
+        self.last_call = None
         self.pending = None
         self.modnames = self._module_names()
         auto = _u16(self.file, self.ne + 0x0E)
@@ -874,6 +892,15 @@ class Pass04:
         if port != API_PORT:
             return
         ordinal = uc.reg_read(UC_X86_REG_DX)
+        before = len(self.ax1)
+        self._answer(uc, ordinal)
+        cs, ip = self.caller or (0, 0)
+        module = self.callers.get((cs, ip), ("?", ordinal))[0]
+        words = [_u16(self._args, n * 2) if (n + 1) * 2 <= len(self._args) else 0 for n in range(4)]
+        regs = {name: uc.reg_read(reg) for name, reg in REGS}
+        self.last_call = (module, ordinal, cs, ip, words, regs, len(self.ax1) > before)
+
+    def _answer(self, uc, ordinal):
         self._fix_ret(ordinal)
         self.calls.append(ordinal)
         if len(self.calls) <= 16:
