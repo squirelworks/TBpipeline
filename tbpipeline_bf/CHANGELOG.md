@@ -4,6 +4,9 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `KERNEL.515` `GetProcAddress32W` returns the address of a loaded 32-bit DLL's export, by name or by ordinal, or 0, as Wine's `GetProcAddress32W16` returns `GetProcAddress`. For a Win32 system DLL it returns an import stub that is answered by name. It used to fall through to `AX = 1`.
+- `KERNEL.57` `GetProfileInt` reads a number from `WIN.INI`, the way Wine's `GetProfileInt16` calls `GetPrivateProfileInt16` on `"win.ini"`, or returns the default. It used to fall through to `AX = 1`.
+- `KERNEL.58` `GetProfileString` copies a value from `WIN.INI`, the way Wine's `GetProfileString16` calls `GetPrivateProfileString16` on `"win.ini"`, or the default. It used to fall through to `AX = 1`.
 - `KERNEL.353` `lstrcpyn` copies at most n - 1 characters and a NUL and returns dst, as Wine's `lstrcpyn16` over `lstrcpynA` does. It used to fall through to `AX = 1`, which copied nothing and returned `0000:0001`.
 - `KERNEL.127` `GetPrivateProfileInt` reads the key's number from the INI `TBK_INI` supplies, the way Wine's `GetPrivateProfileInt16` does (`RtlUnicodeStringToInteger`, base 0, cast to INT16). A missing or empty value returns the default. It used to fall through to `AX = 1`, so every numeric key read as 1.
 - `KERNEL.513` `LoadLibraryEx32W` maps a 32-bit DLL from `TBK_UNPACKED` at its image base, binds its imports to stubs, and runs its entry point with `DLL_PROCESS_ATTACH` as 32-bit code. It returns the image base, or 0 when the file is missing or `DllMain` says FALSE, as Wine's `LoadLibraryEx32W16` returns `LoadLibraryExA`'s handle. A Win32 system DLL returns its handle without a file. A Win32 import with no answer stops the run and is named. The real run never reaches it yet: `GetProcAddress(KERNEL, 513)` still returns 0.

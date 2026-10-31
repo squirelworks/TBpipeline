@@ -1174,31 +1174,37 @@ class Pass04:
     def _kernel_string(self, ordinal):
         """Far-string helpers. A stub return of 1 was loaded as a selector."""
         uc = self.uc
-        if ordinal == 128:
+        if ordinal in (58, 128):
             # GetPrivateProfileString(app, key, default, buf, size, file).
             # AX = 1 left the buffer as it was and said one character came
             # back. The value is the key's from the INI TBK_INI supplies,
             # else the default, cut to size - 1 and NUL-terminated.
-            size = self._word(2)
-            path = self._string(self._word(1), self._word(0))
-            app = self._string(self._word(10), self._word(9)) if self._word(10) else None
-            key = self._string(self._word(8), self._word(7)) if self._word(8) else None
-            default = self._string(self._word(6), self._word(5)) if self._word(6) else ""
+            # GetProfileString(app, key, default, buf, size) is the same call
+            # on "win.ini" in Wine's GetProfileString16.
+            n = 2 if ordinal == 128 else 0
+            size = self._word(n)
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(8 + n), self._word(7 + n)) if self._word(8 + n) else None
+            key = self._string(self._word(6 + n), self._word(5 + n)) if self._word(6 + n) else None
+            default = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else ""
             value = self._profile_value(path, app, key)
             text = default.rstrip(" ") if value is None else value
-            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(4), self._word(3), text, size) if size else 0)
+            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(2 + n), self._word(1 + n), text, size) if size else 0)
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
-        if ordinal == 127:
+        if ordinal in (57, 127):
             # GetPrivateProfileInt(app, key, default, file). AX = 1 said every
             # key held 1. Wine's GetPrivateProfileInt16 reads the value into a
             # 30-character buffer: missing or empty gives the default, else
             # RtlUnicodeStringToInteger with base 0, cast to INT16.
-            path = self._string(self._word(1), self._word(0))
-            app = self._string(self._word(6), self._word(5)) if self._word(6) else None
-            key = self._string(self._word(4), self._word(3)) if self._word(4) else None
+            # GetProfileInt(app, key, default) is the same call on "win.ini"
+            # in Wine's GetProfileInt16.
+            n = 2 if ordinal == 127 else 0
+            path = self._string(self._word(1), self._word(0)) if n else "win.ini"
+            app = self._string(self._word(4 + n), self._word(3 + n)) if self._word(4 + n) else None
+            key = self._string(self._word(2 + n), self._word(1 + n)) if self._word(2 + n) else None
             value = (self._profile_value(path, app, key) or "")[:29]
-            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(2))
+            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(n))
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
         if ordinal == 88:
