@@ -96,6 +96,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "15  pascal -ret16 GlobalAlloc(word long) GlobalAlloc16",
     "17  pascal -ret16 GlobalFree(word) GlobalFree16",
     "18  pascal GlobalLock(word) WIN16_GlobalLock16",
+    "23  pascal -ret16 LockSegment(word) LockSegment16",
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
     "74  pascal -ret16 OpenFile(str ptr word) OpenFile16",
@@ -166,6 +167,8 @@ class Wine:
         self.registers = None
         # Set by the machine: selector -> size of its block in bytes, or None.
         self.size = None
+        # selector -> lockCount, Wine's GLOBALARENA field, for LockSegment.
+        self.locks = {}
         # Selector of the DOS environment block, set by the machine with the PSP.
         self.environment = None
         # Wine win87em.c statics. Installed is TRUE: an x87 is present.
@@ -223,6 +226,16 @@ class Wine:
             ok = self.local_init(arg(2), arg(1), arg(0), arg.regs("ds"))
             self.registers = {"cx": ok}
             return ok, 0, None
+        if ordinal == 23:
+            # Wine global.c LockSegment16: -1 is CURRENT_DS. An invalid handle returns 0.
+            handle = arg(0)
+            if handle == 0xFFFF:
+                handle = arg.regs("ds")
+            sel = self.selector_of(handle)
+            if sel is None:
+                return 0, 0, None
+            self.locks[sel] = self.locks.get(sel, 0) + 1
+            return handle, 0, None
         if ordinal == 131:
             # Wine task.c GetDOSEnvironment16: WOWGlobalLock16 of the block, a SEGPTR in DX:AX.
             if self.environment is None:
@@ -436,6 +449,11 @@ class Wine:
             "es": psp, "push": 0,
         }
         return 1, SW_SHOWNORMAL, None
+
+    def selector_of(self, handle):
+        """GlobalHandleToSel16 in neww's numbering: a moveable handle is selector - 1. None if no block."""
+        sel = handle + 1 if handle & 7 == 7 else handle & ~7
+        return sel if self.size(sel) is not None else None
 
     def local_init(self, selector, start, end, ds):
         """Wine local.c LocalInit16. Writes the heap into the guest and returns TRUE or FALSE."""
