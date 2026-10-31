@@ -52,6 +52,12 @@ class Pass06(Win32, Pass04):
     tasks = ()
     task = None
 
+# One run's budget, shared by every slice of it.
+COUNT = 4_000_000      # instructions per slice
+TIMEOUT = 30_000_000   # microseconds, for the whole run
+
+
+class Pass06(Win32, Pass04):
     def build(self):
         self.dlls = {}
         self.dll_segs = {}
@@ -474,8 +480,39 @@ class Pass06(Win32, Pass04):
         ]))
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
-        self._run_tasks(0xF000)
+        self.fault = ""
+        self._run_from(0xF000)
         return self.last
+
+    def _run_from(self, begin):
+        """Run until a stop. A stop that leaves a jump (entering or leaving
+        32-bit code) runs on from where the jump puts CS:IP."""
+        self.jump = None
+        self.spent = 0
+        self._slice(begin)
+        while not self.fault and self.jump is not None:
+            go, self.jump = self.jump, None
+            ip = go()
+            if self.fault:
+                break
+            # Unicorn's 16-bit emu_start takes a real-mode address and sets
+            # IP to begin - CS * 16, whatever the descriptor base is.
+            self._slice((self.uc.reg_read(UC_X86_REG_CS) << 4) + ip)
+        if not self.fault:
+            self.fault = "returned"
+
+    def _slice(self, begin):
+        micros = TIMEOUT - self.spent
+        if micros <= 0:
+            self.fault = self.fault or "timeout"
+            return
+        began = time.monotonic()
+        try:
+            self.uc.emu_start(begin, 0, timeout=micros, count=COUNT)
+        except UcError as exc:
+            if not self.fault:
+                self.fault = str(exc)
+        self.spent += int((time.monotonic() - began) * 1_000_000)
 
     def _run_tasks(self, ip):
         """Run from ip until no task is left to switch to.

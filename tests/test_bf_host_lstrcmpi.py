@@ -1,4 +1,4 @@
-"""Item 27: USER.471 lstrcmpi compares the two strings without case.
+"""USER.471 lstrcmpi compares the two strings without case.
 
 TB80NET's WinMain compares its command line with "ToolBook", "ToolBook32"
 and "ToolBook16or32". AX = 1 was "greater" for every pair, so none

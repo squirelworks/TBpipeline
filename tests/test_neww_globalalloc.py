@@ -45,10 +45,10 @@ class GlobalAllocDword(unittest.TestCase):
         seg = host.box.selectors[sel]
         self.assertEqual(host.uc.mem_read(seg.base + 2, 1), b"\x77")
 
-    def test_moveable_handle_is_selector_minus_one(self):
+    def test_moveable_handle_is_the_selector_in_the_ldt(self):
         host = alloc_then(0x0002, 0x40)
         (handle, (sel, size, flags)), = host.box.wine.heap.items()
-        self.assertEqual(handle, sel - 1)
+        self.assertEqual(handle, sel | 4)
         self.assertEqual(size, 0x40)
 
     def test_size_zero_and_over_1m_stop_by_name(self):

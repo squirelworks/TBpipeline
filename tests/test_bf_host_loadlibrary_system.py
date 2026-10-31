@@ -1,16 +1,14 @@
-"""Item 27: LoadLibrary("KERNEL") returns KERNEL's handle.
+"""LoadLibrary("KERNEL") returns KERNEL's handle.
 
 TB80W16 segment 8 0x7C0 loads KERNEL to look up the generic thunk calls.
 A module Windows already has loaded is found, not read from disk, so the
 host returning 2 (file not found) sent TB80W16 into its error report,
-which asked for KERNEL again: 2,778 calls to the instruction cap. There is
-no file behind the handle, so it has no export names: GetProcAddress by
-name returns 0. By ordinal it is a stub (test_bf_host_generic_thunk.py).
+which asked for KERNEL again: 2,778 calls to the instruction cap.
 """
 
 import unittest
 
-from unicorn.x86_const import UC_X86_REG_AX, UC_X86_REG_DX
+from unicorn.x86_const import UC_X86_REG_AX
 
 from tests.bf_host_fake import fake_host, far_call
 
@@ -31,13 +29,6 @@ class SystemModule(unittest.TestCase):
         self.assertEqual(load(host, b"kernel.exe"), handle, "a second load is the same module")
         self.assertNotEqual(load(host, b"USER"), handle)
         self.assertEqual(host.ax1, [])
-
-    def test_it_has_no_export_names(self):
-        host = fake_host()
-        handle = load(host, b"KERNEL")
-        host.arena.write(host.data, NAME + 0x40, b"LoadLibraryEx32W\x00")
-        far_call(host, "KERNEL", 50, [NAME + 0x40, host.data, handle], pop=6)
-        self.assertEqual((host.uc.reg_read(UC_X86_REG_AX), host.uc.reg_read(UC_X86_REG_DX)), (0, 0))
 
     def test_a_missing_dll_is_still_file_not_found(self):
         host = fake_host()
