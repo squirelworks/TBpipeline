@@ -29,6 +29,7 @@ API_PORT = 0xE0
 SYSTEM_MODULES = {"KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND", "DISPLAY", "MOUSE"}
 INITTASK = 91
 OF_CREATE = 0x1000
+OF_DELETE = 0x0200
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
 OF_REOPEN = 0x8000
@@ -481,6 +482,11 @@ class Pass04:
                 # Windows only qualifies the name. Nothing is opened.
                 self._ofstruct(full, 0)
                 uc.reg_write(UC_X86_REG_AX, 0)
+                return True
+            if style & OF_DELETE:
+                gone = self.created.pop(full.upper(), None) is not None
+                self._ofstruct(full, 0 if gone else 2)
+                uc.reg_write(UC_X86_REG_AX, 1 if gone else 0xFFFF)
                 return True
             if style & OF_CREATE:
                 self.create_file(full)

@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `OpenFile` with `OF_DELETE` removes a file the guest created and returns 1. Any other path, the book included, returns `0xFFFF` with error 2.
 - `OpenFile` with `OF_CREATE` creates or truncates a file the host keeps, never on disk. Later opens of the same path find it, and every handle shares its bytes.
 - `OpenFile` with `OF_REOPEN` opens the `szPathName` the `OFSTRUCT` already holds and leaves it there. It used to qualify the NULL name and write `C:\TOOLBOOK\` over the path.
 - `LoadLibrary` of a module Windows has loaded (KERNEL, USER, GDI, KEYBOARD, SYSTEM, SOUND, DISPLAY, MOUSE) returns that module's handle. It used to return 2, file not found, and TB80W16 asked for KERNEL again until the instruction cap.
