@@ -28,12 +28,20 @@ class Windows:
     """Mixin for Pass06. Needs the task loop's jump and _dispatch."""
 
     def _wintable(self):
-        if not getattr(self, "atoms", None):
+        if not hasattr(self, "atoms"):
             self.atoms = {}
-            self.classes = {}
+        if getattr(self, "windows", None) is None:
             self.windows = {}
             self.frames16 = []
             self.trap16 = self.arena.alloc_selector(0x10, 0x9A, bytes([0xE6, PORT_RETURN16, 0xF4]) + bytes(13))
+
+    def _class_named(self, name):
+        """The class RegisterClass kept. Main keys it by (name, instance)."""
+        key = name.lower()
+        for k, cls in getattr(self, "classes", {}).items():
+            if (k[0] if isinstance(k, tuple) else k) == key:
+                return cls
+        return None
 
     def _atom(self, name):
         self._wintable()
@@ -49,40 +57,21 @@ class Windows:
         return self._string(far >> 16, far & 0xFFFF)
 
     def _user(self, ordinal):
-        if ordinal == 118:
-            # RegisterWindowMessage(lpString)
-            self._dx_ax(self._atom("msg:" + self._string(self._word(1), self._word(0))))
-            return True
-        if ordinal == 57:
-            return self._register_class()
+        # 118 and 57 stay on Pass04: one atom table, and a second register
+        # of the same name for the same instance returns 0.
         if ordinal == 41:
             return self._create_window()
         if ordinal == 111:
-            # SendMessage(hwnd, msg, wParam, lParam)
             hwnd, msg, wparam = self._word(4), self._word(3), self._word(2)
             lparam = self._word(0) | (self._word(1) << 16)
             return self._send(hwnd, msg, wparam, lparam, self._dx_ax)
         return super()._user(ordinal)
 
-    def _register_class(self):
-        self._wintable()
-        sel, off = self._word(1), self._word(0)
-        raw = self.arena.read(sel, off, 26)
-        style, proc_off, proc_seg, cls_extra, wnd_extra, inst = struct.unpack_from("<HHHHHH", raw, 0)
-        name = self._far_string(struct.unpack_from("<I", raw, 22)[0])
-        self.classes[name.lower()] = {
-            "name": name, "proc": (proc_seg, proc_off), "inst": inst, "style": style,
-            "extra": wnd_extra,
-        }
-        self.task_log.append(f"RegisterClass {name!r} proc {proc_seg:#x}:{proc_off:#x}")
-        self._dx_ax(self._atom("class:" + name))
-        return True
-
     def _create_window(self):
         """CreateWindow. Sends WM_NCCREATE and WM_CREATE, as USER does."""
         self._wintable()
         name = self._far_string(self._word(13) | (self._word(14) << 16))
-        cls = self.classes.get(name.lower())
+        cls = self._class_named(name)
         if cls is None:
             self._dx_ax(0)
             return True
@@ -93,7 +82,9 @@ class Windows:
             "task": self.task, "parent": self._word(4),
             "style": self._word(9) | (self._word(10) << 16),
         }
-        self.task_log.append(f"CreateWindow {name!r} hwnd {hwnd:#x} in {self.task['name']}")
+        who = self.task["name"] if self.task else "?"
+        if self.task_log is not None:
+            self.task_log.append(f"CreateWindow {name!r} hwnd {hwnd:#x} in {who}")
         # CREATESTRUCT for lParam, in the caller's stack segment below SP.
         words = [self._word(n) for n in range(15)]
         cs = struct.pack(

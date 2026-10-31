@@ -50,7 +50,7 @@ COUNT = 4_000_000      # instructions per slice
 TIMEOUT = 30_000_000   # microseconds, for the whole run
 
 
-class Pass06(Win32, Pass04):
+class Pass06(Windows, Win32, Pass04):
     # Set by run and _run_tasks. The first task is the runtime. Unset, WinExec
     # of a missing file stays the wall instead of starting a task.
     tasks = None

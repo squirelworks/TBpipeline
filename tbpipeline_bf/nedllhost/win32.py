@@ -32,7 +32,7 @@ from ..nehost.pass04 import EXE_PATH
 from unicorn import UcError
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_CS, UC_X86_REG_DX, UC_X86_REG_EAX, UC_X86_REG_EDX,
-    UC_X86_REG_EIP, UC_X86_REG_ESP, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
+    UC_X86_REG_ESP, UC_X86_REG_IP, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
 PORT_API32 = 0xE1
@@ -64,6 +64,11 @@ WIN32 = {}
 
 class Unanswered(Exception):
     pass
+
+
+# A handler returns PENDING when it has started a call whose completion
+# sets EAX itself.
+PENDING = object()
 
 
 # The Windows version the 32-bit side reports: Wine's for an application
@@ -474,10 +479,6 @@ class Win32:
             # Base 0, 4 GB, 4K granularity, 32-bit.
             self.arena._write_descriptor(sel // 8, 0, 0xFFFFF, info["access"], 0xC)
         self.fs32 = self.arena.alloc_selector(0x1000, 0x92, fixed_base=TEB)
-        # A 16-bit far jump cannot carry a 32-bit offset, so the dispatcher
-        # jumps here first: jmp far code32:ENTRY32.
-        self.code32_gate = self.arena.alloc_selector(
-            0x10, 0x9A, bytes([0x66, 0xEA]) + struct.pack("<IH", ENTRY32, self.code32) + bytes(8))
         top = STACK32 + STACK32_SIZE
         # NT_TIB: no exception handler, the stack, and the TEB's own address.
         self.uc.mem_write(TEB, struct.pack("<III", 0xFFFFFFFF, top, STACK32) + bytes(12) + struct.pack("<I", TEB))
@@ -680,7 +681,7 @@ class Win32:
         eax = self.uc.reg_read(UC_X86_REG_EAX)
         self.uc.context_restore(saved)
         done(eax)
-        return self.uc.reg_read(UC_X86_REG_EIP)
+        return self.uc.reg_read(UC_X86_REG_IP)
 
     def _on_out(self, uc, port, size, value, user):
         if port == PORT_RETURN32:
@@ -705,19 +706,19 @@ class Win32:
             return
         pop, handler = answer
         args = struct.unpack("<8I", bytes(uc.mem_read(esp + 4, 32)))
-        if pop:
-            ret = bytes(uc.mem_read(esp, 4))
-            uc.mem_write(esp + pop, ret)
-            uc.reg_write(UC_X86_REG_ESP, esp + pop)
         try:
             eax = handler(self, args)
         except Unanswered as exc:
             self.fault = f"win32 {name} {exc}"
             uc.emu_stop()
             return
+        if pop:
+            ret = bytes(uc.mem_read(esp, 4))
+            uc.mem_write(esp + pop, ret)
+            uc.reg_write(UC_X86_REG_ESP, esp + pop)
         if eax is PENDING:
-            # The answer comes from 16-bit code the handler started; its
-            # completion sets EAX in the restored context.
+            # The answer comes from 16-bit code the handler started. The
+            # stack is already popped; the completion sets EAX itself.
             return
         uc.reg_write(UC_X86_REG_EAX, eax & 0xFFFFFFFF)
         uc.reg_write(UC_X86_REG_EDX, 0)
