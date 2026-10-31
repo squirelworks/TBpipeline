@@ -274,11 +274,7 @@ class Pass06(Pass04):
 
     def run(self):
         self.build()
-        tail = (" " + os.path.basename(self.book)).encode("ascii") + b"\r"
-        psp = bytearray(0x100)
-        psp[0x80] = len(tail) - 1
-        psp[0x81:0x81 + len(tail)] = tail
-        self.psp = self.arena.alloc_selector(0x100, 0x92, bytes(psp))
+        self._make_psp()
         dgroup = self.segs[139]
         code = self.segs[2]
         gdtr_at = 0xF0E0

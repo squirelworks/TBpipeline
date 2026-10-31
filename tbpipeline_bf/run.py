@@ -91,6 +91,7 @@ def stages(bin_dir, book_path, dbgrender=False, theme="default", render="new"):
     block.append(f"  stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
     block.append(f"  user {host.user_hits or 'none'}")
     block.append(f"  engine opens {host.opens or 'none'}")
+    block.append(f"  command tail reads {len(host.tail_reads)} (PSP {host.psp:#x}:0x80)")
     block.append(f"  ax=1 calls {len(host.ax1)}")
     note("02_launch.txt", "\n".join(block + launch_ax1(host)))
     lines.extend(block)
