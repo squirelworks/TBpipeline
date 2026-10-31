@@ -63,6 +63,29 @@ def ax1_line(module, ordinal, words, cs, ip):
     return f"ax=1 {module}.{ordinal} from {cs:#06x}:{ip:#06x} stack {stack}"
 
 
+def _string_to_integer(text):
+    """ntdll RtlUnicodeStringToInteger with base 0: leading blanks, a sign,
+    a 0b / 0o / 0x prefix, then digits up to the first that does not fit."""
+    i = 0
+    while i < len(text) and text[i] <= " ":
+        i += 1
+    sign = 1
+    if i < len(text) and text[i] in "+-":
+        sign = -1 if text[i] == "-" else 1
+        i += 1
+    base = 10
+    if text[i:i + 2].lower() in ("0b", "0o", "0x"):
+        base = {"b": 2, "o": 8, "x": 16}[text[i + 1].lower()]
+        i += 2
+    value = 0
+    for ch in text[i:]:
+        digit = int(ch, 36) if ch.isascii() and ch.isalnum() else 99
+        if digit >= base:
+            break
+        value = value * base + digit
+    return sign * value
+
+
 class Pass04:
     def __init__(self, image, book):
         self.file = open(image, "rb").read()
@@ -872,6 +895,20 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, self.task_handle)
             uc.reg_write(UC_X86_REG_DX, self.task_handle)
             return True
+        # GetVDMPointer32W(vp, fMode), a generic thunk, pops 6. Wine's
+        # GetVDMPointer32W16 is K32WOWGetVDMPointer: with fMode set, the
+        # selector's descriptor base plus the offset; with fMode 0, the
+        # real-mode address seg * 16 + off. An empty descriptor has base 0.
+        if ordinal == 516:
+            mode, off, sel = self._word(0), self._word(1), self._word(2)
+            if mode:
+                info = self.arena.segs.get(sel)
+                linear = (info["base"] if info else 0) + off
+            else:
+                linear = sel * 16 + off
+            uc.reg_write(UC_X86_REG_AX, linear & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, (linear >> 16) & 0xFFFF)
+            return True
         # IsBadCodePtr(lpfn). AX=1 is "bad": TB80BAS skipped its file
         # manager's handler and the book open failed.
         if ordinal == 336:
@@ -1121,6 +1158,18 @@ class Pass04:
             value = self._profile_value(path, app, key)
             text = default.rstrip(" ") if value is None else value
             uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(4), self._word(3), text, size) if size else 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        if ordinal == 127:
+            # GetPrivateProfileInt(app, key, default, file). AX = 1 said every
+            # key held 1. Wine's GetPrivateProfileInt16 reads the value into a
+            # 30-character buffer: missing or empty gives the default, else
+            # RtlUnicodeStringToInteger with base 0, cast to INT16.
+            path = self._string(self._word(1), self._word(0))
+            app = self._string(self._word(6), self._word(5)) if self._word(6) else None
+            key = self._string(self._word(4), self._word(3)) if self._word(4) else None
+            value = (self._profile_value(path, app, key) or "")[:29]
+            uc.reg_write(UC_X86_REG_AX, _string_to_integer(value) & 0xFFFF if value else self._word(2))
             uc.reg_write(UC_X86_REG_DX, 0)
             return True
         if ordinal == 88:
