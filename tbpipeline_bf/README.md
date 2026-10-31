@@ -6,7 +6,7 @@ Reads a ToolBook II 8.1 book and writes a page reader. It does not need a VM. It
 python3 -m tbpipeline_bf --b ~/TBK/bin --c ~/TBK/bin/courses/9e954d01.tbk
 ```
 
-`--b` is the ToolBook directory. Default is `bin/` beside this package. `--c` is the book. A bare filename is looked up in `--b/courses/`.
+`--b` is the ToolBook directory. Default is `bin/` beside this package. `--c` is the book. A bare filename is looked up in `--b/courses/`. `--help` prints the usage and exits 0. It does not import `unicorn`.
 
 ```
 python3 -m tbpipeline_bf --open book.tbk
