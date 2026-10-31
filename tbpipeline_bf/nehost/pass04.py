@@ -25,9 +25,14 @@ from unicorn.x86_const import (
 )
 
 API_PORT = 0xE0
+# Modules that are part of Windows itself. LoadLibrary finds them loaded.
+SYSTEM_MODULES = {"KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND", "DISPLAY", "MOUSE"}
 INITTASK = 91
+OF_CREATE = 0x1000
+OF_DELETE = 0x0200
 OF_PARSE = 0x0100
 OF_EXIST = 0x4000
+OF_REOPEN = 0x8000
 
 # Names other than *.ini the entry opens that TBK_INI may answer. The
 # pass 06 log has C:\TOOLBOOK\TB80enu, with no extension, between the
@@ -465,6 +470,10 @@ class Pass04:
         if ordinal == 74:
             style = self._word(0)
             path = self._string(self._word(4), self._word(3))
+            if style & OF_REOPEN:
+                # The name is the szPathName an earlier OpenFile left in
+                # the OFSTRUCT; lpFileName is not read.
+                path = self._string(self._word(2), (self._word(1) + 8) & 0xFFFF)
             self.opens.append(path)
             self.open_styles.append((path, style))
             print(f"  open {path}", file=sys.stderr, flush=True)
@@ -474,6 +483,13 @@ class Pass04:
                 self._ofstruct(full, 0)
                 uc.reg_write(UC_X86_REG_AX, 0)
                 return True
+            if style & OF_DELETE:
+                gone = self.created.pop(full.upper(), None) is not None
+                self._ofstruct(full, 0 if gone else 2)
+                uc.reg_write(UC_X86_REG_AX, 1 if gone else 0xFFFF)
+                return True
+            if style & OF_CREATE:
+                self.create_file(full)
             handle = self._take_file(path)
             self._ofstruct(full, 0 if handle is not None else 2)
             if handle is not None and style & OF_EXIST:
@@ -530,8 +546,27 @@ class Pass04:
         name = full.encode("latin1", "replace")[:127]
         self.arena.write(seg, off, struct.pack("<BBHI", 136, 1, error, 0) + name + b"\x00")
 
+    @property
+    def created(self):
+        """Files the guest created, by full upper-case path. Not on disk."""
+        if not hasattr(self, "_created"):
+            self._created = {}
+        return self._created
+
+    def create_file(self, full):
+        """Create or truncate a file the guest made, e.g. a temp file."""
+        self.created[full.upper()] = bytearray()
+
     def _take_file(self, path):
         low = path.lower().replace("/", "\\")
+        full = path if path[1:2] == ":" else "C:\\TOOLBOOK\\" + path.lstrip("\\")
+        if full.upper() in self.created:
+            # The same bytearray: what one handle writes, the next reads.
+            handle = self.next_handle
+            self.next_handle += 1
+            self.files[handle] = self.created[full.upper()]
+            self.pos[handle] = 0
+            return handle
         if low.endswith((".tbk", ".sbk")):
             blob = self.book_bytes
         else:
@@ -559,6 +594,30 @@ class Pass04:
         for entry in os.listdir(root):
             if entry.lower() == base:
                 return open(os.path.join(root, entry), "rb").read()
+        return None
+
+    def _profile_value(self, path, app, key):
+        """A key's value from the INI TBK_INI supplies, or None.
+
+        Sections and keys match without case, as in Windows. With app or
+        key NULL, Windows lists the names; that is not answered here and
+        the caller gets the default.
+        """
+        if app is None or key is None:
+            return None
+        base = path.replace("/", "\\").split("\\")[-1].lower()
+        raw = self._ini_bytes(base if "." in base else base + ".ini")
+        if raw is None:
+            return None
+        section = None
+        for line in raw.decode("latin1").splitlines():
+            line = line.strip()
+            if line.startswith("[") and "]" in line:
+                section = line[1:line.index("]")].strip().lower()
+            elif section == app.lower() and "=" in line and not line.startswith(";"):
+                name, _, value = line.partition("=")
+                if name.strip().lower() == key.lower():
+                    return value.strip()
         return None
 
     def _copy_to(self, seg, offset, text, limit):
@@ -683,7 +742,29 @@ class Pass04:
             return None, ""
         return open(path, "rb").read(), filename
 
+    def _system_module(self, name):
+        """The handle of a module Windows has loaded before any task runs.
+
+        LoadLibrary("KERNEL") returns KERNEL's handle in Windows. There is
+        no file behind these here, so the handle is a small selector and the
+        module has no exports: GetProcAddress on it returns 0, the answer
+        for the WOW thunk calls TB80W16 looks for on Windows 3.1.
+        """
+        stem = name.replace("/", "\\").split("\\")[-1].upper()
+        stem = stem[:-4] if stem.endswith((".DLL", ".EXE")) else stem
+        if stem not in SYSTEM_MODULES:
+            return None
+        for handle, mod in self.mods.items():
+            if mod["name"] == stem:
+                return handle
+        handle = self.arena.alloc_selector(16, 0x92, b"\x00" * 16)
+        self.mods[handle] = {"name": stem, "resources": [], "procs": {}, "ords": {}}
+        return handle
+
     def _load_library(self, name):
+        system = self._system_module(name)
+        if system:
+            return system
         for mod in self.mods.values():
             if mod["name"].lower() == name.lower():
                 return next(h for h, m in self.mods.items() if m is mod)
@@ -831,6 +912,14 @@ class Pass04:
         return True
 
     def _user(self, ordinal):
+        # lstrcmpi(lpsz1, lpsz2), Pascal, pop 8. AX = 1 said "greater" for
+        # every pair: TB80NET never matched its command line "ToolBook".
+        if ordinal == 471:
+            one = self._cstring(self._word(3), self._word(2)).lower()
+            two = self._cstring(self._word(1), self._word(0)).lower()
+            self.uc.reg_write(UC_X86_REG_AX, (one > two) - (one < two) & 0xFFFF)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # LoadString(hinst, id, far buf, cch). The call sites push 10 bytes.
         # AX=1 left the buffer empty, so the caller treated the string as missing.
         if ordinal == 176:
@@ -867,6 +956,16 @@ class Pass04:
             if out[0] in self.arena.segs:
                 self.arena.write(out[0], out[1], text + b"\x00")
             self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
+        # RegisterWindowMessage(lpString). Wine's RegisterWindowMessageA is
+        # GlobalAddAtomA: one atom from 0xC000 per name, without case. AX = 1
+        # gave every message the same number.
+        if ordinal == 118:
+            name = self._string(self._word(1), self._word(0)).lower()
+            atoms = self.__dict__.setdefault("message_atoms", {})
+            atom = atoms.setdefault(name, 0xC000 + len(atoms))
+            self.uc.reg_write(UC_X86_REG_AX, atom)
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
         # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
@@ -951,6 +1050,21 @@ class Pass04:
     def _kernel_string(self, ordinal):
         """Far-string helpers. A stub return of 1 was loaded as a selector."""
         uc = self.uc
+        if ordinal == 128:
+            # GetPrivateProfileString(app, key, default, buf, size, file).
+            # AX = 1 left the buffer as it was and said one character came
+            # back. The value is the key's from the INI TBK_INI supplies,
+            # else the default, cut to size - 1 and NUL-terminated.
+            size = self._word(2)
+            path = self._string(self._word(1), self._word(0))
+            app = self._string(self._word(10), self._word(9)) if self._word(10) else None
+            key = self._string(self._word(8), self._word(7)) if self._word(8) else None
+            default = self._string(self._word(6), self._word(5)) if self._word(6) else ""
+            value = self._profile_value(path, app, key)
+            text = default.rstrip(" ") if value is None else value
+            uc.reg_write(UC_X86_REG_AX, self._copy_to(self._word(4), self._word(3), text, size) if size else 0)
+            uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         if ordinal == 88:
             dst_seg, dst_off = self._word(3), self._word(2)
             src = self._string(self._word(1), self._word(0))
@@ -1146,6 +1260,11 @@ class Pass04:
         if intno == 3:
             uc.emu_stop()
             return
+        # int 2Fh AX = 150Bh asks MSCDEX whether drive CX is a CD-ROM, and
+        # BX = ADADh back says MSCDEX is there. There is no MSCDEX: like DOS
+        # with nothing on the multiplex, every register comes back as it was.
+        if intno == 0x2F and uc.reg_read(UC_X86_REG_AX) == 0x150B:
+            return
         cs = uc.reg_read(UC_X86_REG_CS)
         ip = uc.reg_read(UC_X86_REG_IP)
         info = self.arena.segs.get(cs)
@@ -1209,6 +1328,16 @@ class Pass04:
         self.calls.append(f"dos{ah:02x}")
         uc.reg_write(UC_X86_REG_AX, 0)
         self._clear()
+
+    def _cstring(self, sel, offset):
+        """The whole NUL-terminated string, to the end of the segment."""
+        if sel not in self.arena.segs:
+            return ""
+        size = self.arena.segs[sel]["size"]
+        if offset >= size:
+            return ""
+        raw = self.arena.read(sel, offset, size - offset)
+        return raw.split(b"\x00", 1)[0].decode("cp1252", "replace")
 
     def _string(self, sel, offset):
         if sel not in self.arena.segs:

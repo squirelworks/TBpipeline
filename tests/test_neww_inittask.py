@@ -5,7 +5,7 @@ is not 0, then the DLL entry points (ne_segment.c NE_InitializeDLLs),
 then fills INSTANCEDATA and answers in registers: AX 1, BX the command
 line in the PSP, CX the stack top, DX nCmdShow, SI the previous
 instance, DI this instance, ES the PSP, and one zero word pushed.
-neww runs LocalInit16 itself and does not run LibMain, so a DLL with init code stops.
+neww runs LocalInit16 itself. LibMain is tests/test_neww_dll_init.py.
 No binary needed.
 """
 
@@ -104,12 +104,13 @@ class InitTask(unittest.TestCase):
         # The heap is above the stack: the InitTask return still worked.
         self.assertEqual(host.word(ds, 0x20), 1)
 
-    def test_dll_with_init_code_stops(self):
+    def test_dll_without_singledata_stops(self):
+        # build() marks a DLL 0x8002, MULTIPLEDATA. Wine would pass its module handle in DI.
         host = self.run_program(modules=("KERNEL", "TB80BAS"))
         self.assertEqual(
             host.stop,
-            "KERNEL.91 InitTask runs the DLL entry points next (Wine ne_segment.c NE_InitializeDLLs): "
-            "TB80BAS. neww does not call a DLL's LibMain",
+            "KERNEL.91 InitTask: TB80BAS has no SINGLEDATA DGROUP, so Wine NE_GetDLLInitParams "
+            "passes its module handle in DI. neww has no module handles",
         )
 
 
