@@ -54,6 +54,7 @@ class Cpu:
         self.stop = ""
         self.exe = None
         self.glock = {}
+        self.ignored = []  # system-module files found in --b and not loaded
         self.recent = deque(maxlen=20)  # (cs, ip) of the last basic blocks
         self.blocks = {}  # linear base -> {"handle", "selector", "size", "written"}
         self._load()
@@ -72,6 +73,10 @@ class Cpu:
                 continue
         by_name = {}
         for image in images.values():
+            if image["name"] in SYSTEM:
+                # A KERNEL.EXE in --b is not Windows. System modules are the layer.
+                self.ignored.append(image["path"])
+                continue
             by_name[image["name"]] = image
             if image["name"] == "TB80RTM":
                 self.exe = image
