@@ -8,4 +8,4 @@ ToolBook modules are loaded and call each other. `KERNEL` and `USER` are not. Th
 python3 -m tbpipeline_newl --b ~/TBK/bin
 ```
 
-`--list` prints the import report and does not start the CPU. Needs `unicorn`.
+`--list` prints the import report and does not start the CPU. `--help` prints the usage and exits 0. Neither imports `unicorn`. A run needs it.
