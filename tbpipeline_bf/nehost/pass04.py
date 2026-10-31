@@ -948,6 +948,16 @@ class Pass04:
             self.uc.reg_write(UC_X86_REG_AX, len(text))
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # RegisterWindowMessage(lpString). Wine's RegisterWindowMessageA is
+        # GlobalAddAtomA: one atom from 0xC000 per name, without case. AX = 1
+        # gave every message the same number.
+        if ordinal == 118:
+            name = self._string(self._word(1), self._word(0)).lower()
+            atoms = self.__dict__.setdefault("message_atoms", {})
+            atom = atoms.setdefault(name, 0xC000 + len(atoms))
+            self.uc.reg_write(UC_X86_REG_AX, atom)
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
         # door call RegisterPenApp through a null pointer.
         if ordinal != 179:

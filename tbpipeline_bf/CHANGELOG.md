@@ -4,6 +4,7 @@
 
 Not a release. `1.0.0r6` stays the version.
 
+- `USER.118` `RegisterWindowMessage` returns one atom from `0xC000` per message name, compared without case, as Wine's `RegisterWindowMessageA` (`GlobalAddAtomA`) does. It used to fall through to `AX = 1`, so every registered message got message number 1.
 - `KERNEL.128` `GetPrivateProfileString` copies the key's value from the INI `TBK_INI` supplies, or else the default without trailing blanks, cut to `size - 1`, and returns its length. It used to fall through to `AX = 1` and leave the buffer as it was. The runtime reads its `ToolBook startup` keys this way before the `WinExec` wall.
 - `OpenFile` with `OF_DELETE` removes a file the guest created and returns 1. Any other path, the book included, returns `0xFFFF` with error 2.
 - `OpenFile` with `OF_CREATE` creates or truncates a file the host keeps, never on disk. Later opens of the same path find it, and every handle shares its bytes.
