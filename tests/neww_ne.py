@@ -31,7 +31,7 @@ def name_offset(modules, imports, want):
     raise KeyError(want)
 
 
-def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, stack=0, exe=True, imports=()):
+def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, stack=0, exe=True, imports=(), rsrctab=b""):
     """entries: (ordinal, segment, offset, export name) rows, fixed bundles.
 
     imports are function names for by-name fixups; see name_offset().
@@ -63,7 +63,7 @@ def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, 
     enttab += b"\x00"
     off = 0x40
     tables = {}
-    for key, blob in (("seg", segtab), ("res", b""), ("rest", restab), ("mod", modtab), ("imp", imptab), ("ent", enttab)):
+    for key, blob in (("seg", segtab), ("res", rsrctab), ("rest", restab), ("mod", modtab), ("imp", imptab), ("ent", enttab)):
         tables[key] = off
         if key == "seg":
             off += 8 * len(segments)
@@ -103,7 +103,7 @@ def build(name, segments, modules=(), entries=(), entry=(1, 0), auto=0, heap=0, 
     mz = bytearray(0x40)
     mz[0:2] = b"MZ"
     struct.pack_into("<I", mz, 0x3C, ne)
-    blob = bytes(mz) + bytes(header) + bytes(segtab) + bytes(restab) + bytes(modtab) + bytes(imptab) + bytes(enttab)
+    blob = bytes(mz) + bytes(header) + bytes(segtab) + bytes(rsrctab) + bytes(restab) + bytes(modtab) + bytes(imptab) + bytes(enttab)
     assert len(blob) == start, (len(blob), start)
     return blob + bytes(body)
 
@@ -123,7 +123,7 @@ def exit_program(directory, before=b"", modules=("KERNEL",), dos3call=102, data=
     return exit_program_with(directory, before, [], modules=modules, dos3call=dos3call, data=data)
 
 
-def exit_program_with(directory, before, fixups, modules=("KERNEL",), dos3call=102, data=256, imports=()):
+def exit_program_with(directory, before, fixups, modules=("KERNEL",), dos3call=102, data=256, imports=(), rsrctab=b""):
     """data is a size in bytes, or the bytes of DGROUP."""
     code = bytearray(before)
     code += mov_ax(0x4C00)
@@ -135,6 +135,6 @@ def exit_program_with(directory, before, fixups, modules=("KERNEL",), dos3call=1
     blob = build(
         "TB80RTM",
         [(0x0000, bytes(code), fixups), (0x0001, data, [])],
-        modules=modules, entry=(1, 0), auto=2, imports=imports,
+        modules=modules, entry=(1, 0), auto=2, imports=imports, rsrctab=rsrctab,
     )
     return write(directory, "TB80RTM.EXE", blob)

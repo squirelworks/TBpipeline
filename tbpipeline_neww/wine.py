@@ -109,6 +109,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "36  pascal   GetCurrentTask() WIN16_GetCurrentTask",
     "55  pascal -register Catch(ptr) Catch16",
     "56  pascal -register Throw(ptr word) Throw16",
+    "60  pascal -ret16 FindResource(word str str) FindResource16",
     "47  pascal   GetModuleHandle(segstr) WIN16_GetModuleHandle",
     "49  pascal -ret16 GetModuleFileName(word ptr s_word) GetModuleFileName16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
@@ -305,6 +306,8 @@ class Wine:
         # Win16 hooks: index (id - WH_MINHOOK) -> (HHOOK, 16-bit proc), Wine hook.c hook16_queue_info.
         self.hooks = {}
         self.dcs = {}
+        self.resources = {}
+        self.exe_module = 0
         self.htask = 0
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
         self.messages = {}
@@ -415,6 +418,11 @@ class Wine:
             if sel is not None:
                 self.locks[sel] = self.locks.get(sel, 0) - 1
             return arg.regs("ax"), 0, None
+        if ordinal == 60:
+            # FindResource(word hModule, str name, str type)
+            def res(n):
+                return arg(n) if arg(n + 1) == 0 else arg.string(n)
+            return self._find_resource(arg(4), res(2), res(0))
         if ordinal == 55:
             return self._catch(arg)
         if ordinal == 56:
@@ -773,6 +781,60 @@ class Wine:
                 self.locks[sel] = self.locks.get(sel, 0) + 1
         self.registers = {"cx": sel}
         return 0, sel, None
+
+    def _find_resource(self, handle, name, type_):
+        """Wine resource.c FindResource16. Returns (ax, dx, stop); the HRSRC16 in AX.
+
+        The module is GetExePtr of the handle, 0 the current task's. HRSRC16 is the offset of
+        the NE_NAMEINFO from the start of Wine's NE_MODULE block. build_module copies the
+        resource table after the 0x58-byte NE_MODULE (krnl386 is a 32-bit build) and the
+        10-byte SEGTABLEENTRY of each segment, so that offset follows from the file's table.
+        A name or type is an integer id, a string, or "#nnn" for an id (get_res_name).
+        """
+        module = self._exe_ptr(handle) if handle else self.exe_module
+        names = [n for n, h in self.modules.items() if h == module]
+        if not names:
+            return 0, 0, None
+        table, cseg = self.resources[names[0]]
+        if table is None:
+            return 0, 0, None
+
+        def res(value):
+            if isinstance(value, str) and value.startswith("#"):
+                digits = value[1:]
+                return int(digits) & 0xFFFF if digits.isdigit() else 0
+            return value
+
+        name, type_ = res(name), res(type_)
+        words = lambda off: struct.unpack_from("<H", table, off)[0]
+        if isinstance(name, str) or isinstance(type_, str):
+            info = 2
+            while info + 2 <= len(table) and words(info):
+                if words(info) == 0x800F:
+                    return 0, 0, (
+                        f"FindResource {name!r} {type_!r}: the module has a 0x800f name table, "
+                        "which NE_FindNameTableId reads through LoadResource16, and neww has no LoadResource"
+                    )
+                info += 8 + words(info + 2) * 12
+
+        def matches(field, wanted):
+            if isinstance(wanted, str):
+                if field & 0x8000:
+                    return False
+                text = table[field + 1:field + 1 + table[field]].decode("latin1")
+                return table[field] == len(wanted) and text.upper() == wanted.upper()
+            return field == ((wanted & 0xFFFF) | 0x8000)
+
+        info = 2
+        while info + 2 <= len(table) and words(info):
+            count = words(info + 2)
+            if matches(words(info), type_):
+                for i in range(count):
+                    entry = info + 8 + 12 * i
+                    if matches(words(entry + 6), name):
+                        return 0x58 + 10 * cseg + entry, 0, None
+            info += 8 + count * 12
+        return 0, 0, None
 
     def _catch(self, arg):
         """Wine thunk.c Catch16: the caller's registers into the 9-word CATCHBUF, and AX 0.

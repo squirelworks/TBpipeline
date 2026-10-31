@@ -267,8 +267,10 @@ class Machine:
         for image in order:
             sel = self._allocate(0x60)
             self.box.wine.modules[image.name] = sel
+            self.box.wine.resources[image.name] = (image.rsrctab, len(image.segments))
             base = self.box.selectors[sel].base
             self.uc.hook_add(UC_HOOK_MEM_READ, self._module_read, (image.name, base), base, base + 0x5F)
+        self.box.wine.exe_module = self.box.wine.modules[self.box.exe.name]
         # NE_RegisterModule puts each new module at the head of the list.
         self.box.wine.first_module = self.box.wine.modules[order[-1].name]
 

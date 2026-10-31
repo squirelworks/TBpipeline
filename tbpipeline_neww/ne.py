@@ -53,6 +53,8 @@ class Image:
     sssp: int = 0
     # NE header module flags: 0x0001 SINGLEDATA, 0x8000 library.
     flags: int = 0
+    # The resource table as the file has it, from ne_rsrctab to ne_restab. None if there is none.
+    rsrctab: bytes = None
 
 
 def _u16(buf, off):
@@ -97,6 +99,8 @@ def parse(path):
                 pos += 8
                 fixups.append(Fixup(i + 1, atype, fl, disp, t1, t2))
     restab = ne + _u16(data, ne + 0x26)
+    rsrc = ne + _u16(data, ne + 0x24)
+    rsrctab = bytes(data[rsrc:restab]) if rsrc < restab else None
     n = data[restab]
     name = data[restab + 1:restab + 1 + n].decode("ascii", "replace").upper()
     cmod = _u16(data, ne + 0x1E)
@@ -124,6 +128,7 @@ def parse(path):
         packed=packed,
         sssp=sssp,
         flags=_u16(data, ne + 0x0C),
+        rsrctab=rsrctab,
     )
 
 
