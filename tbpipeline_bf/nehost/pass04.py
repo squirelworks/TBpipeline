@@ -938,6 +938,20 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, self.task_handle)
             uc.reg_write(UC_X86_REG_DX, self.task_handle)
             return True
+        # WaitEvent(hTask). Wine's NE_CreateThread posts one event to start
+        # the task, and WaitEvent16 takes a pending event and returns FALSE.
+        # With none pending it blocks until another task posts one; this host
+        # runs one task, so nothing ever would, and the run stops there
+        # instead of waiting forever.
+        if ordinal == 30:
+            events = getattr(self, "task_events", 1)
+            if events == 0:
+                self.fault = "WaitEvent with no event pending: the task would block"
+                uc.emu_stop()
+                return True
+            self.task_events = events - 1
+            uc.reg_write(UC_X86_REG_AX, 0)
+            return True
         # GetDOSEnvironment(). Wine's GetDOSEnvironment16 copies the
         # environment strings, then the WORD 1 and the program name
         # "C:\\WINDOWS\\SYSTEM\\KRNL386.EXE", into one fixed block and returns
