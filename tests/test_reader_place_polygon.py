@@ -20,6 +20,8 @@ def polygon_record(points, rgb) -> bytes:
     rec[0:3] = b"\x14\x00\x00"
     rec[5:8] = bytes(rgb)
     rec[0x0C:0x0E] = b"\x04\x00"
+    xs, ys = [x for x, _ in points], [y for _, y in points]
+    rec[0x12:0x1A] = struct.pack("<4H", min(xs), min(ys), max(xs), max(ys))
     rec[0x1A:0x1C] = struct.pack("<H", len(points))
     for x, y in points:
         rec += struct.pack("<HH", x, y)
@@ -53,6 +55,7 @@ class PlacePolygon(unittest.TestCase):
             self.assertEqual(page["shapes"], [{
                 "points": [[x / 15, y / 15] for x, y in TWIPS],
                 "fill": "#204080",
+                "bounds": [100, 100, 200, 200],
             }])
             self.assertIn('createElementNS(ns, "polygon")', html)
             self.assertIn("  placed 1 polygons on 1 pages, at record twips / 15", lines)

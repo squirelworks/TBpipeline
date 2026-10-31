@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..engine import MOVES, Engine, compile_handler
 from ..tbk import Book
-from .shapes import polygons
+from .shapes import bounds, polygon_records
 
 COMPRESSED = (
     "Compressed ToolBook pictures are not drawn: the decoder is TB80BMP ordinal 3, "
@@ -227,21 +227,20 @@ function show() {
   }
   if (page.shapes && page.shapes.length) {
     const ns = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("class", "placed");
-    let w = 1, h = 1;
     for (const shape of page.shapes) {
-      for (const [x, y] of shape.points) { w = Math.max(w, x); h = Math.max(h, y); }
-    }
-    svg.setAttribute("width", Math.ceil(w));
-    svg.setAttribute("height", Math.ceil(h));
-    for (const shape of page.shapes) {
+      const [left, top, right, bottom] = shape.bounds;
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("class", "placed");
+      svg.style.left = left + "px";
+      svg.style.top = top + "px";
+      svg.setAttribute("width", Math.max(1, right - left));
+      svg.setAttribute("height", Math.max(1, bottom - top));
       const poly = document.createElementNS(ns, "polygon");
-      poly.setAttribute("points", shape.points.map(p => p[0] + "," + p[1]).join(" "));
+      poly.setAttribute("points", shape.points.map(p => (p[0] - left) + "," + (p[1] - top)).join(" "));
       poly.setAttribute("fill", shape.fill);
       svg.appendChild(poly);
+      stage.appendChild(svg);
     }
-    stage.appendChild(svg);
   }
   if (page.handlers && page.handlers.length) {
     const box = document.createElement("div");
@@ -388,10 +387,18 @@ def _clicks(handlers) -> list[dict]:
 
 
 def placed(blob: bytes) -> list[dict]:
-    """Kind-04 polygons at the twips the record names, divided by 15."""
+    """Kind-04 polygons at the twips the record names, divided by 15.
+
+    bounds is the record's own left, top, right, bottom at +0x12, also / 15.
+    The reader places the shape by it.
+    """
     return [
-        {"points": [[x, y] for x, y in points], "fill": "#%02x%02x%02x" % color}
-        for points, color in polygons(blob)
+        {
+            "points": [[x, y] for x, y in points],
+            "fill": "#%02x%02x%02x" % color,
+            "bounds": [v / 15 for v in bounds(rec)],
+        }
+        for rec, points, color in polygon_records(blob)
     ]
 
 

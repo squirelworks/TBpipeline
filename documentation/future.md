@@ -8,7 +8,7 @@
 |---|---|
 | One real handler | A click runs the page's `buttonClick`. `P20000` goes to `P20001` because the handler says so, and the next click comes back through `nextpage`. The rest of OpenScript is still not executed |
 | The RTM open | Pass 06 still exits after `TB80.INI`. `newl` dies earlier, inside startup, on a scan of an empty block |
-| Widget bounds | Still unknown. Curves are decoded and not placed |
+| Widget bounds | Kind-04 polygons: `+0x12`..`+0x18`, checked against their points on two books, and placed. Fields, buttons, and kind-01 records: still unknown |
 | Polygons on the page | Kind-04 polygons are on the page in `render.html` at their twips / 15. Curve runs are still files under `render/` |
 | The 606 `TB80BAS` ordinals | Still not bound. Ordinal 1 is startup. The painters are later ordinals |
 | Pictures | Windows BMPs are copied. `TB80BMP` ordinal 3 still stops at `0x1FCD` |

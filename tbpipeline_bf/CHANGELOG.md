@@ -22,6 +22,7 @@ Not a release. `1.0.0r6` stays the version.
 - `python3 -m tbpipeline_bf.runtime` and `python3 -m tbpipeline_bf.runtime.debug` run again. They died unpacking `resolve()`, which had grown to seven values. Without `--dbgrender` they still write no `render.html`.
 - `render.html` marks its theme on `<body data-theme="…">`. An unknown `--theme` is drawn and marked as `default`.
 - The reader no longer imports the host. `resolve()` and `new_debug_dir()` moved from `run.py` to `cli.py`, which imports neither `unicorn` nor pass 06. `python3 -m tbpipeline_bf.runtime` runs without `unicorn` installed. `run.py` imports them from there.
+- A kind-04 polygon is placed by the bounds its record names, four twip words at `+0x12`: left, top, right, bottom. On `9e954d01.tbk` they equal the box of the points for all 95 polygons the reader keeps, and for the one on `nida81.tbk`. Kind-01 records do not carry bounds at those offsets. Fields and buttons are still not placed.
 
 ## 1.0.0r6
 
