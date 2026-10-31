@@ -1,4 +1,4 @@
-"""python3 -m tbpipeline_newl --b ~/TBK/bin
+"""python3 -m tbpipeline_newl --b ~/TBK/bin [--list]
 
 Runs TB80RTM. Windows calls go to the layer. --list prints the import
 report and does not start the CPU.
@@ -7,11 +7,9 @@ report and does not start the CPU.
 import sys
 from pathlib import Path
 
-from unicorn.x86_const import UC_X86_REG_CS, UC_X86_REG_IP
-
-from .cpu import Cpu
+from .bas import LAYERS, count as bas_count
 from .layer import EQUATES, Layer
-from .ne import imports
+from .ne import exported_names, imports
 
 
 def _bin(argv):
@@ -41,17 +39,28 @@ def _report(root):
             other.append(shown)
     print(f"layer {exe.name}")
     print(f"  answered {len(known)}  gap {len(gap)}  other {len(other)}")
+    bas = next((p for name in ("TB80BAS.DLL", "TB80BAS.dll") if (p := root / name).is_file()), None)
+    counts, unnamed = bas_count(rows, exported_names(bas) if bas else None)
+    shown = "  ".join(f"{layer} {counts[layer]}" for layer in LAYERS + ("other",))
+    print(f"TB80BAS by layer  {shown}  unnamed {unnamed}")
     return 0
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--help" in argv or "-h" in argv:
+        print(__doc__.strip())
+        return 0
     root = _bin(argv)
     if root is None or not root.is_dir():
         print("usage: python3 -m tbpipeline_newl --b ~/TBK/bin", file=sys.stderr)
         return 2
     if "--list" in argv:
         return _report(root)
+    from unicorn.x86_const import UC_X86_REG_CS, UC_X86_REG_IP
+
+    from .cpu import Cpu
+
     host = Cpu(root)
     if host.exe is None:
         print(f"no NE executable in {root}", file=sys.stderr)
