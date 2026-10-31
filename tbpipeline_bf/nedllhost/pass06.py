@@ -13,15 +13,16 @@ import sys
 import time
 
 from tbpipeline_bf.binpath import unpacked
-from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, last_call_line
+from tbpipeline_bf.nehost.pass04 import Pass04, API_PORT, INITTASK, last_call_line
 from tbpipeline_bf.nehost.win16stack import POP
 from .bind import DLLS, export_names, exports, modules, segment_bytes
 from .win32 import Win32
+from .windows import Windows
 
 from unicorn import UcError
 from unicorn.x86_const import (
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
-    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP,
+    UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_SP, UC_X86_REG_IP, UC_X86_REG_EIP,
     UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_CS,
 )
 
@@ -39,13 +40,23 @@ EQUATES = {
 
 UNPACKED = str(unpacked())
 
+# A Win16 task gives the CPU away on these when its queue is empty.
+# WinExec returns to its caller only once the new task reaches one of them.
+YIELDS = {("USER", 108), ("USER", 109), ("USER", 112), ("KERNEL", 29)}
+
 
 # One run's budget, shared by every slice of it.
 COUNT = 4_000_000      # instructions per slice
 TIMEOUT = 30_000_000   # microseconds, for the whole run
 
 
-class Pass06(Win32, Pass04):
+class Pass06(Windows, Win32, Pass04):
+    # Set by run and _run_tasks. The first task is the runtime. Unset, WinExec
+    # of a missing file stays the wall instead of starting a task.
+    tasks = None
+    task = None
+    task_log = None
+    switch = None
     def build(self):
         self.dlls = {}
         self.dll_segs = {}
@@ -281,6 +292,190 @@ class Pass06(Win32, Pass04):
                 self.arena.write(sel, disp, struct.pack("<H", off))
             disp = nxt
 
+    def _kernel_proc(self, ordinal):
+        # WinExec. An EXE in the unpacked directory is a second task in this
+        # CPU. The caller gets its instance once that task yields. A missing
+        # EXE falls through to the wall, which stops and quotes the command.
+        if ordinal == 166 and self._win_exec():
+            return True
+        return super()._kernel_proc(ordinal)
+
+    def _win_exec(self):
+        cmd = self._string(self._word(2), self._word(1))
+        show = self._word(0)
+        name, _, tail = cmd.strip().partition(" ")
+        path = self._task_file(name)
+        tasks = self.tasks
+        if not path or not tasks or any(t["file"] == os.path.basename(path).upper() for t in tasks):
+            return False
+        task = self._load_task(path, tail, show)
+        tasks.append(task)
+        if self.task_log is not None:
+            self.task_log.append(f"winexec {cmd!r} started {task['name']} instance {task['inst']:#x}")
+        self.uc.reg_write(UC_X86_REG_AX, task["inst"])
+        self.uc.reg_write(UC_X86_REG_DX, 0)
+        self.switch = task
+        self.uc.emu_stop()
+        return True
+
+    def _task_file(self, name):
+        name = name.rsplit("\\", 1)[-1].upper()
+        if "." not in name:
+            name += ".EXE"
+        try:
+            listing = os.listdir(UNPACKED)
+        except OSError:
+            return None
+        hit = next((f for f in listing if f.upper() == name), None)
+        return os.path.join(UNPACKED, hit) if hit else None
+
+    def _load_task(self, path, tail, show):
+        """Map an NE EXE beside the runtime and bind its imports.
+
+        Pass04's loader reads the image from self.file, so it is swapped in
+        for the reloc pass. Imports into the ToolBook DLLs bind to the copies
+        already loaded, which is what makes the two tasks share TB80BAS.
+        """
+        with open(path, "rb") as fh:
+            data = fh.read()
+        ne = struct.unpack_from("<H", data, 0x3C)[0]
+        nseg = struct.unpack_from("<H", data, ne + 0x1C)[0]
+        segoff = struct.unpack_from("<H", data, ne + 0x22)[0]
+        shift = struct.unpack_from("<H", data, ne + 0x32)[0]
+        auto, heap, stack = struct.unpack_from("<HHH", data, ne + 0x0E)
+        ip, cs = struct.unpack_from("<HH", data, ne + 0x14)
+        segs, top = {}, 0x4000
+        for i in range(nseg):
+            off, size, flags, alloc = struct.unpack_from("<HHHH", data, ne + segoff + i * 8)
+            alloc = 0x10000 if alloc == 0 else alloc
+            if i + 1 == auto:
+                alloc = min(0x10000, alloc + heap + stack)
+                top = alloc & 0xFFFE
+            blob = bytearray(alloc if alloc < 0x10000 else 0x10000)
+            raw = data[(off << shift):(off << shift) + size]
+            blob[:len(raw)] = raw[:len(blob)]
+            access = 0x9A if not (flags & 1) else 0x92
+            segs[i + 1] = self.arena.alloc_selector(len(blob), access, bytes(blob))
+        saved = (self.file, self.ne, self.nseg, self.shift, self.segoff, self.segs, self.modnames)
+        self.file, self.ne, self.nseg, self.shift, self.segoff, self.segs = data, ne, nseg, shift, segoff, segs
+        try:
+            self._relocs()
+        finally:
+            self.file, self.ne, self.nseg, self.shift, self.segoff, self.segs, self.modnames = saved
+        name = os.path.basename(path).rsplit(".", 1)[0].upper()
+        inst = segs[auto]
+        self._index_module(inst, data, name)
+        procs, ords = self._export_procs_from(data, segs)
+        self.mods[inst]["procs"] = procs
+        self.mods[inst]["ords"] = ords
+        # WinExec hands over the arguments without the program name or the
+        # blanks before them, the way Windows builds the new task's tail.
+        text = tail.strip().encode("latin1")
+        psp = bytearray(0x100)
+        psp[0x80] = len(text)
+        psp[0x81:0x81 + len(text) + 1] = text + b"\r"
+        psp = self.arena.alloc_selector(0x100, 0x92, bytes(psp))
+        # InitTask's register contract: BX stack, CX heap, DI instance,
+        # SI previous instance, ES the PSP, DS = SS = DGROUP.
+        start = bytes([
+            0xB8, psp & 0xFF, psp >> 8, 0x8E, 0xC0,
+            0xB8, inst & 0xFF, inst >> 8, 0x8E, 0xD8, 0x8E, 0xD0,
+            0xBC, top & 0xFF, top >> 8,
+            0xBB, stack & 0xFF, stack >> 8,
+            0xB9, heap & 0xFF, heap >> 8,
+            0xBF, inst & 0xFF, inst >> 8,
+            0x33, 0xF6,
+            0xEA, ip & 0xFF, ip >> 8, segs[cs] & 0xFF, segs[cs] >> 8,
+        ])
+        return {
+            "name": name, "file": os.path.basename(path).upper(), "inst": inst,
+            "psp": psp, "show": show, "stack": stack, "ctx": None, "init": False,
+            "start": self.arena.alloc_selector(len(start), 0x9A, start),
+        }
+
+    def _calling_module(self):
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        sp = self.uc.reg_read(UC_X86_REG_SP)
+        ip, cs = struct.unpack("<HH", self.arena.read(ss, sp, 4))
+        return self.callers.get((cs, ip), ("?", 0))[0]
+
+    def _answer(self, uc, ordinal):
+        task = self.task
+        tasks = self.tasks
+        if task is None or not tasks or task is tasks[0]:
+            return super()._answer(uc, ordinal)
+        module = self._calling_module()
+        if (module, ordinal) == ("KERNEL", INITTASK) and not task["init"]:
+            self._fix_ret(ordinal)
+            self.calls.append(ordinal)
+            task["init"] = True
+            # The same ASCIIZ tail the runtime's InitTask gets.
+            line = self.arena.read(task["psp"], 0x81, 0x7F)
+            if b"\r" in line:
+                self.arena.write(task["psp"], 0x81 + line.index(b"\r"), b"\x00")
+            uc.reg_write(UC_X86_REG_AX, 1)
+            uc.reg_write(UC_X86_REG_BX, 0x81)
+            uc.reg_write(UC_X86_REG_CX, task["stack"])
+            uc.reg_write(UC_X86_REG_DX, task["show"])
+            uc.reg_write(UC_X86_REG_SI, 0)
+            uc.reg_write(UC_X86_REG_DI, task["inst"])
+            return
+        if (module, ordinal) in YIELDS:
+            # The queue is empty, so the task blocks here. Nothing answers
+            # the call until a message is delivered to it.
+            self._fix_ret(ordinal)
+            self.calls.append(ordinal)
+            if self.task_log is not None:
+                self.task_log.append(f"{task['name']} yielded at {module}.{ordinal}")
+            self.switch = tasks[0]
+            uc.emu_stop()
+            return
+        super()._answer(uc, ordinal)
+
+    def _switch(self):
+        target, self.switch = self.switch, None
+        self.task["ctx"] = self.uc.context_save()
+        self.task["exe_inst"] = self.exe_inst
+        self.task = target
+        self.exe_inst = target.get("exe_inst") or target["inst"]
+        if target["ctx"] is not None:
+            self.uc.context_restore(target["ctx"])
+            return self.uc.reg_read(UC_X86_REG_EIP)
+        # A fresh task starts from its own code selector, and its start code
+        # loads the segment registers.
+        return self._dispatch(target["start"], 0)
+
+    def _dispatch(self, sel, off, ds=0):
+        """IP to resume at so that the guest far-jumps to sel:off with DS = ds.
+
+        Segment registers cannot be loaded from the host in protected mode.
+        The run stopped inside the thunk or a module stub, so slot 0 of the
+        current CS is a far jump to the dispatcher, which loads DS from its
+        own data and jumps through its own far pointer. The code never
+        changes, only the data, so no translated block goes stale.
+        """
+        if not getattr(self, "dispatcher", 0):
+            code = bytes([
+                0x2E, 0xA1, 0x44, 0x00,         # mov ax, cs:[0x44]
+                0x8E, 0xD8,                     # mov ds, ax
+                0x2E, 0xFF, 0x2E, 0x40, 0x00,   # jmp far cs:[0x40]
+            ])
+            self.dispatcher = self.arena.alloc_selector(0x80, 0x9A, code.ljust(0x80, b"\x00"))
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        if cs != self.thunk and cs not in getattr(self, "stub_module", {}):
+            self.fault = f"cannot leave {cs:#x}: stopped outside the thunk"
+            return 0
+        self.arena.write(self.dispatcher, 0x40, struct.pack("<HHH", off, sel, ds))
+        self.arena.write(cs, 0, bytes([0xEA, 0, 0, self.dispatcher & 0xFF, self.dispatcher >> 8]))
+        return 0
+
+    def _begin_tasks(self):
+        if self.tasks:
+            return
+        self.tasks = [{"name": "TB80RTM", "file": "TB80RTM.EXE", "inst": self.exe_inst, "ctx": None}]
+        self.task = self.tasks[0]
+        self.task_log = []
+        self.switch = None
 
     def run(self):
         self.build()
@@ -298,18 +493,33 @@ class Pass06(Win32, Pass04):
         self.uc.reg_write(UC_X86_REG_CS, 0)
         self.uc.reg_write(UC_X86_REG_IP, 0xF000)
         self.fault = ""
+        self._begin_tasks()
         self._run_from(0xF000)
         return self.last
 
+    def _run_tasks(self, begin):
+        """Run from begin until no task is left to switch to.
+
+        Tests enter here. A real run() uses the same loop.
+        """
+        self.fault = ""
+        self.tasks = None
+        self._begin_tasks()
+        self._run_from(begin)
+
     def _run_from(self, begin):
         """Run until a stop. A stop that leaves a jump (entering or leaving
-        32-bit code) runs on from where the jump puts CS:IP."""
+        32-bit code) or a task switch runs on from where that puts CS:IP."""
         self.jump = None
+        self.switch = None
         self.spent = 0
         self._slice(begin)
-        while not self.fault and self.jump is not None:
-            go, self.jump = self.jump, None
-            ip = go()
+        while not self.fault and (self.jump is not None or self.switch is not None):
+            if self.switch is not None:
+                ip = self._switch()
+            else:
+                go, self.jump = self.jump, None
+                ip = go()
             if self.fault:
                 break
             # Unicorn's 16-bit emu_start takes a real-mode address and sets
@@ -317,6 +527,8 @@ class Pass06(Win32, Pass04):
             self._slice((self.uc.reg_read(UC_X86_REG_CS) << 4) + ip)
         if not self.fault:
             self.fault = "returned"
+        elif self.task is not None and self.tasks and self.task is not self.tasks[0]:
+            self.fault = f"{self.task['name']}: {self.fault}"
 
     def _slice(self, begin):
         micros = TIMEOUT - self.spent
@@ -376,6 +588,8 @@ def main():
     print(f"opens: {host.opens or 'none'}")
     print(last_call_line(host.last_call))
     print(f"dll entries bound {len(used)}")
+    for line in host.task_log or ():
+        print(f"task: {line}")
     return 0
 
 
