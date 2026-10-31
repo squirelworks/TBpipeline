@@ -7,11 +7,18 @@ from pathlib import Path
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED
 from unicorn.x86_const import (
     UC_X86_INS_OUT,
-    UC_X86_REG_AX, UC_X86_REG_CS, UC_X86_REG_DX, UC_X86_REG_IP,
-    UC_X86_REG_SP, UC_X86_REG_SS,
+    UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DS,
+    UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_IP, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
 
+REGISTERS = {
+    "ax": UC_X86_REG_AX, "bx": UC_X86_REG_BX, "cx": UC_X86_REG_CX, "dx": UC_X86_REG_DX,
+    "si": UC_X86_REG_SI, "di": UC_X86_REG_DI, "sp": UC_X86_REG_SP,
+    "ds": UC_X86_REG_DS, "es": UC_X86_REG_ES, "ss": UC_X86_REG_SS,
+}
+
 from .image import Sandbox
+from .wine import SYSTEM
 from .ne import Segment
 
 
@@ -54,9 +61,11 @@ class Args:
         return self.machine.string(self(n + 1), self(n))
 
     def regs(self, name):
-        if name == "ax":
-            return self.machine.uc.reg_read(UC_X86_REG_AX)
-        return 0
+        # DX holds the ordinal here: the gate stub loaded it.
+        return self.machine.uc.reg_read(REGISTERS[name])
+
+    def word(self, sel, offset):
+        return self.machine.word(sel, offset)
 
 
 class Machine:
@@ -119,6 +128,7 @@ class Machine:
         psp = self._psp()
         # Wine ne_module.c NE_StartTask: the handle of a moveable DGROUP is selector - 1.
         instance = data.selector - 1 if data.flags & 0x0010 else data.selector
+        self.box.wine.task = {"psp": psp, "instance": instance, "dlls": self._dlls_to_init()}
         gdtr_at = 0xF0E0
         self.uc.mem_write(gdtr_at, struct.pack("<HI", 0xFFFF, 0))
         self.uc.mem_write(0xF000, bytes([
@@ -216,6 +226,24 @@ class Machine:
             first = sel if first is None else first
         return first
 
+    def _dlls_to_init(self):
+        """ToolBook DLLs the executable loads, with init code, in Wine NE_InitializeDLLs order."""
+        out, seen = [], set()
+
+        def walk(image):
+            for name in image.modules:
+                dll = self.box.images.get(name)
+                # System modules are gates, not DLLs neww loaded.
+                if dll is None or dll is self.box.exe or name in seen or name in SYSTEM or dll.synthetic:
+                    continue
+                seen.add(name)
+                walk(dll)
+                if dll.entry_seg:
+                    out.append(name)
+
+        walk(self.box.exe)
+        return out
+
     def _psp(self):
         """The task's PDB16, as Wine task.c TASK_Create fills it. Returns its selector."""
         sel = self._allocate(PSP_SIZE)
@@ -266,6 +294,7 @@ class Machine:
             uc.emu_stop()
             return
         self.calls += 1
+        self.box.wine.registers = None
         ax, dx, why = self.box.wine.answer(module, ordinal, Args(self))
         if self.box.wine.usable(module, ordinal) is None:
             # No usable contract: stop on the OUT. Nothing is popped, AX and DX keep the guest's values.
@@ -279,6 +308,17 @@ class Machine:
             return
         uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
         uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
+        registers = self.box.wine.registers or {}
+        for name, value in registers.items():
+            if name != "push":
+                uc.reg_write(REGISTERS[name], value & 0xFFFF)
+        if "push" in registers:
+            # A word under the return address: after the retf, SS:SP points at it.
+            ss = uc.reg_read(UC_X86_REG_SS)
+            sp = uc.reg_read(UC_X86_REG_SP)
+            ret = self._read(self.box.selectors[ss], sp, 4)
+            self._write_guest(ss, sp - 2, ret + struct.pack("<H", registers["push"]))
+            uc.reg_write(UC_X86_REG_SP, sp - 2)
         if self.calls > 400:
             self.stop = "call limit"
             uc.emu_stop()
