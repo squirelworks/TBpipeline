@@ -389,7 +389,7 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
         at = (heap["next"] + 3) & ~3
-        if at + size > heap["end"]:
+        if at + size > heap["end"] and not self._local_grow(ds, heap, at + size):
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
         if flags & 0x40:
@@ -399,6 +399,43 @@ class Pass04:
         uc.reg_write(UC_X86_REG_AX, at)
         uc.reg_write(UC_X86_REG_DX, 0)
         return True
+
+    def _local_grow(self, seg, heap, need):
+        """Windows grows a full DGROUP up to 64K before LocalAlloc fails.
+
+        TB80BAS's NE header asks for a small heap. Without the grow it fell
+        back to the task's DS, wrote its record there, and read it back
+        through its own DS as zeros.
+        """
+        info = self.arena.segs[seg]
+        if heap["end"] != info["size"] or need > 0x10000:
+            return False
+        self.arena.grow(seg, (need + 0xFFF) & ~0xFFF)
+        heap["end"] = self.arena.segs[seg]["size"]
+        # The descriptor moved, and DS or ES still caches the old base.
+        # Unicorn loads a segment register written from the host as a
+        # real-mode paragraph, so the guest has to reload it: the thunk's
+        # retf goes through a stub that does, then returns to the caller.
+        if seg in (self.uc.reg_read(UC_X86_REG_DS), self.uc.reg_read(UC_X86_REG_ES)):
+            self._return_through_reload()
+        return True
+
+    def _return_through_reload(self):
+        if not getattr(self, "reload_sel", 0):
+            stub = bytes([
+                0x50,              # push ax
+                0x8C, 0xD8,        # mov ax, ds
+                0x8E, 0xD8,        # mov ds, ax
+                0x8C, 0xC0,        # mov ax, es
+                0x8E, 0xC0,        # mov es, ax
+                0x58,              # pop ax
+                0xCB,              # retf
+            ])
+            self.reload_sel = self.arena.alloc_selector(0x10, 0x9A, stub)
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        sp = (self.uc.reg_read(UC_X86_REG_SP) - 4) & 0xFFFF
+        self.arena.write(ss, sp, struct.pack("<HH", 0, self.reload_sel))
+        self.uc.reg_write(UC_X86_REG_SP, sp)
 
     def _local_realloc(self, handle, size, flags):
         uc = self.uc
