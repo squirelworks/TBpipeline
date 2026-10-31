@@ -895,6 +895,20 @@ class Pass04:
             uc.reg_write(UC_X86_REG_AX, self.task_handle)
             uc.reg_write(UC_X86_REG_DX, self.task_handle)
             return True
+        # GetVDMPointer32W(vp, fMode), a generic thunk, pops 6. Wine's
+        # GetVDMPointer32W16 is K32WOWGetVDMPointer: with fMode set, the
+        # selector's descriptor base plus the offset; with fMode 0, the
+        # real-mode address seg * 16 + off. An empty descriptor has base 0.
+        if ordinal == 516:
+            mode, off, sel = self._word(0), self._word(1), self._word(2)
+            if mode:
+                info = self.arena.segs.get(sel)
+                linear = (info["base"] if info else 0) + off
+            else:
+                linear = sel * 16 + off
+            uc.reg_write(UC_X86_REG_AX, linear & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, (linear >> 16) & 0xFFFF)
+            return True
         # IsBadCodePtr(lpfn). AX=1 is "bad": TB80BAS skipped its file
         # manager's handler and the book open failed.
         if ordinal == 336:
