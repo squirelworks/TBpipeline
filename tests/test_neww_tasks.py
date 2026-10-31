@@ -132,13 +132,25 @@ class Spawn(unittest.TestCase):
             child.store(name, 0x20 + 2 * i)
         return child
 
-    def test_missing_file_is_error_2(self):
+    def missing(self, line):
         parent = win_exec(Asm()).store("ax", 0x40).exit(0)
-        host = run(parent, None)
+        host = run(parent, None, parent_data=data_with(0x100, {0x10: line}))
         self.assertEqual(host.stop, "dos exit 0x0")
-        dgroup = host.box.exe.segments[1].selector
-        self.assertEqual(word(host, dgroup, 0x40), 2)
         self.assertEqual(len(host.box.wine.tasks), 1)
+        return word(host, host.box.exe.segments[1].selector, 0x40)
+
+    def test_missing_bare_name_is_21(self):
+        # WinExec16: no path, so the 16-bit builtin is tried and ERROR_FILE_NOT_FOUND becomes 21.
+        self.assertEqual(self.missing("CHILD.EXE hello"), 21)
+
+    def test_missing_name_with_a_path_is_error_2(self):
+        self.assertEqual(self.missing("C:\\TBK\\CHILD.EXE hello"), 2)
+        self.assertEqual(self.missing("sub/CHILD.EXE"), 2)
+
+    def test_contains_path(self):
+        from tbpipeline_neww.tasks import contains_path
+        self.assertEqual([contains_path(n) for n in ("A.EXE", "C:A.EXE", "a\\b", "a/b", "")],
+                         [False, True, True, True, False])
 
     def test_child_runs_with_ne_start_task_registers(self):
         parent = win_exec(Asm()).store("ax", 0x40).exit(0)
