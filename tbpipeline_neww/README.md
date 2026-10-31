@@ -11,3 +11,7 @@ python3 -m tbpipeline_neww --b ~/TBK/bin
 ```
 
 Needs `unicorn` (`pip install -r requirements.txt`). This is not `tbpipeline_bf`. That tree answers each crash and keeps going. This one links the modules first, and Windows is only the calls that have a contract.
+
+## Record
+
+- When `TB80BAS` is in `--b`, startup prints one line: its exports stay in the DLL. The sandbox has no Python `CDB*`, `OBJ*`, `HEAP*`, `STACK*`, or `RESMGR*`. `tests/test_neww_bas_stays.py` holds both.
