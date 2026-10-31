@@ -23,6 +23,7 @@ def fake_host(cls=Pass06, book=b""):
     host.book = "fixture.tbk"
     host.book_bytes = book
     host.opens, host.skipped, host.misses, host.named, host.calls = [], [], [], [], []
+    host.open_styles = []
     host._args = b""
     host.files, host.pos, host.heap, host.local, host.mods, host.hrsrc = {}, {}, {}, {}, {}, {}
     host.next_hrsrc = 1
