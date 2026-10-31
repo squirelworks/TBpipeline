@@ -356,6 +356,17 @@ class Pass04:
         if ordinal == 19:
             uc.reg_write(UC_X86_REG_AX, 0)
             return True
+        # GlobalWire(handle). Wine's GlobalWire16 is WIN16_GlobalLock16: the
+        # block's 16:16 address in DX:AX, with the selector in CX as well,
+        # and 0 for a handle that is not a block. As with GlobalLock here, a
+        # handle is its own selector and the block does not move.
+        if ordinal == 111:
+            handle = self._word(0)
+            sel = handle if handle in self.heap else 0
+            uc.reg_write(UC_X86_REG_AX, 0)
+            uc.reg_write(UC_X86_REG_DX, sel)
+            uc.reg_write(UC_X86_REG_CX, sel)
+            return True
         if ordinal == 21:
             # GlobalHandle: AX is the handle, DX the selector, and here they
             # are one value. TB80UTL keeps DX as a heap's selector; DX = 0
