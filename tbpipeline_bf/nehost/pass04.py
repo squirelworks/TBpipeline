@@ -8,6 +8,7 @@ skipped so the trace shows the next thing the entry asks for.
 """
 
 import os
+import re
 import struct
 import sys
 
@@ -787,6 +788,28 @@ class Pass04:
             self.uc.reg_write(UC_X86_REG_AX, n)
             self.uc.reg_write(UC_X86_REG_DX, 0)
             return True
+        # MessageBox(hwnd, text, caption, type). AX=1 is IDOK: TB80UTL's
+        # internal-error box says "Press OK to continue", so the runtime ran
+        # on past its own assertion. The box is where the run stops.
+        if ordinal == 1:
+            kind = self._word(0)
+            caption = self._string(self._word(2), self._word(1))
+            text = self._box_text(self._word(4), self._word(3))
+            self.fault = f"message box {caption!r} type {kind:#x}: {text!r}"
+            self.uc.emu_stop()
+            return True
+        # wsprintf(out, fmt, ...) is cdecl, so the caller pops. AX=1 left
+        # the buffer as it was, and the error box the runtime raised read
+        # as garbage.
+        if ordinal == 420:
+            out = (self._word(1), self._word(0))
+            fmt = self._box_text(self._word(3), self._word(2))
+            text = self._wsprintf(fmt, 4).encode("latin1", "replace")[:1023]
+            if out[0] in self.arena.segs:
+                self.arena.write(out[0], out[1], text + b"\x00")
+            self.uc.reg_write(UC_X86_REG_AX, len(text))
+            self.uc.reg_write(UC_X86_REG_DX, 0)
+            return True
         # GetSystemMetrics. 0x29 is SM_PENWINDOWS; a nonzero handle makes the
         # door call RegisterPenApp through a null pointer.
         if ordinal != 179:
@@ -1104,6 +1127,57 @@ class Pass04:
         if sel not in self.arena.segs:
             return ""
         return self.arena.read(sel, offset, 128).split(b"\x00", 1)[0].decode("latin1", "replace")
+
+    def _box_text(self, sel, offset):
+        info = self.arena.segs.get(sel)
+        if info is None:
+            return ""
+        size = max(0, min(512, info["limit"] + 1 - offset))
+        return self.arena.read(sel, offset, size).split(b"\x00", 1)[0].decode("latin1", "replace")
+
+    def _wsprintf(self, fmt, n):
+        """Win16 wsprintf. Arguments are stack words from _word(n) up; %s is a far pointer."""
+        out = []
+        pos = 0
+        for m in re.finditer(r"%(%|([-#0]*)(\d*)(?:\.(\d+))?(l?)([sdiuxXc]))", fmt):
+            out.append(fmt[pos:m.start()])
+            pos = m.end()
+            if m.group(1) == "%":
+                out.append("%")
+                continue
+            flags, width, prec, long_, kind = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6)
+            if kind == "s":
+                off, sel = self._word(n), self._word(n + 1)
+                n += 2
+                value = self._box_text(sel, off)
+                if prec:
+                    value = value[:int(prec)]
+            elif kind == "c":
+                value = chr(self._word(n) & 0xFF)
+                n += 1
+            else:
+                raw = self._word(n)
+                n += 1
+                bits = 16
+                if long_:
+                    raw |= self._word(n) << 16
+                    n += 1
+                    bits = 32
+                if kind in "di" and raw >> (bits - 1):
+                    raw -= 1 << bits
+                value = {"x": f"{raw:x}", "X": f"{raw:X}"}.get(kind, str(raw))
+                if flags and "#" in flags and kind in "xX" and raw:
+                    value = "0x" + value
+            if width:
+                if "-" in flags:
+                    value = value.ljust(int(width))
+                elif "0" in flags and kind not in "sc":
+                    value = value.rjust(int(width), "0")
+                else:
+                    value = value.rjust(int(width))
+            out.append(value)
+        out.append(fmt[pos:])
+        return "".join(out)
 
     def _clear(self):
         self.uc.reg_write(UC_X86_REG_EFLAGS, self.uc.reg_read(UC_X86_REG_EFLAGS) & ~1)

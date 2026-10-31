@@ -45,6 +45,8 @@ class Image:
     segments: list
     fixups: list = field(default_factory=list)
     synthetic: bool = False
+    # Segments with the iterated flag (bit 3). neww does not expand them, so they hold no bytes.
+    packed: list = field(default_factory=list)
 
 
 def _u16(buf, off):
@@ -64,12 +66,15 @@ def parse(path):
     csip = struct.unpack_from("<I", data, ne + 0x14)[0]
     segments = []
     fixups = []
+    packed = []
     for i in range(nseg):
         sector, size, flags, alloc = struct.unpack_from("<HHHH", data, segtab + i * 8)
         alloc = 0x10000 if alloc == 0 else alloc
         raw_size = 0x10000 if size == 0 else size
         blob = bytearray(alloc if alloc < 0x10000 else 0x10000)
-        if not flags & 0x0008:
+        if flags & 0x0008:
+            packed.append(i + 1)
+        else:
             start = sector << shift
             chunk = data[start:start + raw_size]
             blob[:len(chunk)] = chunk[:len(blob)]
@@ -109,6 +114,7 @@ def parse(path):
         names=_names(data, ne),
         segments=segments,
         fixups=fixups,
+        packed=packed,
     )
 
 
