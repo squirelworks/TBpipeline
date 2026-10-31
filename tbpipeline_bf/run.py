@@ -22,6 +22,7 @@ import tbpipeline_bf.nedllhost.pass06 as pass06
 pass06.UNPACKED = os.environ.get("TBK_UNPACKED", str(HERE / "bin"))
 from unicorn.x86_const import UC_X86_REG_AX
 from .nedllhost.pass06 import Pass06
+from .nehost.pass04 import last_call_line
 
 DEBUG = HERE / "_debug"
 
@@ -91,6 +92,7 @@ def stages(bin_dir, book_path, dbgrender=False, theme="default", render="new"):
     block.append(f"  stopped {cs:#x}:{ip:#x} {raw.hex()} {host.fault}")
     block.append(f"  user {host.user_hits or 'none'}")
     block.append(f"  engine opens {host.opens or 'none'}")
+    block.append(f"  {last_call_line(host.last_call)}")
     block.append(f"  command tail reads {len(host.tail_reads)} (PSP {host.psp:#x}:0x80)")
     block.append(f"  ax=1 calls {len(host.ax1)}")
     note("02_launch.txt", "\n".join(block + launch_ax1(host)))
