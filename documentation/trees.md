@@ -23,7 +23,7 @@ Two programs in one package.
 
 `nehost/` and `nedllhost/` answer the runtime question. Pass 06 maps six DLLs, starts at segment 2 offset `0x35A`, and currently exits after asking for `TB80.INI`. The detail is [WHY.md](../tbpipeline_bf/WHY.md).
 
-`--open` does not start the CPU. That split is the point. The book format is knowable without executing `TB80RTM`.
+`--open` does not start the CPU. `runtime/` does not import the host at all: `--b` and `--c` are read by `cli.py`, which has no `unicorn`. That split is the point. The book format is knowable without executing `TB80RTM`.
 
 ## newl
 

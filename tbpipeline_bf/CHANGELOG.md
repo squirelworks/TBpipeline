@@ -14,6 +14,7 @@ Not a release. `1.0.0r6` stays the version.
 - `next` and `back` run the page's `to handle next` or `to handle previous` / `back` when it has a jump the engine can compile, in `engine.py` and in `render.html`. Without one they use the page list, as before.
 - `python3 -m tbpipeline_bf.runtime` and `python3 -m tbpipeline_bf.runtime.debug` run again. They died unpacking `resolve()`, which had grown to seven values. Without `--dbgrender` they still write no `render.html`.
 - `render.html` marks its theme on `<body data-theme="…">`. An unknown `--theme` is drawn and marked as `default`.
+- The reader no longer imports the host. `resolve()` and `new_debug_dir()` moved from `run.py` to `cli.py`, which imports neither `unicorn` nor pass 06. `python3 -m tbpipeline_bf.runtime` runs without `unicorn` installed. `run.py` imports them from there.
 
 ## 1.0.0r6
 
