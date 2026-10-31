@@ -6,7 +6,7 @@ from pathlib import Path
 
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED, UC_HOOK_INTR
 from unicorn.x86_const import (
-    UC_X86_INS_OUT,
+    UC_X86_INS_OUT, UC_X86_REG_EFLAGS,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DS,
     UC_X86_REG_BP, UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_FPCW, UC_X86_REG_FPSW, UC_X86_REG_FPTAG, UC_X86_REG_IP, UC_X86_REG_LDTR, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
@@ -22,6 +22,7 @@ from .guest import Call, GuestCalls
 from .image import Sandbox
 from .wine import SYSTEM, moveable_handle
 from .ne import Segment
+from . import tasks
 
 
 # The GDT is at linear 0. Its copy, the LDT, is the next 64K.
@@ -31,6 +32,12 @@ LDT_BASE = 0x10000
 # Its selector's GDT base is selector * 16, so it is the same block by either rule.
 INT_TAIL_SEL = 0xFFF0
 INT_TAIL = INT_TAIL_SEL << 4
+# In the same block, where a task switch loads the next task's SS:SP, DS, ES and CS:IP from
+# the words at SWITCH_DATA.
+SWITCH_TAIL = 0x20
+SWITCH_DATA = 0x40
+# The registers a task switch saves and loads directly. The segment registers go through the tail.
+TASK_REGISTERS = ("ax", "bx", "cx", "dx", "si", "di", "bp", "fpcw")
 
 # The cap stays. A run that ends on it says so.
 TIMEOUT_US = 15_000_000
@@ -42,8 +49,11 @@ PSP_UNFILLED = (
     (0x05, 0x0A, "dispatcher at 0x05, Wine's far call to KERNEL.DOS3Call"),
 )
 
-# Wine task.c GetDOSEnvironment16: the host's environment strings, a 0, WORD 1, then this name.
-# neww copies no host environment, so the strings are none: one 0 ends the empty list.
+# Wine task.c GetDOSEnvironment16: the process's environment strings, a 0, WORD 1, then this name.
+# neww copies nothing from the host. It has the two strings every Wine prefix sets (wine.inf's
+# HKCU Environment TEMP and TMP), with neww's own directory for them: there is no user profile,
+# so the folder is TEMP under neww's Windows directory.
+ENV_STRINGS = (b"TEMP=C:\\WINDOWS\\TEMP", b"TMP=C:\\WINDOWS\\TEMP")
 ENV_PROGRAM_NAME = b"C:\\WINDOWS\\SYSTEM\\KRNL386.EXE\x00"
 
 
@@ -88,7 +98,6 @@ class Machine:
         self.uc = None
         self.stop = ""
         self.calls = 0
-        self.trampoline = None
         self.pending = None
         # Gate calls before the run stops on "call limit". A cap, like the instruction cap.
         self.call_limit = 400
@@ -162,26 +171,41 @@ class Machine:
         stubs = self._alloc_code(256 * 5)
         self.uc.mem_write(self.box.selectors[stubs].base, bytes([0xE6, 0xEB, 0xCF, 0x90, 0x90]) * 256)
         self.box.wine.int_stubs = stubs
-        self._write_descriptor(INT_TAIL_SEL, _descriptor(INT_TAIL, 0xF, 0x9A))
+        self._write_descriptor(INT_TAIL_SEL, _descriptor(INT_TAIL, 0xFF, 0x9A))
         self.uc.mem_write(INT_TAIL, bytes([
             0x2E, 0x8E, 0x06, 0x10, 0x00,   # mov es, cs:[10h]
             0x2E, 0x8E, 0x1E, 0x12, 0x00,   # mov ds, cs:[12h]
             0x2E, 0xFF, 0x2E, 0x14, 0x00,   # jmp far cs:[14h]
         ]))
+        self.uc.mem_write(INT_TAIL + SWITCH_TAIL, bytes([
+            0x2E, 0x8E, 0x16, 0x40, 0x00,   # mov ss, cs:[40h]
+            0x2E, 0x8B, 0x26, 0x42, 0x00,   # mov sp, cs:[42h]
+            0x2E, 0x8E, 0x1E, 0x44, 0x00,   # mov ds, cs:[44h]
+            0x2E, 0x8E, 0x06, 0x46, 0x00,   # mov es, cs:[46h]
+            0x2E, 0xFF, 0x2E, 0x48, 0x00,   # jmp far cs:[48h]
+        ]))
         code = exe.segments[exe.entry_seg - 1]
         data = exe.segments[exe.auto - 1]
-        psp = self._psp()
+        psp = self._psp(self.box.wine.book.name if self.box.wine.book else "")
         self._modules()
         self._task()
         # Wine ne_module.c NE_StartTask: a moveable DGROUP's instance is its handle.
         instance = moveable_handle(data.selector) if data.flags & 0x0010 else data.selector
-        names, rows, why = self._dlls_to_init()
+        self.initialized = set()
+        names, rows, why = self._dlls_to_init(exe)
         self.box.wine.task = {
             "psp": psp, "instance": instance, "dgroup": data.selector,
-            "dlls": names, "dll_init": rows, "dll_stop": why,
+            "dlls": names, "dll_init": rows, "dll_stop": why, "show": 1,
+            "trampoline": self._trampoline(rows) if rows else None,
         }
-        self.trampoline = self._trampoline(rows) if rows else None
         self.initialized = set(names)
+        wine = self.box.wine
+        first = tasks.Task(wine.htask, exe.name, wine.task, wine.modules[exe.name], instance, events=wine.events)
+        wine.tasks = [first]
+        wine.current = first
+        wine.first_task = wine.htask
+        wine.spawn = self._spawn
+        wine.images = lambda: self.box.images
         # pop ds ; pop es ; retf: how a finished guest-call request returns to its caller.
         self.guest = []
         self.tramp_free = []
@@ -202,13 +226,9 @@ class Machine:
         ]))
         # Wine ne_module.c NE_StartTask: SP is the header's, or the stack segment's
         # minsize plus the NE stack size, made even. The stack sits below the local heap.
-        sp = exe.sssp & 0xFFFF
-        if not sp:
-            ss_seg = exe.segments[(exe.sssp >> 16) - 1] if exe.sssp >> 16 else data
-            sp = ss_seg.minsize + exe.stack
-        sp &= ~1
-        if not 0 < sp <= len(data.data):
-            self.stop = f"stack top {sp:#x} is outside DGROUP ({len(data.data):#x} bytes)"
+        sp, why = self._initial_sp(exe)
+        if why:
+            self.stop = why
             return self
 
         def word(value):
@@ -270,6 +290,211 @@ class Machine:
             if seg is self.box.trap:
                 text += " in the trap segment"
         return text
+
+    def _initial_sp(self, image):
+        """Wine ne_module.c NE_StartTask: SP is the header's, or the stack segment's minsize plus
+        the NE stack size, made even. Returns (sp, stop)."""
+        data = image.segments[image.auto - 1]
+        sp = image.sssp & 0xFFFF
+        if not sp:
+            ss_seg = image.segments[(image.sssp >> 16) - 1] if image.sssp >> 16 else data
+            sp = ss_seg.minsize + image.stack
+        sp &= ~1
+        if not 0 < sp <= len(data.data):
+            return 0, f"stack top {sp:#x} is outside DGROUP ({len(data.data):#x} bytes)"
+        return sp, None
+
+    # ------------------------------------------------------------ tasks
+
+    def _spawn(self, image, cmdline, show):
+        """ne_module.c NE_CreateThread -> TASK_SpawnTask -> TASK_Create, then NE_StartTask's
+        registers for the first time the task runs. Returns the Task, or a stop.
+
+        A module handle (NE_RegisterModule puts it at the head of the list), a PDB with the
+        command line, a TDB, the instance (the DGROUP made by NE_CreateSegment at load), the
+        DLLs InitTask will initialize (those no task initialized yet), and one event posted.
+        """
+        wine = self.box.wine
+        if any(t.alive and t.exe_name == image.name for t in wine.tasks):
+            return (f"{image.name} is already running: LoadModule16 would make a second instance "
+                    "(NE_CreateInstance), which neww does not do")
+        if any(t.exe_name == image.name for t in wine.tasks):
+            return f"{image.name} ran and ended: loading it again would need its segments reloaded, which neww does not do"
+        if not image.auto or not image.entry_seg:
+            return f"{image.name} has no DGROUP or no entry point"
+        if image.name not in wine.modules:
+            sel = self._allocate(0x60)
+            wine.modules[image.name] = sel
+            base = self.box.selectors[sel].base
+            self.uc.hook_add(UC_HOOK_MEM_READ, self._module_read, (image.name, base), base, base + 0x5F)
+            wine.first_module = sel
+        module = wine.modules[image.name]
+        psp = self._psp(cmdline)
+        htask = self._task_block()
+        data = image.segments[image.auto - 1]
+        code = image.segments[image.entry_seg - 1]
+        instance = moveable_handle(data.selector) if data.flags & 0x0010 else data.selector
+        sp, why = self._initial_sp(image)
+        if why:
+            return why
+        names, rows, why = self._dlls_to_init(image)
+        task = {
+            "psp": psp, "instance": instance, "dgroup": data.selector,
+            "dlls": names, "dll_init": rows, "dll_stop": why, "show": show,
+            "trampoline": self._trampoline(rows) if rows else None,
+        }
+        self.initialized |= set(names)
+        # PostEvent16(hTask) in NE_CreateThread: the startup WaitEvent(0) takes it.
+        child = tasks.Task(htask, image.name, task, module, instance, events=1)
+        # NE_StartTask: AX 0, BX stack size, CX heap size, SI previous instance (none),
+        # DI the instance, BP 0, ES the PSP, DS = SS = DGROUP. IF is set.
+        child.context = {
+            "ax": 0, "bx": image.stack, "cx": image.heap, "dx": 0, "si": 0, "di": instance, "bp": 0,
+            "sp": sp, "ss": data.selector, "ds": data.selector, "es": psp,
+            "cs": code.selector, "ip": image.entry_ip, "eflags": 0x0202,
+            "fpcw": self.uc.reg_read(UC_X86_REG_FPCW),
+        }
+        wine.tasks.append(child)
+        wine.usage[module] = 1
+        # TASK_LinkTask: the new task goes in before the tasks of its priority, so it is first.
+        wine.first_task = htask
+        return child
+
+    def _capture(self, uc):
+        ctx = {name: uc.reg_read(REGISTERS[name]) for name in TASK_REGISTERS}
+        for name in ("sp", "ss", "ds", "es"):
+            ctx[name] = uc.reg_read(REGISTERS[name])
+        ctx["eflags"] = uc.reg_read(UC_X86_REG_EFLAGS)
+        return ctx
+
+    def _switch(self, uc, cs, ordinal, switch, ax, dx):
+        """Save the current task at the gate stub and run switch.task. "retry" resumes at the
+        stub's first byte, so the call runs again; "answer" at its retf, with DX:AX."""
+        wine = self.box.wine
+        cur = wine.current
+        ctx = self._capture(uc)
+        ctx["cs"] = cs
+        if switch.kind == "retry":
+            ctx["ip"] = ordinal * 8
+        else:
+            ctx["ip"] = ordinal * 8 + 5
+            ctx["answer"] = switch.answer if switch.answer is not None else (ax, dx)
+        cur.context = ctx
+        cur.wait = switch.wait
+        if switch.call is not None:
+            self._inject(uc, switch.task, switch.call, switch.done)
+            return
+        self._resume(uc, switch.task, retf=True)
+
+    def _to_tail(self, uc):
+        """From a gate's OUT: the stub's retf goes to the switch tail (see _resume)."""
+        ss, sp = uc.reg_read(UC_X86_REG_SS), uc.reg_read(UC_X86_REG_SP)
+        self._write_guest(ss, (sp - 4) & 0xFFFF, struct.pack("<HH", SWITCH_TAIL, INT_TAIL_SEL))
+        uc.reg_write(UC_X86_REG_SP, (sp - 4) & 0xFFFF)
+
+    def _inject(self, uc, task, call, done):
+        """Run one call in a waiting task, on its stack below where it waits, from a trampoline.
+        Its OUT 0E8h hands the result to done(ax, dx), puts the task back where it waited, and
+        runs the task done returns (_sent_result)."""
+        wine = self.box.wine
+        self._to_tail(uc)
+        saved, wait = task.context, task.wait
+        tasks.swap(wine, task)
+        task.context = None
+        task.wait = None
+        self.hook_serial += 1
+        ident = len(self.guest)
+        self.guest.append({"sent": (task, saved, wait, done), "done": False})
+        sel = self._trampoline_for(call, ident)
+        for name in ("bp", "si", "di"):
+            uc.reg_write(REGISTERS[name], saved[name])
+        uc.reg_write(UC_X86_REG_EFLAGS, saved["eflags"])
+        uc.mem_write(INT_TAIL + SWITCH_DATA, struct.pack(
+            "<HHHHHH", saved["ss"], saved["sp"], saved["ds"], saved["es"], 0, sel))
+        wine.trace.append(f"-- task {task.exe_name} {task.htask:#x}, for a sent message")
+
+    def _sent_result(self, uc, state):
+        state["done"] = True
+        self.hook_serial += 1
+        self.tramp_retired.append((state["slots"].pop(), self.hook_serial))
+        task, saved, wait, done = state["sent"]
+        ax, dx = uc.reg_read(UC_X86_REG_AX), uc.reg_read(UC_X86_REG_DX)
+        nxt = done(ax, dx)
+        self.box.wine.trace.append(f"  <- reply {dx << 16 | ax:#x}")
+        # The task goes back to waiting where it was.
+        task.context, task.wait = saved, wait
+        self._resume(uc, nxt, retf=True)
+
+    def _resume(self, uc, task, retf):
+        """Load a task's saved registers, then go to the switch tail, which loads SS:SP, DS and
+        ES through the CPU and jumps to the task's CS:IP.
+
+        From an INT hook a write of CS:IP takes effect. From a gate's OUT it does not, as the
+        stub's next instruction address is fixed, so the stub's retf goes there instead: a far
+        pointer to the tail under the old task's SP, which its saved context does not include.
+        """
+        wine = self.box.wine
+        if retf:
+            self._to_tail(uc)
+        tasks.swap(wine, task)
+        ctx = dict(task.context)
+        task.context = None
+        task.wait = None
+        answer = ctx.pop("answer", None)
+        if callable(answer):
+            answer = answer()
+        if answer is not None:
+            ctx["ax"], ctx["dx"] = answer[0] & 0xFFFF, answer[1] & 0xFFFF
+        for name in TASK_REGISTERS:
+            uc.reg_write(REGISTERS[name], ctx[name])
+        uc.reg_write(UC_X86_REG_EFLAGS, ctx["eflags"])
+        uc.mem_write(INT_TAIL + SWITCH_DATA, struct.pack(
+            "<HHHHHH", ctx["ss"], ctx["sp"], ctx["ds"], ctx["es"], ctx["ip"], ctx["cs"]))
+        if not retf:
+            uc.reg_write(UC_X86_REG_CS, INT_TAIL_SEL)
+            uc.reg_write(UC_X86_REG_IP, SWITCH_TAIL)
+        wine.trace.append(f"-- task {task.exe_name} {task.htask:#x}")
+
+    def _exit_task(self, uc, code, retf=False):
+        """INT 21h AH=4Ch in a task: Wine's ExitThread -> TASK_ExitTask. The first task's exit
+        ends the run, as before. Another task's ends that task: its queue and timers go, its
+        module's count drops (NE_FreeModule frees it at 0), and another task runs."""
+        wine = self.box.wine
+        cur = wine.current
+        if cur is wine.tasks[0] or len(wine.tasks) < 2:
+            wine.exit = code
+            self.stop = f"dos exit {code:#x}"
+            uc.emu_stop()
+            return
+        from .user_wnd import wm
+        m = wm(wine)
+        left = [w.hwnd for w in m.windows.values() if w.task == cur.htask and not w.destroyed]
+        if left:
+            self.stop = (f"{cur.exe_name} exits with {len(left)} windows ({left[0]:#x} first): Wine's "
+                         "WIN_DestroyThreadWindows destroys them, which neww does not do yet")
+            uc.emu_stop()
+            return
+        wine.exit = code
+        cur.alive = False
+        m.queues.pop(cur.htask, None)
+        wine.usage[cur.module] = 0
+        wine.modules.pop(cur.exe_name, None)
+        if wine.first_module == cur.module:
+            wine.first_module = wine.modules[wine.tasks[0].exe_name]
+        if wine.first_task == cur.htask:
+            wine.first_task = next((t.htask for t in reversed(wine.tasks) if t.alive), 0)
+        wine.trace.append(f"-- task {cur.exe_name} {cur.htask:#x} exits {code:#x}")
+        nxt = tasks.next_ready(wine)
+        if nxt is None:
+            found = tasks.earliest_timer(wine, include_current=False)
+            if found is not None:
+                m.clock = max(m.clock, found[0])
+                nxt = found[1]
+        if nxt is None:
+            self.stop = f"{cur.exe_name} exited {code:#x}, and every other task waits for input, and neww has none"
+            uc.emu_stop()
+            return
+        self._resume(uc, nxt, retf)
 
     def _is_code(self, sel):
         seg = self.box.selectors.get(sel)
@@ -466,15 +691,17 @@ class Machine:
         self.box.wine.first_module = self.box.wine.modules[order[-1].name]
 
     def _task(self):
-        """The task handle: Wine TASK_Create's GlobalAlloc16(GMEM_FIXED, sizeof(TDB)), 0x200 bytes.
+        """The first task's handle. The exe's task is linked after the main task at the same
+        priority, so TASK_LinkTask puts it first, and it is hFirstTask too."""
+        self.box.wine.htask = self._task_block()
 
-        The exe's task is linked after the main task at the same priority, so TASK_LinkTask
-        puts it first, and it is hFirstTask too. neww makes the block but not the TDB in it.
-        """
+    def _task_block(self):
+        """A task handle: Wine TASK_Create's GlobalAlloc16(GMEM_FIXED, sizeof(TDB)), 0x200 bytes.
+        neww makes the block but not the TDB in it."""
         sel = self._allocate(0x200)
-        self.box.wine.htask = sel
         base = self.box.selectors[sel].base
         self.uc.hook_add(UC_HOOK_MEM_READ, self._task_read, base, base, base + 0x1FF)
+        return sel
 
     def _task_read(self, uc, access, address, size, value, base):
         if self.stop:
@@ -512,8 +739,9 @@ class Machine:
             first = sel if first is None else first
         return first
 
-    def _dlls_to_init(self):
-        """ToolBook DLLs the executable loads, with init code, in Wine NE_InitializeDLLs order.
+    def _dlls_to_init(self, exe):
+        """ToolBook DLLs an executable loads, with init code, in Wine NE_InitializeDLLs order.
+        A DLL another task already initialized is not initialized again.
 
         Returns (names, rows, stop). A row is (name, cs, ip, ds, heap, instance), the
         registers ne_segment.c NE_InitDLL and NE_GetDLLInitParams give LibMain.
@@ -524,15 +752,15 @@ class Machine:
             for name in image.modules:
                 dll = self.box.images.get(name)
                 # System modules are gates, not DLLs neww loaded.
-                if dll is None or dll is self.box.exe or name in seen or name in SYSTEM or dll.synthetic:
+                if dll is None or dll is exe or name in seen or name in SYSTEM or dll.synthetic:
                     continue
                 seen.add(name)
                 walk(dll)
                 # NE_InitDLL: only a library with an entry point is called.
-                if dll.entry_seg and dll.flags & 0x8000:
+                if dll.entry_seg and dll.flags & 0x8000 and name not in self.initialized:
                     names.append(name)
 
-        walk(self.box.exe)
+        walk(exe)
         rows = []
         for name in names:
             dll = self.box.images[name]
@@ -662,6 +890,9 @@ class Machine:
             uc.emu_stop()
             return
         state = self.guest[ident]
+        if "sent" in state:
+            self._sent_result(uc, state)
+            return
         self.hook_serial += 1
         slot = state["slots"].pop()
         self.tramp_retired.append((slot, self.hook_serial))
@@ -730,7 +961,7 @@ class Machine:
         self._write_guest(saved["ss"], sp - 6, frame)
         uc.reg_write(UC_X86_REG_SP, sp - 6)
 
-    def _psp(self):
+    def _psp(self, cmdline):
         """The task's PDB16, as Wine task.c TASK_Create fills it. Returns its selector."""
         sel = self._allocate(PSP_SIZE)
         pdb = bytearray(PSP_SIZE)
@@ -740,9 +971,9 @@ class Machine:
         struct.pack_into("<HH", pdb, 0x34, 0x18, sel)
         # TASK_Create: environment = SELECTOROF(GetDOSEnvironment16()).
         struct.pack_into("<H", pdb, 0x2C, self._environment())
-        # The command line is what follows the program name: the book from --c, by name.
-        book = self.box.wine.book
-        line = book.name.encode("latin1", "replace")[:127] if book else b""
+        # The command line is what follows the program name: for the first task the book from
+        # --c, by name; for one WinExec started, what followed the file name.
+        line = cmdline.encode("latin1", "replace")[:127]
         pdb[0x80] = len(line)
         pdb[0x81:0x81 + len(line)] = line
         self._write_guest(sel, 0, bytes(pdb))
@@ -754,7 +985,7 @@ class Machine:
     def _environment(self):
         """The DOS environment block, a GMEM_FIXED block whose handle is its selector."""
         if self.box.wine.environment is None:
-            block = b"\x00" + struct.pack("<H", 1) + ENV_PROGRAM_NAME
+            block = b"".join(text + b"\x00" for text in ENV_STRINGS) + b"\x00" + struct.pack("<H", 1) + ENV_PROGRAM_NAME
             sel = self._allocate((len(block) + 0x1F) & ~0x1F)
             self._write_guest(sel, 0, block)
             self.box.wine.environment = sel
@@ -834,8 +1065,21 @@ class Machine:
             self.stop = why
             uc.emu_stop()
             return
-        uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
         registers = dict(self.box.wine.registers or {})
+        if "exit_task" in registers:
+            self._exit_task(uc, registers["exit_task"], retf=True)
+            return
+        if "switch" in registers:
+            if self.box.slots.get((module, ordinal)) is not None:
+                self.stop = f"{module}.{ordinal}: a register contract cannot switch tasks"
+                uc.emu_stop()
+                return
+            self._switch(uc, cs, ordinal, registers["switch"], ax, dx)
+            if self.calls > self.call_limit:
+                self.stop = "call limit"
+                uc.emu_stop()
+            return
+        uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
         slot = self.box.slots.get((module, ordinal))
         if slot is None:
             uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
@@ -862,9 +1106,13 @@ class Machine:
                 "ss": ss, "sp": sp, "ds": uc.reg_read(UC_X86_REG_DS), "bp": uc.reg_read(UC_X86_REG_BP),
                 "ret": self._read(self.box.selectors[ss], sp, 4),
             }
-            self._write_guest(ss, sp, struct.pack("<HH", 0, self.trampoline))
+            self._write_guest(ss, sp, struct.pack("<HH", 0, self.box.wine.task["trampoline"]))
             registers = {}
         frame = registers.pop("frame", None)
+        if "eflags_cf" in registers:
+            # A DOS function's carry flag. The stub's retf leaves the flags as set here.
+            flags = uc.reg_read(UC_X86_REG_EFLAGS) & ~1
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | (registers.pop("eflags_cf") & 1))
         for name, value in registers.items():
             if name != "push":
                 uc.reg_write(REGISTERS[name], value & 0xFFFF)
@@ -901,17 +1149,25 @@ class Machine:
                          "and DOSVM_EmulateInterruptPM would call it, which neww does not do yet")
             uc.emu_stop()
             return
-        if intno != 0x21:
+        if intno not in (0x21, 0x2F):
             self.stop = f"INT {intno:#x} {self.where()}: Wine's builtin handler for it is not in neww"
             uc.emu_stop()
             return
         self.calls += 1
-        sets, why = wine.int21(lambda name: uc.reg_read(REGISTERS[name]))
+        handler = wine.int21 if intno == 0x21 else wine.int2f
+        sets, why = handler(lambda name: uc.reg_read(REGISTERS[name]))
         if why:
             self.stop = why
             uc.emu_stop()
             return
+        if "exit_task" in sets:
+            self._exit_task(uc, sets["exit_task"])
+            return
         es, ds = sets.pop("es", None), sets.pop("ds", None)
+        if "eflags_cf" in sets:
+            # The handler's carry flag. IRET does not run: the INT hook returns past the INT.
+            flags = uc.reg_read(UC_X86_REG_EFLAGS) & ~1
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | (sets.pop("eflags_cf") & 1))
         for name, value in sets.items():
             uc.reg_write(REGISTERS[name], value & 0xFFFF)
         if es is not None or ds is not None:

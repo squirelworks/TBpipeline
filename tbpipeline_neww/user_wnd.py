@@ -106,6 +106,18 @@ class Window:
         self.dc = 0
         self.destroyed = False
         self.sysmenu = 0
+        # The task that created the window: its messages go to that task's queue.
+        self.task = 0
+
+
+class TaskQueue:
+    """A task's message queue: posted messages, the quit flag, its timers. Wine keeps one per
+    thread (a Win16 task is a thread): win32u's message queue and its timer list."""
+
+    def __init__(self):
+        self.queue = []          # posted messages: (hwnd, msg, wp, lp)
+        self.quit = None
+        self.timers = {}         # (hwnd, id) -> [interval, proc, due]
 
 
 class WM:
@@ -119,9 +131,8 @@ class WM:
         self.focus = 0
         self.capture = 0
         self.foreground = 0
-        self.queue = []          # posted messages: (hwnd, msg, wp, lp)
-        self.quit = None
-        self.timers = {}         # (hwnd, id) -> [interval, proc, due]
+        # Task handle -> TaskQueue. queue, quit and timers are the current task's.
+        self.queues = {}
         self.clock = 0
         self.cursor = 0
         self.scratch = None
@@ -141,6 +152,37 @@ class WM:
     def get(self, hwnd):
         w = self.windows.get(hwnd)
         return w if w is not None and not w.destroyed else None
+
+    def queue_of(self, task):
+        q = self.queues.get(task)
+        if q is None:
+            q = self.queues[task] = TaskQueue()
+        return q
+
+    def task_of(self, hwnd):
+        """The task whose queue a window's messages go to: the one that created it."""
+        w = self.windows.get(hwnd)
+        return w.task if w is not None else self.wine.htask
+
+    @property
+    def queue(self):
+        return self.queue_of(self.wine.htask).queue
+
+    @queue.setter
+    def queue(self, value):
+        self.queue_of(self.wine.htask).queue = value
+
+    @property
+    def quit(self):
+        return self.queue_of(self.wine.htask).quit
+
+    @quit.setter
+    def quit(self, value):
+        self.queue_of(self.wine.htask).quit = value
+
+    @property
+    def timers(self):
+        return self.queue_of(self.wine.htask).timers
 
 
 def wm(wine):
@@ -314,6 +356,10 @@ def send(wine, hwnd, msg, wp=0, lp=0):
     if w is None:
         return 0
     wine.trace.append(f"  -> {hwnd:#x} {MESSAGE_NAMES.get(msg, hex(msg))} {wp:#x} {lp:#x}")
+    if w.task and w.task != wine.htask:
+        yield (f"SendMessage {MESSAGE_NAMES.get(msg, hex(msg))} to {hwnd:#x}, a window of task {w.task:#x}: "
+               "Wine delivers it in that task's thread, and neww does not switch tasks for a sent message yet")
+        return 0
     if proc_is_def(wine, w.proc):
         result = yield from def_window_proc(wine, hwnd, msg, wp, lp)
         return result
@@ -977,6 +1023,7 @@ def create_window(wine, ex, cls_ptr, name_ptr, style, x, y, cx, cy, parent, menu
         ex &= ~WS_EX_WINDOWEDGE
     hwnd = m._handle()
     w = Window(hwnd, cls, parent, owner)
+    w.task = wine.htask
     w.inst = inst
     w.style = style & ~WS_VISIBLE
     w.exstyle = ex
@@ -1146,9 +1193,10 @@ def _free(wine, hwnd):
     siblings = m.children.get(w.parent, [])
     if hwnd in siblings:
         siblings.remove(hwnd)
-    for key in [k for k in m.timers if k[0] == hwnd]:
-        del m.timers[key]
-    m.queue = [q for q in m.queue if q[0] != hwnd]
+    q = m.queue_of(w.task)
+    for key in [k for k in q.timers if k[0] == hwnd]:
+        del q.timers[key]
+    q.queue = [e for e in q.queue if e[0] != hwnd]
     if m.focus == hwnd:
         m.focus = 0
     if m.active == hwnd:
@@ -1729,7 +1777,9 @@ def get_last_active_popup(wine, arg, hwnd):
 
 @api("USER", "GetWindowTask")
 def get_window_task(wine, arg, hwnd):
-    return wine.htask if wm(wine).get(hwnd) is not None else 0
+    """GetWindowTask16: the task of the window's thread."""
+    w = wm(wine).get(hwnd)
+    return w.task if w is not None else 0
 
 
 @api("USER", "GetWindowRect")
@@ -2120,8 +2170,42 @@ def send_message16(wine, arg, hwnd, msg, wp, lp):
             if m.get(top) is not None:
                 yield from send(wine, top, msg, wp, lp)
         return 1
+    w = m.get(hwnd)
+    if w is not None and w.task and w.task != wine.htask and wine.tasks:
+        return inter_task_send(wine, w, msg, wp, lp)
     result = yield from send(wine, hwnd, msg, wp, lp)
     return result
+
+
+def inter_task_send(wine, w, msg, wp, lp):
+    """SendMessage16 to a window of another task. The sender waits for the reply; the window's
+    task runs the window procedure, on its own stack, from where it waits; then the sender gets
+    the result, as Win16's task switch for a sent message does, and the other task waits again
+    where it was. Returns (ax, dx) for the gate, with the switch request set."""
+    from .tasks import by_handle, Switch
+    receiver = by_handle(wine, w.task)
+    if receiver is None or receiver.context is None:
+        return 0, 0
+    name = MESSAGE_NAMES.get(msg, hex(msg))
+    wine.trace.append(f"  -> {w.hwnd:#x} {name} {wp:#x} {lp:#x} (task {receiver.exe_name})")
+    if proc_is_def(wine, w.proc):
+        return 0, 0, (f"SendMessage {name} to {w.hwnd:#x} of task {receiver.exe_name}: its procedure is "
+                      "DefWindowProc, and neww runs that only in the sender's task")
+    ss = receiver.context["ss"]
+    inst = w.inst or ss
+    call = Call(w.proc >> 16, w.proc & 0xFFFF, regs={"ds": ss, "es": ss, "ax": inst},
+                words=[w.hwnd, msg & 0xFFFF, wp & 0xFFFF, (lp >> 16) & 0xFFFF, lp & 0xFFFF])
+    sender = wine.current
+    reply = {}
+
+    def done(ax, dx):
+        reply["value"] = (ax, dx)
+        return sender
+
+    switch = Switch("answer", receiver, wait="reply", answer=lambda: reply["value"])
+    switch.call, switch.done = call, done
+    wine.registers = {"switch": switch}
+    return 0, 0
 
 
 @api("USER", "DefWindowProc")
@@ -2143,20 +2227,26 @@ def call_window_proc16(wine, arg, proc, hwnd, msg, wp, lp):
 
 @api("USER", "PostMessage")
 def post_message(wine, arg, hwnd, msg, wp, lp):
+    """PostMessage16: to the queue of the window's task. HWND_BROADCAST posts to every
+    top-level window."""
     m = wm(wine)
     if hwnd == 0xFFFF:
         for top in m.children.get(m.desktop, []):
-            m.queue.append((top, msg, wp, lp))
+            m.queue_of(m.task_of(top)).queue.append((top, msg, wp, lp))
         return 1
     if hwnd and m.get(hwnd) is None:
         return 0
-    m.queue.append((hwnd, msg, wp, lp))
+    m.queue_of(m.task_of(hwnd) if hwnd else wine.htask).queue.append((hwnd, msg, wp, lp))
     return 1
 
 
 @api("USER", "PostAppMessage")
 def post_app_message(wine, arg, task, msg, wp, lp):
-    wm(wine).queue.append((0, msg, wp, lp))
+    """PostAppMessage16 -> PostThreadMessage to the task's thread: FALSE for no such task."""
+    from .tasks import by_handle
+    if wine.tasks and by_handle(wine, task) is None:
+        return 0
+    wm(wine).queue_of(task if wine.tasks else wine.htask).queue.append((0, msg, wp, lp))
     return 1
 
 
@@ -2187,16 +2277,17 @@ def is_child_of(m, hwnd, parent):
     return False
 
 
-def _paint_window(wine, hwnd_filter):
-    """The first visible window, in z order from the top, that has something to paint."""
+def _paint_window(wine, hwnd_filter, task=None):
+    """The first visible window of the task, in z order from the top, that has something to paint."""
     m = wm(wine)
+    task = wine.htask if task is None else task
 
     def walk(h):
         for child in m.children.get(h, []):
             w = m.get(child)
             if w is None or not w.style & WS_VISIBLE:
                 continue
-            if w.update is not None or w.ncpaint:
+            if (w.update is not None or w.ncpaint) and w.task == task:
                 if not hwnd_filter or child == hwnd_filter or is_child_of(m, child, hwnd_filter):
                     return child
             found = walk(child)
@@ -2206,33 +2297,42 @@ def _paint_window(wine, hwnd_filter):
     return walk(m.desktop)
 
 
-def next_message(wine, hwnd, first, last, remove):
+def next_message(wine, hwnd, first, last, remove, task=None, advance=True):
     """get_message's order: posted messages, the quit message, (no input), WM_PAINT, then
-    timers. With nothing else, the clock moves to the next timer. Returns the message as
-    (hwnd, msg, wp, lp) or None when the task would wait for input forever."""
+    timers. With advance, and nothing else, the clock moves to the task's next timer; without,
+    only a timer already due counts. Returns the message as (hwnd, msg, wp, lp) or None."""
     m = wm(wine)
-    for i, entry in enumerate(m.queue):
+    q = m.queue_of(wine.htask if task is None else task)
+    for i, entry in enumerate(q.queue):
         if _matches(m, entry, hwnd, first, last):
             if remove:
-                del m.queue[i]
+                del q.queue[i]
             return entry
-    if m.quit is not None and (not first and not last or first <= WM_QUIT <= last):
-        code = m.quit
+    if q.quit is not None and (not first and not last or first <= WM_QUIT <= last):
+        code = q.quit
         if remove:
-            m.quit = None
+            q.quit = None
         return (0, WM_QUIT, code, 0)
     if not first and not last or first <= WM_PAINT <= last:
-        h = _paint_window(wine, hwnd)
+        h = _paint_window(wine, hwnd, task)
         if h:
             return (h, WM_PAINT, 0, 0)
-    if m.timers and (not first and not last or first <= WM_TIMER <= last):
-        key, timer = min(m.timers.items(), key=lambda kv: kv[1][2])
+    if q.timers and (not first and not last or first <= WM_TIMER <= last):
+        key, timer = min(q.timers.items(), key=lambda kv: kv[1][2])
         if hwnd and key[0] != hwnd:
             return None
+        if not advance and timer[2] > m.clock:
+            return None
         m.clock = max(m.clock, timer[2])
-        timer[2] = m.clock + timer[0]
+        if remove:
+            timer[2] = m.clock + timer[0]
         return (key[0], WM_TIMER, key[1], timer[1])
     return None
+
+
+def message_waiting(wine, task):
+    """A message the task's GetMessage would return now, without moving the clock."""
+    return next_message(wine, 0, 0, 0, False, task=task, advance=False) is not None
 
 
 def write_msg(wine, ptr, msg):
@@ -2244,38 +2344,82 @@ def m_time(wine):
     return wm(wine).clock & 0xFFFFFFFF
 
 
+def _next_or_wait(wine, hwnd, first, last, remove):
+    """The task's next message, or the task to run while it waits: (msg, None) or (None, task).
+
+    A message already there comes first. Then another task that can run. When none can, the
+    clock moves to the first timer of any waiting task: this task's own, and it gets the
+    WM_TIMER, or another's, which runs. (None, None) when nothing will come.
+    """
+    msg = next_message(wine, hwnd, first, last, remove, advance=False)
+    if msg is not None:
+        return msg, None
+    if sum(t.alive for t in wine.tasks) > 1:
+        from .tasks import wait_for_message
+        nxt = wait_for_message(wine)
+        if nxt is None:
+            return None, None
+        if nxt is not wine.current:
+            return None, nxt
+    return next_message(wine, hwnd, first, last, remove), None
+
+
+NO_INPUT = ("the queue is empty, no window needs painting and no timer is set; "
+            "the task waits for input, and neww has none")
+
+
 @api("USER", "GetMessage")
 def get_message(wine, arg, ptr, hwnd, first, last):
-    """GetMessage16: the next message, FALSE for WM_QUIT. With no message, no timer and nothing
-    to paint the task would wait for input forever, and the run stops there."""
-    msg = next_message(wine, hwnd, first, last, True)
+    """GetMessage16: the next message, FALSE for WM_QUIT. With none, the task waits and another
+    task runs; it resumes at the call, and GetMessage looks again. When no task can run, the
+    clock moves to the first timer. With no message, no timer and nothing to paint in any task,
+    they would wait for input forever, and the run stops there."""
+    from .tasks import Switch
+    msg, nxt = _next_or_wait(wine, hwnd, first, last, True)
+    if nxt is not None:
+        wine.trace[-1] += f" (waits) -> {nxt.exe_name}"
+        wine.registers = {"switch": Switch("retry", nxt, wait="message")}
+        return 0, 0
     if msg is None:
-        return 0, 0, "GetMessage: the queue is empty, no window needs painting and no timer is set; the task waits for input, and neww has none"
+        return 0, 0, f"GetMessage: {NO_INPUT}"
     write_msg(wine, ptr, msg)
     wine.trace[-1] += f" {msg[0]:#x} {MESSAGE_NAMES.get(msg[1], hex(msg[1]))}"
     return 0 if msg[1] == WM_QUIT else 1
 
 
+PM_REMOVE, PM_NOYIELD = 0x1, 0x2
+
+
 @api("USER", "PeekMessage")
 def peek_message(wine, arg, ptr, hwnd, first, last, flags):
     """PeekMessage16: PM_REMOVE is 1. With no message the answer is FALSE and the clock moves
-    one millisecond, so a polling loop sees time pass."""
+    one millisecond, so a polling loop sees time pass. Without PM_NOYIELD, another task that
+    can run runs first, and this one gets its FALSE when it runs again."""
+    from .tasks import Switch
     m = wm(wine)
-    msg = next_message(wine, hwnd, first, last, bool(flags & 1))
+    msg, nxt = _next_or_wait(wine, hwnd, first, last, bool(flags & PM_REMOVE))
     if msg is None:
         m.clock += 1
+        if nxt is not None and not flags & PM_NOYIELD:
+            wine.trace[-1] += f" (yields) -> {nxt.exe_name}"
+            wine.registers = {"switch": Switch("answer", nxt, answer=(0, 0))}
         return 0
-    if msg[1] == WM_TIMER and not flags & 1:
-        pass
     write_msg(wine, ptr, msg)
     return 1
 
 
 @api("USER", "WaitMessage")
 def wait_message(wine, arg):
-    m = wm(wine)
-    if next_message(wine, 0, 0, 0, False) is None:
-        return 0, 0, "WaitMessage: nothing will arrive; the task waits for input, and neww has none"
+    """WaitMessage16: returns when the task has a message. Until then another task runs, or
+    the clock moves to the first timer. Void."""
+    from .tasks import Switch
+    msg, nxt = _next_or_wait(wine, 0, 0, 0, False)
+    if nxt is not None:
+        wine.trace[-1] += f" (waits) -> {nxt.exe_name}"
+        wine.registers = {"switch": Switch("retry", nxt, wait="message")}
+        return arg.regs("ax"), 0
+    if msg is None:
+        return 0, 0, f"WaitMessage: {NO_INPUT}"
     return arg.regs("ax"), 0
 
 
@@ -2331,15 +2475,18 @@ def set_timer(wine, arg, hwnd, ident, elapse, proc):
     m = wm(wine)
     if hwnd and m.get(hwnd) is None:
         return 0
+    timers = m.queue_of(m.task_of(hwnd) if hwnd else wine.htask).timers
     if not hwnd:
-        ident = 0x7FFF - len(m.timers)
-    m.timers[(hwnd, ident)] = [max(elapse, 10), proc, m.clock + max(elapse, 10)]
+        ident = 0x7FFF - len(timers)
+    timers[(hwnd, ident)] = [max(elapse, 10), proc, m.clock + max(elapse, 10)]
     return ident or 1
 
 
 @api("USER", "KillTimer")
 def kill_timer(wine, arg, hwnd, ident):
-    return 1 if wm(wine).timers.pop((hwnd, ident), None) is not None else 0
+    m = wm(wine)
+    timers = m.queue_of(m.task_of(hwnd) if hwnd else wine.htask).timers
+    return 1 if timers.pop((hwnd, ident), None) is not None else 0
 
 
 @api("USER", "InSendMessage")

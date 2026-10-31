@@ -21,6 +21,30 @@ def _bytes(text):
     return text.encode("cp1252", "replace")
 
 
+# ---------------------------------------------------------------- keyboard.drv16 keyboard.c
+
+def _code_page(wine, src, dst, from_cp, to_cp):
+    text = cstr(wine, src >> 16, src & 0xFFFF)
+    out = text.decode(from_cp, "replace").encode(to_cp, "replace")
+    wine.write(dst >> 16, dst & 0xFFFF, out + b"\x00")
+
+
+@handles("KEYBOARD", 5)
+def ansi_to_oem(wine, arg):
+    """keyboard.c AnsiToOem16(s, d): CharToOemA, then -1. The ANSI code page is 1252 and the
+    OEM one 437, Wine's defaults for an English locale. A character 437 lacks becomes '?',
+    where Windows' best-fit table may pick a look-alike."""
+    _code_page(wine, segptr(arg(2), arg(3)), segptr(arg(0), arg(1)), "cp1252", "cp437")
+    return 0xFFFF, 0, None
+
+
+@handles("KEYBOARD", 6)
+def oem_to_ansi(wine, arg):
+    """keyboard.c OemToAnsi16(s, d): OemToCharA, then -1. Code page 437 to 1252."""
+    _code_page(wine, segptr(arg(2), arg(3)), segptr(arg(0), arg(1)), "cp437", "cp1252")
+    return 0xFFFF, 0, None
+
+
 # ---------------------------------------------------------------- strings, user.c
 
 @handles("USER", 430)

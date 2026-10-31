@@ -54,6 +54,7 @@ def lstrcpy(wine, arg):
     dst = segptr(arg(2), arg(3))
     src = cstr(wine, arg(1), arg(0))
     wine.write(dst >> 16, dst & 0xFFFF, src + b"\x00")
+    wine.trace[-1] += f" {src[:60].decode('latin1')!r}"
     return dst & 0xFFFF, dst >> 16, None
 
 
@@ -63,7 +64,9 @@ def lstrcat(wine, arg):
     dst = segptr(arg(2), arg(3))
     sel, off = far(wine, dst)
     have = cstr(wine, sel, off)
-    wine.write(sel, off + len(have), cstr(wine, arg(1), arg(0)) + b"\x00")
+    more = cstr(wine, arg(1), arg(0))
+    wine.write(sel, off + len(have), more + b"\x00")
+    wine.trace[-1] += f" {(have + more)[:60].decode('latin1')!r}"
     return dst & 0xFFFF, dst >> 16, None
 
 
@@ -470,18 +473,6 @@ def get_exe_ptr(wine, arg):
     return wine._exe_ptr(arg(0)), 0, None
 
 
-@handles("KERNEL", 48)
-def get_module_usage(wine, arg):
-    """ne_module.c GetModuleUsage16: the module's count. Each module neww loaded is used once."""
-    return (1 if wine._exe_ptr(arg(0)) else 0), 0, None
-
-
-@handles("KERNEL", 320)
-def is_task(wine, arg):
-    """task.c IsTask16: TRUE for a TDB. neww's one task handle is the only one."""
-    return (1 if arg(0) and arg(0) == wine.htask else 0), 0, None
-
-
 @handles("KERNEL", 96)
 def free_library(wine, arg):
     """ne_module.c FreeLibrary16 -> NE_FreeModule. neww never unloads a module, so the count
@@ -501,12 +492,6 @@ def set_error_mode(wine, arg):
 def set_handle_count(wine, arg):
     """file.c SetHandleCount16 is SetHandleCount, which returns its argument."""
     return arg(0), 0, None
-
-
-@handles("KERNEL", 29)
-def yield_(wine, arg):
-    """task.c Yield16. One task, nothing to yield to. Void."""
-    return arg.regs("ax"), 0, None
 
 
 @handles("KERNEL", 115)

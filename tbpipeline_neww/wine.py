@@ -410,6 +410,17 @@ class Wine(KernelState):
         self.alloc_code = None
         self._kstate()
         self.htask = 0
+        # tasks.Task for each task the machine started, in creation order, and the running one.
+        # hFirstTask, the head of Wine's task list: TASK_LinkTask puts the newest task first.
+        self.tasks = []
+        self.current = None
+        self.first_task = 0
+        # Set by the machine: spawn(image, command line, nCmdShow) -> Task or a stop.
+        self.spawn = None
+        # Set by the machine: the sandbox's images by module name.
+        self.images = lambda: {}
+        # Module handle -> GetModuleUsage16's count, where it is not 1.
+        self.usage = {}
         # Registered window messages: lower-case name -> atom, from MAXINTATOM (0xC000) up.
         self.messages = {}
         # Original name -> atom, references per atom, and the next number to give.
@@ -555,9 +566,6 @@ class Wine(KernelState):
             return self._catch(arg)
         if ordinal == 56:
             return self._throw(arg)
-        if ordinal == 36:
-            # WIN16_GetCurrentTask: the current task in AX, hFirstTask in DX.
-            return self.htask, self.htask, None
         if ordinal == 47:
             # WIN16_GetModuleHandle(segstr name): the module in AX, hFirstModule in DX.
             if arg(1) == 0:
@@ -572,16 +580,6 @@ class Wine(KernelState):
             if self.environment is None:
                 return 0, 0, "KERNEL.131 GetDOSEnvironment with no environment block: the machine made none"
             return 0, self.environment, None
-        if ordinal == 30:
-            # Wine task.c WaitEvent16: hTask 0 is the current task. An event is taken and FALSE
-            # returned. With no event the task blocks, and one task cannot be woken.
-            task = arg(0)
-            if task != 0:
-                return 0, 0, f"KERNEL.30 WaitEvent hTask={task:#x}: neww has no task handle to match it"
-            if self.events > 0:
-                self.events -= 1
-                return 0, 0, None
-            return 0, 0, "KERNEL.30 WaitEvent would block: no event is posted and there is no other task"
         if ordinal == 15:
             return self._global_alloc(arg(2), arg(0) | (arg(1) << 16))
         if ordinal == 18:
@@ -633,8 +631,8 @@ class Wine(KernelState):
         ah = ax >> 8
         self.trace.append(f"INT21 AH={ah:#04x}")
         if ah == 0x4C:
-            self.exit = ax & 0xFF
-            return {}, f"dos exit {ax & 0xFF:#x}"
+            # EXIT: the machine ends the task (Machine._exit_task).
+            return {"exit_task": ax & 0xFF}, None
         if ah == 0x25:
             # SET INTERRUPT VECTOR: DOSVM_SetPMHandler16(AL, DS:DX) in Win16.
             n = ax & 0xFF
@@ -651,6 +649,18 @@ class Wine(KernelState):
             seg, off = self.pm_vectors.get(n, (self.int_stubs, 5 * n))
             self.trace[-1] += f" INT {n:#x} is {seg:#x}:{off:#x}"
             return {"es": seg, "bx": off}, None
+        if ah == 0x2F:
+            # GET DISK TRANSFER AREA ADDRESS: the task's TDB dta, which TASK_Create sets to PSP:80h.
+            seg, off = self.task.setdefault("dta", (self.task["psp"], 0x80))
+            self.trace[-1] += f" DTA {seg:#x}:{off:#x}"
+            return {"es": seg, "bx": off}, None
+        if ah == 0x1A:
+            # SET DISK TRANSFER AREA ADDRESS: DS:DX.
+            self.task["dta"] = (reg("ds"), reg("dx"))
+            self.trace[-1] += f" DTA {reg('ds'):#x}:{reg('dx'):#x}"
+            return {}, None
+        if ah in (0x4E, 0x4F):
+            return self._find_file(reg, first=ah == 0x4E)
         if ah == 0x30:
             # GET DOS VERSION: GetVersion16's DOS word, BH OEM 0xFF or flag 0x08, BL:CX Wine's serial.
             dos = self.contract("KERNEL", 3).value[1]
@@ -668,6 +678,109 @@ class Wine(KernelState):
             ms = int(now * 1000) % 1000
             return {"cx": t.tm_hour << 8 | t.tm_min, "dx": t.tm_sec << 8 | ms // 10}, None
         return {}, f"INT 21h AH={ah:#04x} (AX={ax:#06x}): this DOSVM_Int21Handler function is not in neww yet"
+
+    def _find_entries(self):
+        """The files a DOS search sees: neww's file system is base names, the --b directory,
+        the files created this run and the book, whatever directory the path names. A name
+        that is not 8.3 has no short name here, and the search skips it."""
+        self._kstate()
+        names = {}
+        for item in sorted(Path(self.root).iterdir()):
+            if item.is_file():
+                names[item.name.upper()] = item
+        if self.book is not None and Path(self.book).is_file():
+            names[Path(self.book).name.upper()] = Path(self.book)
+        for name, data in self.written.items():
+            names[name] = data
+        out = []
+        for name, what in names.items():
+            stem, _, ext = name.partition(".")
+            if not stem or len(stem) > 8 or len(ext) > 3 or "." in ext:
+                continue
+            if isinstance(what, Path):
+                st = what.stat()
+                out.append((name, st.st_size, st.st_mtime))
+            else:
+                out.append((name, len(what), time.time()))
+        return out
+
+    @staticmethod
+    def fcb_mask(name):
+        """INT21_ToDosFCBFormat: an 8.3 name as 11 characters, * filled with ?, upper case.
+        None when the name does not fit."""
+        stem, _, ext = name.upper().partition(".")
+        if "." in ext:
+            return None
+
+        def field(text, width):
+            out = ""
+            for ch in text:
+                if ch == "*":
+                    return (out + "?" * width)[:width]
+                out += ch
+            return out[:width].ljust(width) if len(out) <= width else None
+        a, b = field(stem, 8), field(ext, 3)
+        return None if a is None or b is None else a + b
+
+    def _find_file(self, reg, first):
+        """int21.c INT21_FindFirst and INT21_FindNext, into the task's DTA (FINDFILE_DTA).
+
+        FindFirst stores the search in the DTA and falls through to FindNext. A match fills
+        attribute, DOS time and date, size and name and AX is 0; no match is
+        ERROR_NO_MORE_FILES (18) with CF set, as Wine reports it for FindFirst too.
+        Directories, labels, hidden and system files are only found when asked for, and
+        neww has none.
+        """
+        dta_seg, dta_off = self.task.setdefault("dta", (self.task["psp"], 0x80))
+        if first:
+            spec = self.read(reg("ds"), reg("dx"), 128).split(b"\x00", 1)[0].decode("cp437", "replace")
+            path = self.full_path(spec)
+            mask = self.fcb_mask(path.rsplit("\\", 1)[-1])
+            self.trace[-1] += f" FINDFIRST {spec!r} attr {reg('cx'):#x}"
+            if mask is None:
+                return {"ax": 2, "eflags_cf": 1}, None
+            head = bytearray(0x15)
+            head[0] = ord(path[0]) - ord("A")
+            head[1:12] = mask.encode("latin1")
+            head[0x0C] = reg("cx") & 0xFF
+            self.write(dta_seg, dta_off, bytes(head))
+        raw = self.read(dta_seg, dta_off, 0x15)
+        mask = raw[1:12].decode("latin1")
+        count = struct.unpack_from("<H", raw, 0x0D)[0]
+        if not first:
+            self.trace[-1] += f" FINDNEXT {mask!r}"
+        entries = self._find_entries()
+        while count < len(entries):
+            name, size, mtime = entries[count]
+            count += 1
+            fcb = self.fcb_mask(name)
+            if fcb is None or any(m != "?" and m != c for m, c in zip(mask, fcb)):
+                continue
+            t = time.localtime(mtime)
+            dos_time = t.tm_hour << 11 | t.tm_min << 5 | t.tm_sec // 2
+            dos_date = (t.tm_year - 1980) << 9 | t.tm_mon << 5 | t.tm_mday
+            out = struct.pack("<BHHI", 0x20, dos_time, dos_date, size) + name.encode("latin1").ljust(13, b"\x00")
+            self.write(dta_seg, dta_off + 0x0D, struct.pack("<H", count))
+            self.write(dta_seg, dta_off + 0x15, out)
+            self.trace[-1] += f" -> {name}"
+            return {"ax": 0, "eflags_cf": 0}, None
+        self.write(dta_seg, dta_off + 0x0D, struct.pack("<H", count))
+        self.trace[-1] += " -> none"
+        return {"ax": 18, "eflags_cf": 1}, None
+
+    def int2f(self, reg):
+        """Wine int2f.c DOSVM_Int2fHandler for the functions a run has reached. AH=15h is
+        MSCDEX_Handler. neww has no CD-ROM drive, so is_cdrom is FALSE for every drive."""
+        ax = reg("ax")
+        self.trace.append(f"INT2F AX={ax:#06x}")
+        if ax == 0x1500:
+            # Installation check: BX the number of CD-ROM drives, CX the first (left, as none).
+            return {"bx": 0, "eflags_cf": 0}, None
+        if ax == 0x150B:
+            # Drive check of drive CX: AX is_cdrom, BX the MSCDEX signature.
+            self.trace[-1] += f" drive {reg('cx'):#x} is no CD-ROM"
+            return {"ax": 0, "bx": 0xADAD}, None
+        return {}, f"INT 2Fh AX={ax:#06x}: this DOSVM_Int2fHandler function is not in neww yet"
 
     def resolve(self, path):
         """The host file a guest path opens, or None.
@@ -697,9 +810,50 @@ class Wine(KernelState):
             self.files[handle] = [path, host, Path(host).read_bytes(), 0]
         return handle
 
+    @staticmethod
+    def full_path(name):
+        """GetFullPathNameA, with neww's current directory BIN_DIR on drive C: for a relative
+        name. "." and ".." are resolved, case is kept, / is \\."""
+        path = name.replace("/", "\\")
+        if len(path) >= 2 and path[1] == ":":
+            drive, rest = path[:2].upper(), path[2:]
+            if not rest.startswith("\\"):
+                rest = (BIN_DIR[2:] + "\\" if drive == BIN_DIR[:2] else "\\") + rest
+        elif path.startswith("\\"):
+            drive, rest = BIN_DIR[:2], path
+        else:
+            drive, rest = BIN_DIR[:2], BIN_DIR[2:] + "\\" + path
+        parts = []
+        for part in rest.split("\\"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if parts:
+                    parts.pop()
+                continue
+            parts.append(part)
+        trail = "\\" if rest.endswith("\\") and parts else ""
+        return drive + "\\" + "\\".join(parts) + trail
+
+    def _ofstruct(self, ofs_sel, ofs_off, path, error=0):
+        """OFSTRUCT: cBytes 136, fFixedDisk (C: is a fixed disk), nErrCode, szPathName, which
+        OpenFile16 fills with GetFullPathNameA of the name before anything else."""
+        ofs = bytearray(136)
+        ofs[0] = 136
+        ofs[1] = 1
+        struct.pack_into("<H", ofs, 2, error)
+        name = self.full_path(path).encode("latin1", "replace")[:127]
+        ofs[8:8 + len(name)] = name
+        self._put(ofs_sel, ofs_off, ofs)
+
     def _open_file(self, path, ofs_sel, ofs_off, mode):
-        """Wine file.c OpenFile16. Read, OF_EXIST, OF_CREATE; any other mode stops."""
-        OF_EXIST, OF_CREATE = 0x4000, 0x1000
+        """Wine file.c OpenFile16. Read, OF_PARSE, OF_EXIST, OF_CREATE; any other mode stops."""
+        OF_EXIST, OF_CREATE, OF_PARSE = 0x4000, 0x1000, 0x0100
+        if mode & OF_PARSE:
+            # "OF_PARSE simply fills the structure", and the answer is 0.
+            self._ofstruct(ofs_sel, ofs_off, path)
+            self.trace[-1] += f" OF_PARSE {self.full_path(path)!r}"
+            return 0, 0, None
         if mode & OF_CREATE:
             if mode & ~(OF_SHARE_MASK | 0x0003 | OF_CREATE):
                 return 0, 0, f"KERNEL.74 OpenFile {path!r} mode {mode:#06x}: neww has OF_CREATE only on its own"
@@ -931,6 +1085,19 @@ class Wine(KernelState):
             return 0, 0, None
         return found[1], found[0], None
 
+    def find_exe(self, name):
+        """SearchPathA(NULL, name, ".exe") over --b, the application's directory, which Wine
+        searches first. Returns (image, stop): the NE image of that file, or None."""
+        base = name.replace("/", "\\").rsplit("\\", 1)[-1].rsplit(":", 1)[-1]
+        if "." not in base:
+            base += ".exe"
+        for image in self.images().values():
+            if not image.synthetic and Path(image.path).name.upper() == base.upper():
+                if image.flags & 0x8000:
+                    return None, f"{Path(image.path).name} is a library, and LoadModule16 would answer its instance"
+                return image, None
+        return None, None
+
     def _exe_ptr(self, handle):
         """GetExePtr: the module handle of whatever module owns the handle's block, or 0."""
         sel = self.selector_of(handle)
@@ -999,7 +1166,8 @@ class Wine(KernelState):
             # Wine: "Multiple hooks (%d) for the same task not supported yet".
             return 0, 0, None
         # Wine returns user32's HHOOK. neww numbers its own from 0x00010001.
-        hook = 0x00010001 + len(self.hooks)
+        self.hook_count = getattr(self, "hook_count", 0) + 1
+        hook = 0x00010000 + self.hook_count
         self.hooks[index] = (hook, proc)
         return hook & 0xFFFF, hook >> 16, None
 
@@ -1078,10 +1246,10 @@ class Wine(KernelState):
                 p += 1
             bx = p
         self.registers = {
-            "bx": bx, "cx": task["stacktop"], "dx": SW_SHOWNORMAL, "si": 0, "di": task["instance"],
-            "es": psp, "push": 0,
+            "bx": bx, "cx": task["stacktop"], "dx": task.get("show", SW_SHOWNORMAL), "si": 0,
+            "di": task["instance"], "es": psp, "push": 0,
         }
-        return 1, SW_SHOWNORMAL, None
+        return 1, task.get("show", SW_SHOWNORMAL), None
 
     def _global_lock(self, handle, ds):
         """Wine global.c WIN16_GlobalLock16: the SEGPTR (selector, 0) in DX:AX, and the selector in CX.
@@ -1378,4 +1546,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16, gdi16, user_wnd, user_res  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, tasks  # noqa: E402,F401
