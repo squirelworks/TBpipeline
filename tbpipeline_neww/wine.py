@@ -12,6 +12,7 @@ from pathlib import Path
 WINE_COMMIT = "2528aff26208257fdbf980666a4f0e66d47563ce"
 KERNEL_SPEC = "dlls/krnl386.exe16/krnl386.exe16.spec"
 USER_SPEC = "dlls/user.exe16/user.exe16.spec"
+WIN87EM_SPEC = "dlls/win87em.dll16/win87em.dll16.spec"
 
 # Bytes on the 16-bit Pascal stack for each Wine argument type.
 SPEC_SIZES = {"word": 2, "s_word": 2, "long": 4, "ptr": 4, "str": 4, "segptr": 4, "segstr": 4}
@@ -118,6 +119,10 @@ USER = _table("USER", USER_SPEC, [
     "266 pascal -ret16 SetMessageQueue(word) SetMessageQueue16",
 ])
 
+WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
+    "1 pascal -register __fpMath()",
+])
+
 # Constants, not code. A fixup stores the value.
 EQUATES = {
     "KERNEL": {113: ("__AHSHIFT", 3), 114: ("__AHINCR", 8), 178: ("__WINFLAGS", 0x0C25)},
@@ -160,6 +165,9 @@ class Wine:
         self.registers = None
         # Set by the machine: selector -> size of its block in bytes, or None.
         self.size = None
+        # Wine win87em.c statics. Installed is TRUE: an x87 is present.
+        self.ctrl_word_1 = 0
+        self.status_word_2 = 0
 
     def contract(self, module, ordinal):
         module = module.upper()
@@ -167,6 +175,8 @@ class Wine:
             return KERNEL.get(ordinal)
         if module == "USER":
             return USER.get(ordinal)
+        if module == "WIN87EM":
+            return WIN87EM.get(ordinal)
         return None
 
     def usable(self, module, ordinal):
@@ -198,6 +208,8 @@ class Wine:
             return self._kernel(ordinal, arg)
         if module == "USER":
             return self._user(ordinal, arg)
+        if module == "WIN87EM" and ordinal == 1:
+            return self._fpmath(arg)
         return 0, 0, self.missing(module, ordinal)
 
     def _kernel(self, ordinal, arg):
@@ -353,6 +365,52 @@ class Wine:
             self.registers = {"init_dlls": task["dll_init"]}
             return 0, 0, None
         return self.init_task_answer(arg.word)
+
+    def _fpmath(self, arg):
+        """Wine win87em.c __fpMath, by the sub-function in BX.
+
+        Wine runs fninit, fldcw and fclex on the real x87. The guest's x87 is
+        Unicorn's, so those become FPCW, FPSW and FPTAG writes.
+        """
+        bx = arg.regs("bx")
+        ax = arg.regs("ax")
+        if bx in (0, 1, 2):
+            # WIN87_Init: fninit twice, AX = 0x1332, then WIN87_SetCtrlWord and WIN87_ClearCtrlWord.
+            self.ctrl_word_1 = 0x1332
+            internal = 0x1332 & ~0x00C3
+            self.status_word_2 = 0
+            # fninit: tag 0xFFFF, status 0. fldcw internal. fclex leaves status 0. AX ends 0.
+            self.registers = {"fpcw": internal, "fpsw": 0, "fptag": 0xFFFF}
+            return 0, 0, None
+        if bx == 3:
+            # Wine leaves the INT 3Eh handler alone.
+            self.registers = {}
+            return ax, 0, None
+        if bx == 4:
+            self.ctrl_word_1 = ax
+            internal = ax & ~0x00C3
+            self.registers = {"fpcw": internal}
+            return internal, 0, None
+        if bx == 5:
+            self.registers = {}
+            return self.ctrl_word_1, 0, None
+        if bx == 9:
+            self.status_word_2 = 0
+            self.registers = {"fpsw": 0}
+            return 0, 0, None
+        if bx == 10:
+            self.registers = {}
+            return 0, 0, None
+        if bx == 11:
+            self.registers = {"dx": 0}
+            return 1, 0, None
+        if bx == 12:
+            self.registers = {}
+            return ax, 0, None
+        return 0, 0, (
+            f"WIN87EM.1 __fpMath BX={bx}: Wine win87em.c reads or rounds on the host x87 here "
+            "(6 frndint, 7 fistp, 8 fstsw), or has no case. neww does not answer it"
+        )
 
     def init_task_answer(self, word):
         """The registers InitTask16 returns, once the DLLs are initialized."""
