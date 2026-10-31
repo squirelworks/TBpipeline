@@ -16,3 +16,4 @@ Needs `unicorn` (`pip install -r requirements.txt`). This is not `tbpipeline_bf`
 
 - When `TB80BAS` is in `--b`, startup prints one line: its exports stay in the DLL. The sandbox has no Python `CDB*`, `OBJ*`, `HEAP*`, `STACK*`, or `RESMGR*`. `tests/test_neww_bas_stays.py` holds both.
 - A gate with no contract stops on its `OUT`. Its stub has no `retf`, so nothing is popped, and the sandbox writes neither `AX` nor `DX`. `tests/test_neww_gate_no_pop.py` sets `AX`, calls an unknown ordinal, and checks `SP` holds only the far return.
+- A contract is a `Contract` row in `wine.py`: module, ordinal, name, argument sizes in bytes, return. The gate's `retf` pops `sum(args)`, and nothing else sets the pop. `tests/test_neww_contract_row.py`.
