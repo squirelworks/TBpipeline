@@ -105,6 +105,7 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "24  pascal -ret16 UnlockSegment(word) UnlockSegment16",
     "30  pascal -ret16 WaitEvent(word) WaitEvent16",
     "36  pascal   GetCurrentTask() WIN16_GetCurrentTask",
+    "55  pascal -register Catch(ptr) Catch16",
     "47  pascal   GetModuleHandle(segstr) WIN16_GetModuleHandle",
     "49  pascal -ret16 GetModuleFileName(word ptr s_word) GetModuleFileName16",
     "50  pascal GetProcAddress(word str) GetProcAddress16",
@@ -382,6 +383,8 @@ class Wine:
             if sel is not None:
                 self.locks[sel] = self.locks.get(sel, 0) - 1
             return arg.regs("ax"), 0, None
+        if ordinal == 55:
+            return self._catch(arg)
         if ordinal == 36:
             # WIN16_GetCurrentTask: the current task in AX, hFirstTask in DX.
             return self.htask, self.htask, None
@@ -736,6 +739,26 @@ class Wine:
                 self.locks[sel] = self.locks.get(sel, 0) + 1
         self.registers = {"cx": sel}
         return 0, sel, None
+
+    def _catch(self, arg):
+        """Wine thunk.c Catch16: the caller's registers into the 9-word CATCHBUF, and AX 0.
+
+        winebuild's __wine_call_from_16_regs gives a register function the caller's CS:IP and,
+        in Esp, the SP at the far return address: the stub's retf pops the arguments after.
+        Windows saves SP 4 words lower. Word 7 is 0.
+        """
+        off, sel = arg(0), arg(1)
+        size = self.size(sel)
+        if size is None or off + 18 > size:
+            return 0, 0, f"KERNEL.55 Catch({sel:#x}:{off:#x}): the CATCHBUF is not in a block neww has"
+        esp = arg.regs("sp")
+        ip, cs = arg.word(arg.regs("ss"), esp), arg.word(arg.regs("ss"), esp + 2)
+        words = (
+            ip, cs, (esp - 8) & 0xFFFF, arg.regs("bp"), arg.regs("si"), arg.regs("di"),
+            arg.regs("ds"), 0, arg.regs("ss"),
+        )
+        self.write(sel, off, struct.pack("<9H", *words))
+        return 0, 0, None
 
     def _global_size(self, handle):
         """Wine global.c GlobalSize16: the arena's size, 0 for handle 0 or an invalid handle.
