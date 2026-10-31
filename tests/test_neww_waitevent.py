@@ -36,11 +36,11 @@ class WaitEventContract(unittest.TestCase):
 
     def test_second_wait_would_block(self):
         host = run_calls([0, 0])
-        self.assertEqual(host.stop, "KERNEL.30 WaitEvent would block: no event is posted and there is no other task")
+        self.assertEqual(host.stop, "KERNEL.30 WaitEvent would block: no event is posted and no other task can run to post one")
 
     def test_named_task_stops(self):
         host = run_calls([0x1234])
-        self.assertEqual(host.stop, "KERNEL.30 WaitEvent hTask=0x1234: neww has no task handle to match it")
+        self.assertEqual(host.stop, "KERNEL.30 WaitEvent hTask=0x1234: no task has that handle, and Wine reads its TDB")
         self.assertEqual(host.box.wine.events, 1)
 
 

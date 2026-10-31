@@ -3,8 +3,8 @@
 Wine task.c GetDOSEnvironment16 copies the host's environment strings,
 then a 0, WORD 1, and "C:\\WINDOWS\\SYSTEM\\KRNL386.EXE", into a fixed
 block, and returns it as a SEGPTR. TASK_Create puts its selector in the
-PSP at 0x2C. neww copies no host environment, so the list is empty: the
-block starts with the 0 that ends it. No binary needed.
+PSP at 0x2C. neww copies nothing from the host: the strings are TEMP and TMP,
+which every Wine prefix sets, then the 0 that ends them. No binary needed.
 """
 
 import tempfile
@@ -39,8 +39,9 @@ class DosEnvironment(unittest.TestCase):
         self.assertEqual(offset, 0)
         self.assertNotEqual(sel, 0)
         self.assertEqual(host.word(es, 0x2C), sel)
-        block = bytes(host.word(sel, i) & 0xFF for i in range(33))
-        self.assertEqual(block, b"\x00\x01\x00C:\\WINDOWS\\SYSTEM\\KRNL386.EXE\x00")
+        strings = b"TEMP=C:\\WINDOWS\\TEMP\x00TMP=C:\\WINDOWS\\TEMP\x00"
+        block = bytes(host.word(sel, i) & 0xFF for i in range(len(strings) + 33))
+        self.assertEqual(block, strings + b"\x00\x01\x00C:\\WINDOWS\\SYSTEM\\KRNL386.EXE\x00")
 
 
 if __name__ == "__main__":
