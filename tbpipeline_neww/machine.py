@@ -6,7 +6,7 @@ from pathlib import Path
 
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_READ, UC_HOOK_MEM_UNMAPPED, UC_HOOK_INTR
 from unicorn.x86_const import (
-    UC_X86_INS_OUT, UC_X86_REG_EFLAGS,
+    UC_X86_INS_OUT, UC_X86_REG_EFLAGS, UC_X86_REG_EAX, UC_X86_REG_EDX, UC_X86_REG_ESP,
     UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CS, UC_X86_REG_CX, UC_X86_REG_DI, UC_X86_REG_DS,
     UC_X86_REG_BP, UC_X86_REG_DX, UC_X86_REG_ES, UC_X86_REG_FPCW, UC_X86_REG_FPSW, UC_X86_REG_FPTAG, UC_X86_REG_IP, UC_X86_REG_LDTR, UC_X86_REG_SI, UC_X86_REG_SP, UC_X86_REG_SS,
 )
@@ -23,6 +23,7 @@ from .image import Sandbox
 from .wine import SYSTEM, moveable_handle
 from .ne import Segment
 from . import tasks
+from . import win32
 
 
 # The GDT is at linear 0. Its copy, the LDT, is the next 64K.
@@ -36,6 +37,10 @@ INT_TAIL = INT_TAIL_SEL << 4
 # the words at SWITCH_DATA.
 SWITCH_TAIL = 0x20
 SWITCH_DATA = 0x40
+# In the same block, where a call into 32-bit code goes from a gate's retf: it loads SS, ESP,
+# DS, ES, FS and CS:EIP from ENTRY32_DATA. See win32.py.
+ENTRY32_TAIL = 0x60
+ENTRY32_DATA = 0x80
 # The registers a task switch saves and loads directly. The segment registers go through the tail.
 TASK_REGISTERS = ("ax", "bx", "cx", "dx", "si", "di", "bp", "fpcw")
 
@@ -57,7 +62,8 @@ ENV_STRINGS = (b"TEMP=C:\\WINDOWS\\TEMP", b"TMP=C:\\WINDOWS\\TEMP")
 ENV_PROGRAM_NAME = b"C:\\WINDOWS\\SYSTEM\\KRNL386.EXE\x00"
 
 
-def _descriptor(base, limit, access):
+def _descriptor(base, limit, access, flags=0):
+    """flags is the high nibble of byte 6: 0x80 granularity, 0x40 a 32-bit segment."""
     raw = bytearray(8)
     raw[0] = limit & 0xFF
     raw[1] = (limit >> 8) & 0xFF
@@ -65,7 +71,7 @@ def _descriptor(base, limit, access):
     raw[3] = (base >> 8) & 0xFF
     raw[4] = (base >> 16) & 0xFF
     raw[5] = access & 0xFF
-    raw[6] = (limit >> 16) & 0x0F
+    raw[6] = ((limit >> 16) & 0x0F) | (flags & 0xF0)
     raw[7] = (base >> 24) & 0xFF
     return bytes(raw)
 
@@ -184,6 +190,20 @@ class Machine:
             0x2E, 0x8E, 0x06, 0x46, 0x00,   # mov es, cs:[46h]
             0x2E, 0xFF, 0x2E, 0x48, 0x00,   # jmp far cs:[48h]
         ]))
+        d = ENTRY32_DATA
+        self.uc.mem_write(INT_TAIL + ENTRY32_TAIL, bytes([
+            0x2E, 0x8E, 0x16, d, 0x00,              # mov ss, cs:[80h]
+            0x66, 0x2E, 0x8B, 0x26, d + 2, 0x00,    # mov esp, cs:[82h]
+            0x2E, 0x8E, 0x1E, d + 6, 0x00,          # mov ds, cs:[86h]
+            0x2E, 0x8E, 0x06, d + 6, 0x00,          # mov es, cs:[86h]
+            0x2E, 0x8E, 0x26, d + 8, 0x00,          # mov fs, cs:[88h]
+            0x66, 0x2E, 0xFF, 0x2E, d + 10, 0x00,   # jmp far dword cs:[8Ah]
+        ]))
+        self.flat32 = None
+        self.call32 = None
+        self.moved = False
+        self.box.wine.map_linear = self._map_linear
+        self.box.wine.setup32 = self._setup32
         code = exe.segments[exe.entry_seg - 1]
         data = exe.segments[exe.auto - 1]
         psp = self._psp(self.box.wine.book.name if self.box.wine.book else "")
@@ -615,6 +635,10 @@ class Machine:
             self._write_descriptor(sel & ~7, _descriptor(seg.base, size - 1, 0x92))
             return None
         data = self._read(seg, 0, min(len(seg.data), size))
+        # A segment register holding this selector keeps the old base until it is loaded
+        # again. Wine's 16-bit relay loads DS and ES from its frame on the way back; the gate
+        # does too, through the INT tail (_out).
+        self.moved = True
         span = (size + 0xFFF) & ~0xFFF
         base = self.box.linear
         self.box.linear += span
@@ -1026,6 +1050,12 @@ class Machine:
         if port == 0xE8:
             self._guest_result(uc)
             return
+        if port == 0xEC:
+            self._return32(uc)
+            return
+        if port == 0xED:
+            self._import32(uc)
+            return
         if port == 0xEB:
             n = (uc.reg_read(UC_X86_REG_IP) - 2) // 5
             self.stop = (f"INT {n:#x}: the guest called the default vector DOSVM_GetPMHandler16 gave it, "
@@ -1068,6 +1098,14 @@ class Machine:
         registers = dict(self.box.wine.registers or {})
         if "exit_task" in registers:
             self._exit_task(uc, registers["exit_task"], retf=True)
+            return
+        if "call32" in registers:
+            row = self.box.wine.usable(module, ordinal)
+            if self.box.slots.get((module, ordinal)) is not None:
+                self.stop = f"{module}.{ordinal}: a register contract cannot call 32-bit code"
+                uc.emu_stop()
+                return
+            self._start32(uc, registers["call32"], row.pop)
             return
         if "switch" in registers:
             if self.box.slots.get((module, ordinal)) is not None:
@@ -1128,6 +1166,149 @@ class Machine:
             ret = self._read(self.box.selectors[ss], sp, 4)
             self._write_guest(ss, sp - 2, ret + struct.pack("<H", registers["push"]))
             uc.reg_write(UC_X86_REG_SP, sp - 2)
+        if self.moved and slot is None:
+            # A block moved: the stub's retf goes to the INT tail, which loads ES and DS again
+            # and jumps to the caller, as Wine's relay pops them from its frame.
+            self.moved = False
+            ss, sp = uc.reg_read(UC_X86_REG_SS), uc.reg_read(UC_X86_REG_SP)
+            ip, cs = struct.unpack("<HH", self._read(self.box.selectors[ss], sp, 4))
+            uc.mem_write(INT_TAIL + 0x10, struct.pack(
+                "<HHHH", uc.reg_read(UC_X86_REG_ES), uc.reg_read(UC_X86_REG_DS), ip, cs))
+            self._write_guest(ss, sp, struct.pack("<HH", 0, INT_TAIL_SEL))
+        if self.calls > self.call_limit:
+            self.stop = "call limit"
+            uc.emu_stop()
+
+    # ------------------------------------------------------------ 32-bit code
+
+    def _map_linear(self, base, size):
+        """Map [base, base + size) rounded out to pages. Pages already mapped stay as they are."""
+        start = base & ~0xFFF
+        end = (base + size + 0xFFF) & ~0xFFF
+        mapped = [(b, e) for b, e, _p in self.uc.mem_regions()]
+        page = start
+        while page < end:
+            if any(b <= page <= e for b, e in mapped):
+                page += 0x1000
+                continue
+            run = page
+            while run < end and not any(b <= run <= e for b, e in mapped):
+                run += 0x1000
+            self.uc.mem_map(page, run - page)
+            page = run
+
+    def _setup32(self):
+        """The flat 32-bit code and data selectors, the thread's stack and TEB, and the stub
+        page (win32.py). Made when the first Win32 module loads."""
+        if self.flat32 is not None:
+            return self.flat32
+        code = self._selector_flags(0, 0xFFFFF, 0x9A, 0xC0)
+        data = self._selector_flags(0, 0xFFFFF, 0x92, 0xC0)
+        self._map_linear(win32.STACK32_TOP - win32.STACK32_SIZE, win32.STACK32_SIZE)
+        self._map_linear(win32.TEB_BASE, 0x2000)
+        teb = self._selector_flags(win32.TEB_BASE, 0xFFF, 0x92, 0x40)
+        self._map_linear(win32.STUB_BASE, win32.STUB_SIZE)
+        # The return stub: OUT 0ECh, then jmp far dword [STUB_BASE + 8], which the hook points
+        # at the next 32-bit call or at the 16-bit switch tail.
+        self.uc.mem_write(win32.STUB_BASE, bytes([0xE6, 0xEC, 0xFF, 0x2D]) + struct.pack("<I", win32.STUB_BASE + 8))
+        self.flat32 = {"code": code, "data": data, "teb": teb}
+        return self.flat32
+
+    def _selector_flags(self, base, limit, access, flags):
+        sel = self.box._selector()
+        self._write_descriptor(sel, _descriptor(base, limit, access, flags))
+        return sel
+
+    def _push32_call(self, uc, proc, args, from16):
+        """Lay out a stdcall call to proc with args on the 32-bit stack, returning to the
+        return stub, and point the CPU's next far jump at it."""
+        esp = win32.STACK32_TOP - 4 * len(args) - 4
+        uc.mem_write(esp, struct.pack("<I", win32.STUB_BASE) + b"".join(struct.pack("<I", a & 0xFFFFFFFF) for a in args))
+        flat = self.flat32
+        if from16:
+            uc.mem_write(INT_TAIL + ENTRY32_DATA, struct.pack(
+                "<HIHHIH", flat["data"], esp, flat["data"], flat["teb"], proc, flat["code"]))
+        else:
+            uc.mem_write(win32.STUB_BASE + 8, struct.pack("<IH", proc, flat["code"]))
+            uc.reg_write(UC_X86_REG_ESP, esp)
+
+    def _start32(self, uc, request, pop):
+        """A gate's handler asked for 32-bit calls (win32.Call32). The gate's retf goes to the
+        entry tail, which loads the flat selectors and jumps to the first call."""
+        if self.call32 is not None:
+            self.stop = f"a 32-bit call from 16-bit code that 32-bit code called {self.where()}: neww does not nest them"
+            uc.emu_stop()
+            return
+        ss, sp = uc.reg_read(UC_X86_REG_SS), uc.reg_read(UC_X86_REG_SP)
+        state = {
+            "request": request, "ss": ss, "after_sp": sp + 4 + pop + request.pop,
+            "ret": self._read(self.box.selectors[ss], sp, 4),
+            "ds": uc.reg_read(UC_X86_REG_DS), "es": uc.reg_read(UC_X86_REG_ES),
+            "bp": uc.reg_read(UC_X86_REG_BP), "si": uc.reg_read(UC_X86_REG_SI), "di": uc.reg_read(UC_X86_REG_DI),
+        }
+        step = request.step(None)
+        if step[0] == "done":
+            # No 32-bit code ran: the gate returns with the answer, past request.pop more bytes.
+            ax, dx, why = step[1]
+            if why:
+                self.stop = why
+                uc.emu_stop()
+                return
+            uc.reg_write(UC_X86_REG_AX, ax & 0xFFFF)
+            uc.reg_write(UC_X86_REG_DX, dx & 0xFFFF)
+            new_sp = state["after_sp"] - 4 - pop
+            self._write_guest(ss, new_sp, state["ret"])
+            uc.reg_write(UC_X86_REG_SP, new_sp)
+            return
+        self.call32 = state
+        self._setup32()
+        self._push32_call(uc, step[1], step[2], from16=True)
+        self._write_guest(ss, sp, struct.pack("<HH", ENTRY32_TAIL, INT_TAIL_SEL))
+
+    def _return32(self, uc):
+        """OUT 0ECh in the return stub: a 32-bit call returned EAX. Make the next, or go back
+        to the 16-bit caller through the switch tail with the answer in DX:AX."""
+        state = self.call32
+        if state is None:
+            self.stop = f"out 0xec with no 32-bit call pending {self.where()}"
+            uc.emu_stop()
+            return
+        step = state["request"].step(uc.reg_read(UC_X86_REG_EAX))
+        if step[0] == "call":
+            self._push32_call(uc, step[1], step[2], from16=False)
+            return
+        ax, dx, why = step[1]
+        if why:
+            self.stop = why
+            uc.emu_stop()
+            return
+        self.call32 = None
+        uc.reg_write(UC_X86_REG_EAX, ax & 0xFFFF)
+        uc.reg_write(UC_X86_REG_EDX, dx & 0xFFFF)
+        for name in ("bp", "si", "di"):
+            uc.reg_write(REGISTERS[name], state[name])
+        ip, cs = struct.unpack("<HH", state["ret"])
+        uc.mem_write(INT_TAIL + SWITCH_DATA, struct.pack(
+            "<HHHHHH", state["ss"], state["after_sp"], state["ds"], state["es"], ip, cs))
+        uc.mem_write(win32.STUB_BASE + 8, struct.pack("<IH", SWITCH_TAIL, INT_TAIL_SEL))
+        uc.reg_write(UC_X86_REG_ESP, 0)
+
+    def _import32(self, uc):
+        """OUT 0EDh in an import stub: EDX is the stub's number. The arguments are above the
+        return address. The answer goes in EAX (EDX:EAX for a 64-bit one), and the stub's
+        ret pops what the spec says."""
+        self.calls += 1
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        wine = self.box.wine
+        out = win32.call_stub(wine, uc.reg_read(UC_X86_REG_EDX), esp,
+                              lambda addr, n: bytes(uc.mem_read(addr, n)))
+        if isinstance(out, str):
+            self.stop = out
+            uc.emu_stop()
+            return
+        uc.reg_write(UC_X86_REG_EAX, out & 0xFFFFFFFF)
+        if out >> 32:
+            uc.reg_write(UC_X86_REG_EDX, (out >> 32) & 0xFFFFFFFF)
         if self.calls > self.call_limit:
             self.stop = "call limit"
             uc.emu_stop()

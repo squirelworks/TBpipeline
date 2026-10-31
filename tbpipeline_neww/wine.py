@@ -146,6 +146,10 @@ KERNEL = _table("KERNEL", KERNEL_SPEC, [
     "131 pascal GetDOSEnvironment() GetDOSEnvironment16",
     "95  pascal -ret16 LoadLibrary(str) LoadLibrary16",
     "102 pascal -register DOS3Call() DOS3Call",
+    # thunk.c CallProc32W16 pops its own arguments (stack16_pop), so its stub pops nothing and
+    # the 32-bit call's return moves SP past them (win32.py). The lines are the file's, comment too.
+    "517 varargs CallProc32W(long long long) CallProc32W16           # Both NT/95",
+    "518 varargs _CallProcEx32W(long long long) CallProcEx32W16      # Both NT/95",
     # The enhanced-mode word, the same as the __WINFLAGS equate below. DX 0, as in newl.
     ("132 pascal GetWinFlags() GetWinFlags16", (0x0C25, 0)),
 ])
@@ -661,6 +665,10 @@ class Wine(KernelState):
             return {}, None
         if ah in (0x4E, 0x4F):
             return self._find_file(reg, first=ah == 0x4E)
+        if ax == 0x4300:
+            return self._file_attributes(reg)
+        if ah in (0x3E, 0x3F, 0x40, 0x42):
+            return self._dos_file(ah, reg)
         if ah == 0x30:
             # GET DOS VERSION: GetVersion16's DOS word, BH OEM 0xFF or flag 0x08, BL:CX Wine's serial.
             dos = self.contract("KERNEL", 3).value[1]
@@ -678,6 +686,76 @@ class Wine(KernelState):
             ms = int(now * 1000) % 1000
             return {"cx": t.tm_hour << 8 | t.tm_min, "dx": t.tm_sec << 8 | ms // 10}, None
         return {}, f"INT 21h AH={ah:#04x} (AX={ax:#06x}): this DOSVM_Int21Handler function is not in neww yet"
+
+    def _dos_file(self, ah, reg):
+        """int21.c on a DOS file handle, the handle _lopen16 and OpenFile16 give.
+
+        3Eh CLOSE is _lclose16. 3Fh READ is ReadFile of CX bytes to DS:DX, cut to the selector's
+        limit, AX the count. 40h WRITE is _hwrite16's, CX 0 truncating. 42h LSEEK is
+        SetFilePointer(CX:DX, AL), DX:AX the new position. A handle that is not open sets CF and
+        ERROR_INVALID_HANDLE (6)."""
+        handle = reg("bx")
+        entry = self.files.get(handle)
+        self.trace[-1] += f" handle {handle}"
+        if entry is None:
+            return {"ax": 6, "eflags_cf": 1}, None
+        if ah == 0x3E:
+            self.files.pop(handle)
+            return {"eflags_cf": 0}, None
+        if ah == 0x3F:
+            ds, dx, count = reg("ds"), reg("dx"), reg("cx")
+            size = self.size(ds)
+            if size is not None:
+                count = max(0, min(count, size - dx))
+            chunk = bytes(entry[2][entry[3]:entry[3] + count])
+            entry[3] += len(chunk)
+            self._put(ds, dx, chunk)
+            self.trace[-1] += f" READ {count:#x} -> {len(chunk):#x}"
+            return {"ax": len(chunk), "eflags_cf": 0}, None
+        if ah == 0x40:
+            ax, _dx, why = self.write_file(handle, reg("ds"), reg("dx"), reg("cx"))
+            if why:
+                return {}, why
+            self.trace[-1] += f" WRITE {reg('cx'):#x}"
+            return {"ax": ax, "eflags_cf": 0}, None
+        origin = reg("ax") & 0xFF
+        if origin > 2:
+            # SetFilePointer: ERROR_INVALID_PARAMETER.
+            return {"ax": 87, "eflags_cf": 1}, None
+        offset = reg("cx") << 16 | reg("dx")
+        if offset & 0x80000000:
+            offset -= 1 << 32
+        start = (0, entry[3], len(entry[2]))[origin]
+        if start + offset < 0:
+            # ERROR_NEGATIVE_SEEK.
+            return {"ax": 131, "eflags_cf": 1}, None
+        entry[3] = start + offset
+        self.trace[-1] += f" LSEEK -> {entry[3]:#x}"
+        return {"ax": entry[3] & 0xFFFF, "dx": entry[3] >> 16, "eflags_cf": 0}, None
+
+    def _file_attributes(self, reg):
+        """int21.c INT21_FileAttributes, GET FILE ATTRIBUTES: GetFileAttributesW of the OEM name
+        at DS:DX into CX and AX. A name ending in a slash, or one that is not there, sets CF and
+        the DOS error, GetLastError: ERROR_FILE_NOT_FOUND (2), or ERROR_PATH_NOT_FOUND (3) when
+        its directory is not there either. A file is FILE_ATTRIBUTE_ARCHIVE (0x20), as neww's
+        DOS search shows it; one of neww's directories is FILE_ATTRIBUTE_DIRECTORY (0x10)."""
+        from .kernel32 import directory_exists
+        spec = self.read(reg("ds"), reg("dx"), 128).split(b"\x00", 1)[0].decode("cp437", "replace")
+        self.trace[-1] += f" GET FILE ATTRIBUTES {spec!r}"
+        if not spec or spec.endswith(("\\", "/")):
+            return {"ax": 2, "eflags_cf": 1}, None
+        path = self.full_path(spec)
+        if directory_exists(self, path):
+            attr = 0x10
+        elif self.file_exists(path) or self.resolve(path) is not None:
+            attr = 0x20
+        else:
+            folder = path.rsplit("\\", 1)[0]
+            code = 2 if directory_exists(self, folder or "C:\\") else 3
+            self.trace[-1] += f" -> error {code}"
+            return {"ax": code, "eflags_cf": 1}, None
+        self.trace[-1] += f" -> {attr:#x}"
+        return {"ax": attr, "cx": attr, "eflags_cf": 0}, None
 
     def _find_entries(self):
         """The files a DOS search sees: neww's file system is base names, the --b directory,
@@ -864,8 +942,35 @@ class Wine(KernelState):
             ofs[8:8 + len(name)] = name
             self._put(ofs_sel, ofs_off, ofs)
             return handle, 0, None
-        if mode & ~(OF_SHARE_MASK | 0x0003 | OF_EXIST) or mode & 0x0003:
-            return 0, 0, f"KERNEL.74 OpenFile {path!r} mode {mode:#06x}: neww opens files to read and nothing else"
+        OF_REOPEN = 0x8000
+        if mode & OF_REOPEN:
+            # The name is the OFSTRUCT's szPathName, from the call that filled it.
+            path = bytes(self.read(ofs_sel, ofs_off + 8, 128)).split(b"\x00", 1)[0].decode("latin1")
+            self.trace[-1] += f" OF_REOPEN {path!r}"
+        OF_DELETE = 0x0200
+        if mode & OF_DELETE:
+            # OpenFile16: the full path into the OFSTRUCT, then DeleteFileA, and the answer 1. A
+            # file this run created goes; neww deletes nothing on the host.
+            name_only = path.replace("/", "\\").rsplit("\\", 1)[-1].upper()
+            self._kstate()
+            if name_only in self.written:
+                del self.written[name_only]
+                self.profiles.pop(name_only, None)
+                self._ofstruct(ofs_sel, ofs_off, path)
+                self.trace[-1] += f" OF_DELETE {path!r}"
+                return 1, 0, None
+            if self.resolve(path) is not None:
+                return 0, 0, f"KERNEL.74 OpenFile {path!r} OF_DELETE: a file in --b or the book, and neww deletes nothing on the host"
+            ofs = bytearray(136)
+            ofs[0] = 136
+            struct.pack_into("<H", ofs, 2, 2)
+            self._put(ofs_sel, ofs_off, ofs)
+            return HFILE_ERROR, 0, None
+        if mode & ~(OF_SHARE_MASK | 0x0003 | OF_EXIST | OF_REOPEN) or (mode & 0x0003) == 0x0003:
+            return 0, 0, f"KERNEL.74 OpenFile {path!r} mode {mode:#06x}: neww has no {mode:#06x} yet"
+        # OF_WRITE and OF_READWRITE open the file as OF_READ does. A file this run created takes
+        # writes, in memory. A write to a file from --b or to the book stops (write_file): neww
+        # never writes the host.
         name_only = path.replace("/", "\\").rsplit("\\", 1)[-1]
         if not name_only:
             # A directory: GetFullPathName gives it, and _lopen of a directory fails, ERROR_ACCESS_DENIED.
@@ -910,6 +1015,7 @@ class Wine(KernelState):
         if entry is None:
             return HFILE_ERROR, 0, None
         chunk = entry[2][entry[3]:entry[3] + count]
+        self.trace[-1] += f" handle {handle} {count:#x} at {entry[3]:#x} -> {len(chunk):#x}"
         entry[3] += len(chunk)
         self._put(sel, off, chunk)
         return len(chunk), 0, None
@@ -1546,4 +1652,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, tasks  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, tasks, win32, kernel32  # noqa: E402,F401
