@@ -20,7 +20,7 @@ That split is deliberate. The book format is knowable without executing the runt
 
 `runtime/engine.py` is the verb list `render.html` calls: `go`, `next`, `back`, `buttonClick`. Navigation is the quoted id. There is no OpenScript interpreter in this tree. The compiled handlers are still bytes in the book.
 
-`runtime/debug/shapes.py` draws curves it can already decode. P430 is the one with a known layout: marker `14 00 00`, fill at `+4`, count at `+0x1a`, twip pairs at `+0x22`, and the screen coordinate is twips divided by 15. Each curve is its own file under `render/`. They are not placed on the page. The record-to-bounds step was never found, so a widget is known to exist and not known to sit anywhere.
+`runtime/debug/shapes.py` draws curves it can already decode. P430 is the one with a known layout: marker `14 00 00`, fill at `+4`, count at `+0x1a`, twip pairs at `+0x22`, and the screen coordinate is twips divided by 15. Each curve is its own file under `render/`. A kind-04 polygon is also placed in `render.html`, at its own twips divided by 15, measured from the page's top-left corner. The curve runs found by length, like P420's flame, are only files. The record-to-bounds step was never found, so a widget is known to exist and not known to sit anywhere.
 
 `runtime/debug/resources.py` copies BMPs that are already Windows bitmaps. ToolBook's own compressed pictures stay in the book. `TB80BMP` ordinal 3 is the decoder, and it is not called from the reader. See the probe below.
 
