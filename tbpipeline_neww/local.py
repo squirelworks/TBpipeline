@@ -184,6 +184,15 @@ class LocalHeap:
                 entry += 4
             table = self.w(entry)
 
+    def grow_arena_upward(self, arena, newsize):
+        """LOCAL_GrowArenaUpward: take in the free arena after the block, then give back the rest."""
+        info = self.info()
+        if info is None:
+            return
+        self.remove_block(self.w(arena + NEXT))
+        self.put(info + INFO_ITEMS, self.w(info + INFO_ITEMS) - 1)
+        self.shrink_arena(arena, newsize)
+
     def grow_arena_downward(self, arena, newsize):
         """LOCAL_GrowArenaDownward: slide the block into the free arena before it."""
         info = self.info()
