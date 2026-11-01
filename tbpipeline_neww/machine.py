@@ -479,6 +479,9 @@ class Machine:
         """Run one call in a waiting task, on its stack below where it waits, from a trampoline.
         Its OUT 0E8h hands the result to done(ax, dx), puts the task back where it waited, and
         runs the task done returns (_sent_result)."""
+        ident = self._guest_ident(uc)
+        if ident is None:
+            return
         wine = self.box.wine
         self._to_tail(uc)
         saved, wait = task.context, task.wait
@@ -486,8 +489,7 @@ class Machine:
         task.context = None
         task.wait = None
         self.hook_serial += 1
-        ident = len(self.guest)
-        self.guest.append({"sent": (task, saved, wait, done), "done": False})
+        self.guest[ident] = {"sent": (task, saved, wait, done), "done": False}
         sel = self._trampoline_for(call, ident)
         for name in ("bp", "si", "di"):
             uc.reg_write(REGISTERS[name], saved[name])
@@ -943,7 +945,11 @@ class Machine:
     REG_MOV = {"ax": 0xB8, "cx": 0xB9, "dx": 0xBA, "bx": 0xBB, "si": 0xBE, "di": 0xBF}
 
     def _call_code(self, call, ident):
-        """One call of a trampoline, ending in mov cx, ident ; out 0E8h."""
+        """One call of a trampoline, ending in mov cx, ident ; out 0E8h.
+
+        ident is a word. A finished entry in self.guest is reused, so this stays
+        inside a byte pair for a run of any length.
+        """
         code = bytearray()
         for seg_reg, op in (("ds", 0xD8), ("es", 0xC0)):
             if seg_reg in call.regs:
@@ -962,6 +968,22 @@ class Machine:
             code += bytes([0x5D])
         code += bytes([0xB9, ident & 0xFF, ident >> 8, 0xE6, 0xE8, 0xCB])
         return code
+
+    def _guest_ident(self, uc):
+        """An index that fits in the word _call_code writes to CX.
+
+        A finished entry is reused. When all 65536 are still running, the run
+        stops by name instead of raising from bytes().
+        """
+        for ident, state in enumerate(self.guest):
+            if state.get("done"):
+                return ident
+        if len(self.guest) > 0xFFFF:
+            self.stop = "guest-call ident exhausted"
+            uc.emu_stop()
+            return None
+        self.guest.append({"done": False})
+        return len(self.guest) - 1
 
     # Trampoline slots: TRAMP_SLOT bytes each, with a selector of their own, reused.
     TRAMP_SLOT = 0x200
@@ -1000,17 +1022,19 @@ class Machine:
     def _start_guest(self, uc, request, pop, stub=None):
         """The gate answered with a GuestCalls. Its retf (pop bytes) goes to the first call's
         trampoline instead of the caller. stub is the gate stub's (cs, ip), for a retry."""
+        ident = self._guest_ident(uc)
+        if ident is None:
+            return
         self.hook_serial += 1
         ss = uc.reg_read(UC_X86_REG_SS)
         sp = uc.reg_read(UC_X86_REG_SP)
-        ident = len(self.guest)
-        self.guest.append({
+        self.guest[ident] = {
             "stub": stub, "args": self._read(self.box.selectors[ss], sp + 4, pop),
             "request": request, "ss": ss, "after_sp": sp + 4 + pop, "ret": self._read(self.box.selectors[ss], sp, 4),
             "ds": uc.reg_read(UC_X86_REG_DS), "es": uc.reg_read(UC_X86_REG_ES), "bp": uc.reg_read(UC_X86_REG_BP),
             "si": uc.reg_read(UC_X86_REG_SI), "di": uc.reg_read(UC_X86_REG_DI),
             "queue": list(request.calls), "results": [], "done": False,
-        })
+        }
         self._next_guest(uc, ident, sp, pop)
 
     def _next_guest(self, uc, ident, sp=None, pop=None):
