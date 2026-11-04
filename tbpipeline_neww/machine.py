@@ -144,9 +144,11 @@ class Args:
 
 
 class Machine:
-    def __init__(self, root, book=None, input_script=None):
+    def __init__(self, root, book=None, input_script=None, host_time=None):
         self.box = Sandbox(root).load()
         self.box.wine.book = Path(book) if book else None
+        # A fixed DOS date and time (seconds since the epoch) instead of the host's clock.
+        self.box.wine.host_time = host_time
         if input_script:
             self.input(input_script)
         self.uc = None

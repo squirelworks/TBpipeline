@@ -18,6 +18,7 @@ Needs TBK_BIN and TBK_BOOK2 (Logic Families with nida81.tbk beside it). About a 
 
 import os
 import re
+import time
 import unittest
 from pathlib import Path
 
@@ -28,14 +29,14 @@ OPENING = ["P10", "P100", "P300", "P400", "P410", "P420", "P430", "P440", "P450"
 LABEL = re.compile(r"^GDI\.351 ExtTextOut '(P\d+)'$")
 
 
-def walk(script):
+def walk(script, host_time=None):
     from tests.binpath import bin_or_skip
     root = bin_or_skip("TB80RTM.EXE", "TB80BAS.DLL", "TB80F32L.dll", "TB80RMT.DLL")
     book = os.environ.get("TBK_BOOK2")
     if not book or not (Path(book).parent / "nida81.tbk").exists():
         raise unittest.SkipTest("TBK_BOOK2 is not set, or has no nida81.tbk beside it")
     from tbpipeline_neww.machine import Machine
-    host = Machine(str(root), book, input_script=script.rstrip("; "))
+    host = Machine(str(root), book, input_script=script.rstrip("; "), host_time=host_time)
     host.call_limit = 1_000_000
     host.timeout_us = 1_000_000_000
     host.run(limit=1_000_000 * 1000)
@@ -71,6 +72,26 @@ class LogicFamiliesWalk(unittest.TestCase):
             "P2050", "P2060", "P2070", "P2080", "P2070",
             "P2080", "P2090", "P2100", "P2110", "P2120", "P2130", "P2140", "P2150", "P2130"])
 
+
+    def test_the_quiz_runs_through_to_the_score_page(self):
+        # Selection T on P900 opens the Quiz menu P10004 (opentoolbook8 SETTLED "Selection T"),
+        # and its Begin starts the ten-question pool. The order comes from random, which the
+        # C runtime seeds from the DOS time, so the run fixes it (tests/test_neww_host_time.py).
+        # At that time the pool's 'a' buttons sit at these x's (y 291); OK is (452, 600).
+        # ToolBook turns quiz pages on its timers, so a pick waits 4 s before OK and OK 12 s
+        # before the next pick. The trailing move keeps the clock running after the last OK.
+        host_time = time.mktime((2026, 11, 4, 12, 0, 0, 0, 0, -1))
+        picks = (372, 312, 374, 358, 295, 352, 332, 310, 312, 320)
+        quiz = "".join(f"click {x},291; wait 4000; click 452,600; wait 12000; " for x in picks)
+        host, pages = walk(TO_MENU + WAIT + "click 513,365; wait 4000; click 511,272; wait 12000; "
+                           + quiz + "move 10,10", host_time)
+        self.assertEqual(host.box.wine.input.raw, [])
+        self.assertEqual(pages[:len(OPENING) + 1], OPENING + ["P10004"])
+        self.assertEqual(pages[-1], "P10303")
+        score = [t for t in host.box.wine.trace if "The test is complete and your score is" in t]
+        self.assertIn("The test is complete and your score is 10%.", score[-1])
+        self.assertEqual([t for t in host.box.wine.trace if t.startswith("USER.1 MessageBox")], [])
+        print(f"\n{score[-1]}")
 
 if __name__ == "__main__":
     unittest.main()
