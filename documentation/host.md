@@ -61,7 +61,19 @@ Every run ends on one of these lines. A line that matches none of them is an ano
 
 `neww` links the ToolBook modules to each other before it runs. A fixup from `TB80RTM` to `TB80W16` is that DLL's selector and offset. System modules are gates. An ordinal with no contract stops the run, and the number of bytes to pop is taken from the contract, never counted off the instruction stream.
 
-It has not been pushed as far into startup as `newl`. It is the cleaner of the two instruments. If one of them is continued, this is the one whose rule should be kept: unknown call, stop, name it.
+It is the tree that has gone furthest into startup, and it kept its rule: unknown call, stop, name it. What it does today, and the test that holds each part:
+
+- It opens the Logic Families book under its long name. The command line carries the 8.3 alias, as the shell gives it to a 16-bit program (`tests/test_neww_batch8.py` `CommandLine.test_long_book_name_is_passed_short`), and both names open the file (`Disk.test_long_name_and_alias_both_open_the_book`).
+- It draws the first page. On a book's title page the bitmap and text are drawn and no error box shows (`tests/test_neww_batch6.py` `RealBook.test_first_page_draws`). Logic Families goes to `P0` of `nida81.tbk` beside it, and that picture is drawn (`tests/test_neww_batch8.py` `LogicFamilies.test_first_page_shows_the_picture_from_nida81`).
+- It takes mouse and keyboard input from `--input` (`tests/test_neww_input.py` `Script`, `Mouse`, `Keyboard`, and `Command.test_help_names_the_input_option`). A click on the Logic Families title page goes to `P10`, its right arrow sends `Next` and shows `P100`, and the left arrow sends `Previous` and `P10` comes back (`LogicFamiliesClicks.test_title_click_next_and_back`).
+
+Those real-book tests need `TBK_BIN` and a book, and skip without them.
+
+Two runs still end on the call limit, not on a named stop. Both lines are from the state recorded in [roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201) at `32c2bc1`. No test holds them yet. T1 and T2 in [future.md](future.md#neww-next) are the items that will:
+
+- The long run (title page, then `Next` ×10 at 500 ms) ends at the 2,000,001-call limit.
+- `nida81` with `--cap 20000` ends at the 20,001-call limit (`stopped ... call limit`).
+
 
 ## What the host is not for
 
