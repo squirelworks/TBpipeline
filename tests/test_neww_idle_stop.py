@@ -84,16 +84,30 @@ class IdleStop(unittest.TestCase):
         ax, stop, msg = get(self.w, self.reply)
         self.assertEqual((ax, stop, msg[1], m.clock), (1, None, 0x113, start + 100))
 
-    def test_idle_stop_without_an_input_script_is_named_too(self):
-        # Roadmap #201 T2: a run that asks for the idle stop (the command line's default) ends
-        # at its first idle point even with no input script at all.
+    def test_idle_stop_without_an_input_script_waits_for_the_first_tick(self):
+        # Roadmap #201 T2: a run that asks for the idle stop (the command line's default) and
+        # has no input script still gets its first timer tick, then ends at the next idle point.
         from tbpipeline_neww.user_wnd import wm
         m = wm(self.w)
         self.w.idle_stop = True
         start = m.clock
         by_name(self.w, "USER", "SetTimer", self.hwnd, 5, 100, (0, 0))
+        ax, stop, msg = get(self.w, self.reply)
+        self.assertEqual((ax, stop, msg[1], m.clock), (1, None, 0x113, start + 100))
         ax, stop, _msg = get(self.w, self.reply)
         self.assertEqual(ax, 0)
+        self.assertEqual(stop, "idle: no input script, task waiting in GetMessage at "
+                               "0x1478:0xbb7, next timer in 100 ms")
+        self.assertEqual(m.clock, start + 100)
+
+    def test_a_multimedia_timer_callback_is_a_tick_too(self):
+        from tbpipeline_neww.user_wnd import wm
+        m = wm(self.w)
+        self.w.idle_stop = True
+        self.w.mm_ticks = 1
+        start = m.clock
+        by_name(self.w, "USER", "SetTimer", self.hwnd, 5, 100, (0, 0))
+        _ax, stop, _msg = get(self.w, self.reply)
         self.assertEqual(stop, "idle: no input script, task waiting in GetMessage at "
                                "0x1478:0xbb7, next timer in 100 ms")
         self.assertEqual(m.clock, start)
