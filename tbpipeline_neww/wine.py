@@ -269,6 +269,11 @@ MMSYSTEM = _table("MMSYSTEM", MMSYSTEM_SPEC, [
     # neww has no audio driver. With none of pulse, alsa, oss or coreaudio loaded, mmdevapi
     # init_driver loads no devices, so the count is 0.
     ("401 pascal waveOutGetNumDevs() waveOutGetNumDevs16", (0, 0)),
+    # mmsystem.dll16/mmsystem.c:602-605 auxGetNumDevs16 is winmm.c:195-198 auxGetNumDevs,
+    # which is lolvldrv.c:75-81 MMDRV_GetNum(MMDRV_AUX), the drivers' wMaxId. mmdevapi's
+    # auxMessage (mmdevapi/main.c:451-465) asks the unix audio driver, and a count of 0 adds
+    # nothing (lolvldrv.c:358-361, 363). neww loads no audio driver, so the count is 0.
+    ("350 pascal auxGetNumDevs() auxGetNumDevs16", (0, 0)),
 ])
 
 WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
