@@ -1147,6 +1147,165 @@ def rectangle(wine, arg, hdc, l, t, r, b):
     return 1
 
 
+# ------------------------------------------------------------------ shapes
+
+def paint_shape(wine, dc, paint):
+    """Ellipse, Polygon, Arc and the rest: paint(draw, to, what, width) draws "fill" (the
+    interior, with the brush) and then "line" (the outline, with the pen) on 1-bit masks in
+    device pixels. Each mask is mixed into the surface by the DC's ROP2. A null brush or pen
+    leaves its part out."""
+    from PIL import Image, ImageDraw
+    np = _np()
+    img, (ox, oy) = surface(wine, dc)
+    box = clip_box(wine, dc)
+    if _empty(box):
+        return
+    pen = gdi(wine).get(dc.pen, OBJ_PEN)
+    pen_rgb = None if pen is None or pen.style == PS_NULL else rgb(pen.color)
+    width = 1 if pen is None else max(1, pen.width)
+
+    def to(x, y):
+        dx, dy = lp_to_dp(dc, x, y)
+        return (dx + ox - box[0], dy + oy - box[1])
+
+    size = (box[2] - box[0], box[3] - box[1])
+    dest = np.asarray(img.crop(box).convert("RGB")).copy()
+    for what, color in (("fill", brush_color(wine, dc, dc.brush)), ("line", pen_rgb)):
+        if color is None:
+            continue
+        mask = Image.new("1", size, 0)
+        paint(ImageDraw.Draw(mask), to, what, width)
+        sel = np.asarray(mask, dtype=bool)
+        if sel.any():
+            dest[sel] = rop2_mix(dc.rop2, color, dest[sel])
+    img.paste(Image.fromarray(dest, "RGB").convert(img.mode), box[:2])
+
+
+def _box(to, l, t, r, b):
+    (x0, y0), (x1, y1) = to(min(l, r), min(t, b)), to(max(l, r), max(t, b))
+    return [x0, y0, x1 - 1, y1 - 1]
+
+
+def _angle(l, t, r, b, x, y):
+    """The angle PIL draws from (clockwise degrees from 3 o'clock) of the ray to (x, y)."""
+    import math
+    return math.degrees(math.atan2(y - (t + b) / 2, x - (l + r) / 2))
+
+
+def _points(wine, ptr, count):
+    raw = read(wine, ptr, 4 * max(count, 0))
+    return [struct.unpack_from("<hh", raw, 4 * i) for i in range(count)]
+
+
+@api("GDI", "Ellipse")
+def ellipse(wine, arg, hdc, l, t, r, b):
+    """Ellipse: inside the box, right and bottom edges excluded."""
+    dc = _dc(wine, hdc)
+    if dc is None:
+        return 0
+
+    def paint(draw, to, what, width):
+        xy = _box(to, l, t, r, b)
+        if xy[2] < xy[0] or xy[3] < xy[1]:
+            return
+        if what == "fill":
+            draw.ellipse(xy, fill=1)
+        else:
+            draw.ellipse(xy, outline=1, width=width)
+    paint_shape(wine, dc, paint)
+    return 1
+
+
+@api("GDI", "RoundRect")
+def round_rect(wine, arg, hdc, l, t, r, b, ew, eh):
+    dc = _dc(wine, hdc)
+    if dc is None:
+        return 0
+
+    def paint(draw, to, what, width):
+        xy = _box(to, l, t, r, b)
+        if xy[2] < xy[0] or xy[3] < xy[1]:
+            return
+        radius = max(0, min(abs(ew), abs(eh)) // 2)
+        if what == "fill":
+            draw.rounded_rectangle(xy, radius, fill=1)
+        else:
+            draw.rounded_rectangle(xy, radius, outline=1, width=width)
+    paint_shape(wine, dc, paint)
+    return 1
+
+
+def _arc_shape(wine, hdc, l, t, r, b, xs, ys, xe, ye, kind):
+    """Arc, Pie and Chord go counterclockwise from the start ray to the end ray. PIL goes
+    clockwise, so it draws from the end ray to the start ray."""
+    dc = _dc(wine, hdc)
+    if dc is None:
+        return 0
+    start, end = _angle(l, t, r, b, xe, ye), _angle(l, t, r, b, xs, ys)
+    if end <= start:
+        end += 360
+
+    def paint(draw, to, what, width):
+        xy = _box(to, l, t, r, b)
+        if xy[2] < xy[0] or xy[3] < xy[1]:
+            return
+        if kind == "arc":
+            if what == "line":
+                draw.arc(xy, start, end, fill=1, width=width)
+        elif what == "fill":
+            getattr(draw, kind)(xy, start, end, fill=1)
+        else:
+            getattr(draw, kind)(xy, start, end, outline=1, width=width)
+    paint_shape(wine, dc, paint)
+    return 1
+
+
+@api("GDI", "Arc")
+def arc(wine, arg, hdc, l, t, r, b, xs, ys, xe, ye):
+    return _arc_shape(wine, hdc, l, t, r, b, xs, ys, xe, ye, "arc")
+
+
+@api("GDI", "Pie")
+def pie(wine, arg, hdc, l, t, r, b, xs, ys, xe, ye):
+    return _arc_shape(wine, hdc, l, t, r, b, xs, ys, xe, ye, "pieslice")
+
+
+@api("GDI", "Chord")
+def chord(wine, arg, hdc, l, t, r, b, xs, ys, xe, ye):
+    return _arc_shape(wine, hdc, l, t, r, b, xs, ys, xe, ye, "chord")
+
+
+@api("GDI", "Polygon")
+def polygon(wine, arg, hdc, ptr, count):
+    """Polygon: closed, filled with the brush, outlined with the pen. Fewer than two points
+    draw nothing and answer FALSE."""
+    dc = _dc(wine, hdc)
+    if dc is None or count < 2:
+        return 0
+    pts = _points(wine, ptr, count)
+
+    def paint(draw, to, what, width):
+        xy = [to(*p) for p in pts]
+        if what == "fill":
+            draw.polygon(xy, fill=1)
+        else:
+            draw.line(xy + xy[:1], fill=1, width=width)
+    paint_shape(wine, dc, paint)
+    return 1
+
+
+@api("GDI", "Polyline")
+def polyline(wine, arg, hdc, ptr, count):
+    """Polyline: the pen only, as LineTo from each point to the next."""
+    dc = _dc(wine, hdc)
+    if dc is None or count < 2:
+        return 0
+    why = pen_line(wine, dc, _points(wine, ptr, count))
+    if why:
+        return 0, 0, f"GDI Polyline: {why}"
+    return 1
+
+
 @api("GDI", "MoveTo")
 def move_to(wine, arg, hdc, x, y):
     dc = _dc(wine, hdc)
