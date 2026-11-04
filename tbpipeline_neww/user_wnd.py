@@ -2451,10 +2451,18 @@ def message_waiting(wine, task):
     return next_message(wine, 0, 0, 0, False, task=task, advance=False) is not None or ready(wine, task)
 
 
+def _idle_tick(wine):
+    """Count an idle tick for the current task: a WM_TIMER it read."""
+    ticks = wine.__dict__.setdefault("idle_ticks", {})
+    ticks[wine.htask] = ticks.get(wine.htask, 0) + 1
+
+
 def write_msg(wine, ptr, msg):
     """MSG16 {hwnd, message, wParam, lParam, time, pt}. pt is the cursor's position, as the
     server stamps each message; GetMessagePos and GetMessageTime answer the last one read."""
     h, message, wp, lp = msg
+    if message == WM_TIMER:
+        _idle_tick(wine)
     m = wm(wine)
     x, y = getattr(m, "cursor_pos", (SCREEN_W // 2, SCREEN_H // 2))
     m.msg_pos, m.msg_time = (x, y), m_time(wine)
@@ -2492,7 +2500,12 @@ def _mm_callback(wine, hwnd, first, last, polling=False):
     from .tasks import next_ready
     waiting = (not polling and next_message(wine, hwnd, first, last, False, advance=False) is None
                and next_ready(wine) is None)
-    return callback_due(wine, waiting)
+    calls = callback_due(wine, waiting)
+    if calls is not None:
+        # A multimedia timer callback is an idle tick for every task: TB80RTM's idle
+        # (FirstIdle, Idle) follows the message its callback posts.
+        wine.mm_ticks = getattr(wine, "mm_ticks", 0) + 1
+    return calls
 
 
 def _input_clock(wine, hwnd, first, last, polling=False):
@@ -2545,10 +2558,23 @@ def _idle(wine, arg, hwnd, first, last, call):
     nothing to paint, no timer due), and no other task can run, the only thing that would end
     that wait is a timer firing later. neww would move its clock to that timer and run the
     timer loop until the call limit. The run stops here instead, by name, at the caller of
-    GetMessage or PeekMessage. Without an input script the clock moves as before."""
+    GetMessage or PeekMessage. Without an input script the clock moves as before, unless the
+    run asks for the idle stop anyway (wine.idle_stop, the command line's default): then a run
+    with no input at all ends the same way at the first idle point after the first idle tick
+    (a WM_TIMER the task read, or any multimedia timer callback), rather than running timers
+    until the call limit lands inside that loop."""
     from .tasks import earliest_timer, next_ready
     st = getattr(wine, "input", None)
-    if st is None or not st.scripted or st.raw:
+    scripted = st is not None and st.scripted
+    if not scripted and not getattr(wine, "idle_stop", False):
+        return None
+    if not scripted and not (getattr(wine, "idle_ticks", {}).get(wine.htask) or getattr(wine, "mm_ticks", 0)):
+        # With no input at all, the first idle tick still comes: a WM_TIMER this task reads,
+        # or a multimedia timer callback. TB80RTM sends the book FirstIdle and Idle after the
+        # message its multimedia timer callback posts, and Logic Families draws "Click to
+        # continue." there. The stop is the next idle point after that tick.
+        return None
+    if st is not None and st.raw:
         return None
     m = wm(wine)
     q = m.queue_of(wine.htask)
@@ -2566,7 +2592,8 @@ def _idle(wine, arg, hwnd, first, last, call):
         due = None if own is None else (own, wine.current)
     after = "no timer set" if due is None else f"next timer in {due[0] - m.clock} ms"
     name = getattr(wine.current, "exe_name", None) or "task"
-    return f"idle: input script done, {name} waiting in {call} at {cs:#x}:{ip:#x}, {after}"
+    done = "input script done" if scripted else "no input script"
+    return f"idle: {done}, {name} waiting in {call} at {cs:#x}:{ip:#x}, {after}"
 
 
 @api("USER", "GetMessage")

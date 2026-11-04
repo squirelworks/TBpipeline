@@ -144,11 +144,13 @@ class Args:
 
 
 class Machine:
-    def __init__(self, root, book=None, input_script=None, host_time=None):
+    def __init__(self, root, book=None, input_script=None, host_time=None, idle_stop=False):
         self.box = Sandbox(root).load()
         self.box.wine.book = Path(book) if book else None
         # A fixed DOS date and time (seconds since the epoch) instead of the host's clock.
         self.box.wine.host_time = host_time
+        # True ends a run with no input script at its first idle point too (user_wnd._idle).
+        self.box.wine.idle_stop = idle_stop
         if input_script:
             self.input(input_script)
         self.uc = None
