@@ -6,19 +6,24 @@ from pathlib import Path
 
 from tbpipeline_neww import gdi16
 
+LIBERATION = [Path(d) for d in ("/usr/share/fonts/truetype/liberation", "/usr/share/fonts/truetype/liberation2")]
+
 
 class StandIn(unittest.TestCase):
     def font(self, face, weight=400):
         return gdi16.Gdi().font_for(gdi16._logfont(-16, 0, weight, 0, 0x22, face))[0]
 
     def test_arial_is_liberation_sans_when_installed(self):
-        if not any((Path(d) / "LiberationSans-Regular.ttf").exists() for d in gdi16.FONT_DIRS):
+        # The guard looks at the host's own folders, not at gdi16's list, so the test runs
+        # wherever Liberation is installed.
+        if not any((d / "LiberationSans-Regular.ttf").exists() for d in LIBERATION):
             raise unittest.SkipTest("no Liberation Sans on this host")
         self.assertTrue(self.font("Arial").path.endswith("LiberationSans-Regular.ttf"))
         self.assertTrue(self.font("Arial", 700).path.endswith("LiberationSans-Bold.ttf"))
 
-    def test_every_kind_has_a_fallback(self):
+    def test_every_kind_lists_names_with_a_fallback(self):
         for names in gdi16.TEXT_STANDIN.values():
+            self.assertIsInstance(names, tuple)
             self.assertGreaterEqual(len(names), 2)
 
 
