@@ -69,9 +69,10 @@ It is the tree that has gone furthest into startup, and it kept its rule: unknow
 
 Those real-book tests need `TBK_BIN` and a book, and skip without them.
 
-Two runs still end on the call limit, not on a named stop. Both lines are from the state recorded in [roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201) at `32c2bc1`. No test holds them yet. T1 and T2 in [future.md](future.md#neww-next) are the items that will:
+A run with `--input` ends once the script is done and every task would only wait for a later timer: `idle: input script done, TB80RTM waiting in PeekMessage at CS:IP, next timer in N ms` (Wine `dlls/win32u/message.c:3640-3643`; `tests/test_neww_idle_stop.py`). The long run (title page, then `Next` ×10 at 500 ms) ends there at 153,795 calls, where it used to run to the 2,000,001-call limit, on the same final screen (#205).
 
-- The long run (title page, then `Next` ×10 at 500 ms) ends at the 2,000,001-call limit.
+One run still ends on the call limit, not on a named stop. That line is from the state recorded in [roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201) at `32c2bc1`. No test holds it yet. T2 in [future.md](future.md#neww-next) is the item that will:
+
 - `nida81` with `--cap 20000` ends at the 20,001-call limit (`stopped ... call limit`).
 
 
