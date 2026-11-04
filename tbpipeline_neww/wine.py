@@ -269,6 +269,11 @@ MMSYSTEM = _table("MMSYSTEM", MMSYSTEM_SPEC, [
     # neww has no audio driver. With none of pulse, alsa, oss or coreaudio loaded, mmdevapi
     # init_driver loads no devices, so the count is 0.
     ("401 pascal waveOutGetNumDevs() waveOutGetNumDevs16", (0, 0)),
+    # mmsystem.dll16/mmsystem.c:679-681 midiOutGetNumDevs16 is winmm.c:287-289 midiOutGetNumDevs,
+    # which is lolvldrv.c:75-81 MMDRV_GetNum(MMDRV_MIDIOUT), the drivers' wMaxId. MMDRV_Init
+    # (lolvldrv.c:482-487) adds each loaded driver's count (363) and leaves out the mapper
+    # (357-358). neww loads no midi driver, so the count is 0.
+    ("201 pascal midiOutGetNumDevs() midiOutGetNumDevs16", (0, 0)),
     # mmsystem.dll16/mmsystem.c:602-605 auxGetNumDevs16 is winmm.c:195-198 auxGetNumDevs,
     # which is lolvldrv.c:75-81 MMDRV_GetNum(MMDRV_AUX), the drivers' wMaxId. mmdevapi's
     # auxMessage (mmdevapi/main.c:451-465) asks the unix audio driver, and a count of 0 adds
