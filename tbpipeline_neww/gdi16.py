@@ -492,6 +492,17 @@ def pen_line(wine, dc, points):
     return None
 
 
+# ------------------------------------------------------------------ handlers: metafiles
+
+@api("GDI", "SetMetaFileBits")
+def set_metafile_bits(wine, arg, hmem):
+    """Wine 2528aff2: dlls/gdi.exe16/metafile.c:295 SetMetaFileBits16 returns hMem (:299).
+
+    The 16-bit metafile handle is the global block that holds the metafile bytes, so
+    the bytes stay where the caller put them and nothing is copied."""
+    return hmem
+
+
 # ------------------------------------------------------------------ handlers: objects
 
 @api("GDI", "GetStockObject")
