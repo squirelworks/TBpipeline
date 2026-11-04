@@ -75,6 +75,16 @@ class Shapes(unittest.TestCase):
         self.assertEqual(self.pixel(20, 10), 0x0000FF)
         self.assertEqual(self.pixel(20, 30), 0)
 
+    def test_chord_fills_between_the_arc_and_its_chord(self):
+        # Start at 3 o'clock, end at 9 o'clock: the top half, closed by the horizontal diameter.
+        self.assertEqual(self.call("Chord", self.dc, 0, 0, 40, 40, 40, 20, 0, 20), 1)
+        self.assertEqual(self.pixel(20, 10), 0x0000FF)
+        self.assertEqual(self.pixel(20, 30), 0)
+
+    def test_round_rect_fills_its_middle(self):
+        self.assertEqual(self.call("RoundRect", self.dc, 2, 2, 38, 38, 6, 6), 1)
+        self.assertEqual(self.pixel(20, 20), 0x0000FF)
+
 
 if __name__ == "__main__":
     unittest.main()
