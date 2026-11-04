@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import html
 import json
+import math
 from pathlib import Path
 
 from ..engine import MOVES, Engine, compile_handler
 from ..tbk import Book
-from .shapes import bounds, polygon_records
+from .shapes import arc_records, bounds, polygon_records
 
 COMPRESSED = (
     "Compressed ToolBook pictures are not drawn: the decoder is TB80BMP ordinal 3, "
@@ -242,6 +243,27 @@ function show() {
       stage.appendChild(svg);
     }
   }
+  if (page.arcs && page.arcs.length) {
+    const ns = "http://www.w3.org/2000/svg";
+    for (const arc of page.arcs) {
+      const [left, top, right, bottom] = arc.bounds;
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("class", "placed");
+      svg.style.left = left + "px";
+      svg.style.top = top + "px";
+      svg.setAttribute("width", Math.max(1, right - left));
+      svg.setAttribute("height", Math.max(1, bottom - top));
+      const path = document.createElementNS(ns, "path");
+      const rx = (right - left) / 2, ry = (bottom - top) / 2;
+      path.setAttribute("d", "M " + (arc.start[0] - left) + " " + (arc.start[1] - top) +
+        " A " + rx + " " + ry + " 0 " + (arc.large ? 1 : 0) + " 0 " +
+        (arc.end[0] - left) + " " + (arc.end[1] - top));
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", arc.stroke);
+      svg.appendChild(path);
+      stage.appendChild(svg);
+    }
+  }
   if (page.handlers && page.handlers.length) {
     const box = document.createElement("div");
     box.className = "jumps";
@@ -402,6 +424,37 @@ def placed(blob: bytes) -> list[dict]:
     ]
 
 
+def placed_arcs(blob: bytes) -> list[dict]:
+    """Class 0x11 arcs at their record twips, divided by 15.
+
+    start and end are the stored pairs mapped onto the bounds ellipse.
+    The arc runs counter-clockwise on screen from start to end, angles
+    taken as if the ellipse were a circle. large is true when that sweep
+    is over 180 degrees, the SVG large-arc flag.
+    """
+    found = []
+    for arc in arc_records(blob):
+        left, top, right, bottom = arc["bounds"]
+        cx, cy = (left + right) / 2, (top + bottom) / 2
+        rx, ry = (right - left) / 2, (bottom - top) / 2
+        if not rx or not ry:
+            continue
+
+        def angle(point):
+            return math.degrees(math.atan2((cy - point[1]) / ry, (point[0] - cx) / rx))
+
+        sweep = (angle(arc["end"]) - angle(arc["start"])) % 360
+        found.append({
+            "id": arc["id"],
+            "bounds": [v / 15 for v in arc["bounds"]],
+            "start": [v / 15 for v in arc["start"]],
+            "end": [v / 15 for v in arc["end"]],
+            "stroke": "#%02x%02x%02x" % arc["stroke"],
+            "large": sweep > 180,
+        })
+    return found
+
+
 def _moves(handlers) -> dict:
     moves = {}
     for handler in handlers or []:
@@ -432,6 +485,7 @@ def walked(book: Book, handlers: dict | None = None, resources: dict | None = No
             "jumps": page.quoted_jumps[:16],
             "handlers": _clicks((handlers or {}).get(page.name)),
             "shapes": placed(page.blob),
+            "arcs": placed_arcs(page.blob),
             "moves": _moves((handlers or {}).get(page.name)),
             "textAt": None,
             "pictures": ((resources or {}).get("pages") or {}).get(page.name, []),
