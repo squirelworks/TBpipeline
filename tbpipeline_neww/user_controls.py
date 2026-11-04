@@ -10,7 +10,8 @@ window that has it, runs the procedure here.
 The classes are registered the first time one is looked up: neww gives them their atoms then,
 where Wine registers every built-in class when user32 starts.
 
-Only SCROLLBAR is here so far (win32u scroll.c). Each other built-in class still stops by name.
+SCROLLBAR (win32u scroll.c), BUTTON (user32 button.c) and STATIC (user32 static.c) are here.
+Each other built-in class still stops by name.
 """
 
 import struct
@@ -21,6 +22,8 @@ from . import gdi16
 
 # include/ntuser.h enum ntuser_client_procs
 NTUSER_WNDPROC_SCROLLBAR = 0
+NTUSER_WNDPROC_BUTTON = 7
+NTUSER_WNDPROC_STATIC = 14
 
 WINPROC_HANDLE = 0xFFFF0000
 THUNK_SIZE = 15            # sizeof(WINPROC_THUNK), packed: 2 + 2 + 4 + 2 + 1 + 4
@@ -335,12 +338,21 @@ def scroll_bar_window_proc(wine, hwnd, msg, wp, lp):
     return result
 
 
-PROCS = {NTUSER_WNDPROC_SCROLLBAR: scroll_bar_window_proc}
+from .user_buttons import button_window_proc, static_window_proc  # noqa: E402
 
-# win32u class.c builtin_classes: (index, name, style, window extra bytes). The extra bytes are
-# sizeof(struct scroll_info *), 4 in a 32-bit process.
+PROCS = {
+    NTUSER_WNDPROC_SCROLLBAR: scroll_bar_window_proc,
+    NTUSER_WNDPROC_BUTTON: button_window_proc,
+    NTUSER_WNDPROC_STATIC: static_window_proc,
+}
+
+# win32u class.c builtin_classes: (index, name, style, window extra bytes), in a 32-bit process.
+# ScrollBar: sizeof(struct scroll_info *). Button (class.c:99): sizeof(UINT) + 2 * sizeof(HANDLE).
+# Static (class.c:148): 2 * sizeof(HANDLE).
 BUILTIN = {
     "scrollbar": (NTUSER_WNDPROC_SCROLLBAR, "ScrollBar", CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC, 4),
+    "button": (NTUSER_WNDPROC_BUTTON, "Button", CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC, 12),
+    "static": (NTUSER_WNDPROC_STATIC, "Static", CS_DBLCLKS | CS_PARENTDC, 8),
 }
 
 
