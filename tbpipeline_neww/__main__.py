@@ -1,9 +1,11 @@
-"""python3 -m tbpipeline_neww --b ~/TBK/bin [--c book.tbk] [--cap N] [--input SCRIPT] [--png FILE]
+"""python3 -m tbpipeline_neww --b ~/TBK/bin [--c book.tbk] [--cap N] [--input SCRIPT] [--png FILE] [--timers]
 
 Links every NE module in the directory, then enters TB80RTM.
 Windows ordinals are gates. ToolBook calls land in the other DLL.
 --input is mouse and keyboard input, e.g. "click 400,300; wait 500; key ctrl+right"
 (see input16). --png saves the screen when the run stops.
+A run ends on a named "idle:" stop once the book only waits for a timer, with or without
+--input. Without --input, --timers runs the timers on to the call limit instead.
 """
 
 import sys
@@ -33,7 +35,7 @@ def main(argv=None):
             script = argv[i + 1]
         if a == "--png" and i + 1 < len(argv):
             png = argv[i + 1]
-    host = Machine(root, book, input_script=script)
+    host = Machine(root, book, input_script=script, idle_stop="--timers" not in argv)
     box = host.box
     if box.exe is None:
         print(f"no NE executable in {root}", file=sys.stderr)

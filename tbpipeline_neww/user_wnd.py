@@ -2545,10 +2545,16 @@ def _idle(wine, arg, hwnd, first, last, call):
     nothing to paint, no timer due), and no other task can run, the only thing that would end
     that wait is a timer firing later. neww would move its clock to that timer and run the
     timer loop until the call limit. The run stops here instead, by name, at the caller of
-    GetMessage or PeekMessage. Without an input script the clock moves as before."""
+    GetMessage or PeekMessage. Without an input script the clock moves as before, unless the
+    run asks for the idle stop anyway (wine.idle_stop, the command line's default): then a run
+    with no input at all ends the same way at its first idle point, rather than running timers
+    until the call limit lands somewhere inside that loop."""
     from .tasks import earliest_timer, next_ready
     st = getattr(wine, "input", None)
-    if st is None or not st.scripted or st.raw:
+    scripted = st is not None and st.scripted
+    if not scripted and not getattr(wine, "idle_stop", False):
+        return None
+    if st is not None and st.raw:
         return None
     m = wm(wine)
     q = m.queue_of(wine.htask)
@@ -2566,7 +2572,8 @@ def _idle(wine, arg, hwnd, first, last, call):
         due = None if own is None else (own, wine.current)
     after = "no timer set" if due is None else f"next timer in {due[0] - m.clock} ms"
     name = getattr(wine.current, "exe_name", None) or "task"
-    return f"idle: input script done, {name} waiting in {call} at {cs:#x}:{ip:#x}, {after}"
+    done = "input script done" if scripted else "no input script"
+    return f"idle: {done}, {name} waiting in {call} at {cs:#x}:{ip:#x}, {after}"
 
 
 @api("USER", "GetMessage")
