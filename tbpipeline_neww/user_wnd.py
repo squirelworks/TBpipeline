@@ -2536,6 +2536,39 @@ NO_INPUT = ("the queue is empty, no window needs painting and no timer is set; "
             "the task waits for input, and the input script has no more for it")
 
 
+def _idle(wine, arg, hwnd, first, last, call):
+    """The named stop for a run whose input script is done and whose tasks would now wait.
+
+    Wine's NtUserGetMessage (dlls/win32u/message.c:3640-3643, at 2528aff2) loops on
+    peek_message and blocks in wait_objects while nothing is there. When the script has given
+    all of its input, this task has no message without moving the clock (nothing posted,
+    nothing to paint, no timer due), and no other task can run, the only thing that would end
+    that wait is a timer firing later. neww would move its clock to that timer and run the
+    timer loop until the call limit. The run stops here instead, by name, at the caller of
+    GetMessage or PeekMessage. Without an input script the clock moves as before."""
+    from .tasks import earliest_timer, next_ready
+    st = getattr(wine, "input", None)
+    if st is None or not st.scripted or st.raw:
+        return None
+    m = wm(wine)
+    q = m.queue_of(wine.htask)
+    if q.input or q.peek is not None:
+        return None
+    if next_message(wine, hwnd, first, last, False, advance=False) is not None:
+        return None
+    if next_ready(wine) is not None:
+        return None
+    sp, ss = arg.regs("sp"), arg.regs("ss")
+    ip, cs = arg.word(ss, sp), arg.word(ss, sp + 2)
+    due = earliest_timer(wine)
+    own = min((t[2] for t in q.timers.values()), default=None)
+    if due is None or (own is not None and own < due[0]):
+        due = None if own is None else (own, wine.current)
+    after = "no timer set" if due is None else f"next timer in {due[0] - m.clock} ms"
+    name = getattr(wine.current, "exe_name", None) or "task"
+    return f"idle: input script done, {name} waiting in {call} at {cs:#x}:{ip:#x}, {after}"
+
+
 @api("USER", "GetMessage")
 def get_message(wine, arg, ptr, hwnd, first, last):
     """GetMessage16: the next message, FALSE for WM_QUIT. With none, the task waits and another
@@ -2549,6 +2582,9 @@ def get_message(wine, arg, ptr, hwnd, first, last):
         calls = _input(wine, hwnd, first, last)
     if calls is not None:
         return calls
+    idle = _idle(wine, arg, hwnd, first, last, "GetMessage")
+    if idle is not None:
+        return 0, 0, idle
     msg, nxt = _next_or_wait(wine, hwnd, first, last, True)
     if nxt is not None:
         wine.trace[-1] += f" (waits) -> {nxt.exe_name}"
@@ -2577,6 +2613,9 @@ def peek_message(wine, arg, ptr, hwnd, first, last, flags):
         calls = _input(wine, hwnd, first, last, polling=True, remove=bool(flags & PM_REMOVE))
     if calls is not None:
         return calls
+    idle = _idle(wine, arg, hwnd, first, last, "PeekMessage")
+    if idle is not None:
+        return 0, 0, idle
     msg, nxt = _next_or_wait(wine, hwnd, first, last, bool(flags & PM_REMOVE))
     if msg is None:
         m.clock += 1
