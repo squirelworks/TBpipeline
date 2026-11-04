@@ -110,6 +110,7 @@ class Input:
         self.toggled = set()
         self.pressed = set()       # GetAsyncKeyState's "pressed since the last call"
         self.last_click = None     # (msg, hwnd, time, x, y) of the last button down
+        self.scripted = False      # an input script was queued (queue_script)
 
 
 def state(wine):
@@ -184,6 +185,7 @@ def parse(script):
 def queue_script(wine, script):
     """Put a script's raw messages at the end of the system queue."""
     st = state(wine)
+    st.scripted = True
     for raws in parse(script):
         st.raw.extend(raws)
 

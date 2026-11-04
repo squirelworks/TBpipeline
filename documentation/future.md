@@ -29,7 +29,7 @@ In this order. Each one is a fact a person can check.
 
 From [roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201), in this order:
 
-- **T1.** The long run (title page, then `Next` ×10 at 500 ms) ends on a named stop, not the 2,000,001-call limit. If the guest is idle in its message loop with the input script done, the run says so. If it is real work or a gap, the stop names that.
+- **T1.** Done in #205: the long run (title page, then `Next` ×10 at 500 ms) ends on the named `idle:` stop, not the 2,000,001-call limit ([host.md](host.md#neww)).
 - **T2.** `nida81` gets past 20,000 calls, or names why not. Run it with a higher `--cap`, take the first named stop, and fix only that one with a Wine-cited contract. The DLLs that are not shipped (`TYPELIB`, `OC25`, `PXENGWIN`) keep their `not linked` trap.
 - **T3.** The calls that a loaded spec row answers with no handler (`midiOutGetNumDevs`, `auxGetNumDevs`, `OleInitialize`, `CallNextHookEx`) each get a handler cited to Wine `2528aff2`, one per PR, or stop by name. `CallNextHookEx` calls the next hook, as `hook.c` does.
 
@@ -45,6 +45,6 @@ From [roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201), in t
 
 The book is already open enough to read. `nida81.tbk` has pages, field records, and handlers whose source comes back clean. The future of the reader is the items above, in that order.
 
-The future of the host is narrower than it looks. It is `TB80BMP` ordinal 3, the record that places a widget, and a startup that either opens the book or names the call that will not. It is not a Wine-class Win16. `neww` is the place to keep that instrument honest, and it is the tree that now gets furthest: it opens the book and takes input, and its open stops are the long run and `nida81` above. `bf`'s pass 06 is the place that already has the DLLs mapped, and it is also the place that returns 1 too often to trust past the INI.
+The future of the host is narrower than it looks. It is `TB80BMP` ordinal 3, the record that places a widget, and a startup that either opens the book or names the call that will not. It is not a Wine-class Win16. `neww` is the place to keep that instrument honest, and it is the tree that now gets furthest: it opens the book and takes input, and its open stop is `nida81` above. `bf`'s pass 06 is the place that already has the DLLs mapped, and it is also the place that returns 1 too often to trust past the INI.
 
 If those three host questions get answered, the reader can show a page that is the page. That is `v1.0.1`. The window in `v2.0.0` comes after, and only if the page is already true.
