@@ -449,6 +449,10 @@ class Wine(KernelState):
         # Set by the machine: size -> first selector of a mapped block.
         self.allocate = None
         self.trace = []
+        # Seconds since the epoch that INT 21h GET SYSTEM DATE and TIME read. None is the host's
+        # clock, as Wine's GetLocalTime reads it. A number fixes it, so a run that seeds a
+        # C runtime srand() from the time (ToolBook's random) repeats.
+        self.host_time = None
         # (module, ordinal, name, "0" or "void") for each call a loaded row answered by default.
         self.defaults = []
         self.exit = None
@@ -770,8 +774,8 @@ class Wine(KernelState):
             bh = 0xFF if (ax & 0xFF) == 0 else 0x08
             return {"ax": (dos & 0xFF) << 8 | dos >> 8, "bx": bh << 8 | 0x12, "cx": 0x3456}, None
         if ah in (0x2A, 0x2C):
-            # GetLocalTime: the host's clock, as Wine reads it.
-            now = time.time()
+            # GetLocalTime: the host's clock, as Wine reads it, or the run's fixed host_time.
+            now = time.time() if self.host_time is None else self.host_time
             t = time.localtime(now)
             if ah == 0x2A:
                 # GET SYSTEM DATE: CX year, DH month, DL day, AL day of week (Sunday 0).
