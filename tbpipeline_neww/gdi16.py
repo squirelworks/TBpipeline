@@ -49,11 +49,17 @@ DEFAULT_PALETTE = [
     (0xff, 0xff, 0x00), (0x00, 0x00, 0xff), (0xff, 0x00, 0xff), (0x00, 0xff, 0xff), (0xff, 0xff, 0xff),
 ]
 
-FONT_DIRS = ("/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/truetype/freefont")
+FONT_DIRS = ("/usr/share/fonts/truetype/liberation", "/usr/share/fonts/truetype/liberation2",
+             "/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/truetype/freefont")
+# Liberation first: its widths match Arial, Times New Roman and Courier New, the faces ToolBook
+# books name, so text ToolBook measures to fit a field or a button fits. DejaVu is wider.
 TEXT_STANDIN = {
-    ("swiss", False): "DejaVuSans.ttf", ("swiss", True): "DejaVuSans-Bold.ttf",
-    ("roman", False): "DejaVuSerif.ttf", ("roman", True): "DejaVuSerif-Bold.ttf",
-    ("modern", False): "DejaVuSansMono.ttf", ("modern", True): "DejaVuSansMono-Bold.ttf",
+    ("swiss", False): ("LiberationSans-Regular.ttf", "DejaVuSans.ttf"),
+    ("swiss", True): ("LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf"),
+    ("roman", False): ("LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"),
+    ("roman", True): ("LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"),
+    ("modern", False): ("LiberationMono-Regular.ttf", "DejaVuSansMono.ttf"),
+    ("modern", True): ("LiberationMono-Bold.ttf", "DejaVuSansMono-Bold.ttf"),
 }
 
 
@@ -167,11 +173,11 @@ class Gdi:
         key = (kind, bold, height)
         if key in self.fonts:
             return self.fonts[key]
-        name = TEXT_STANDIN[(kind, bold)]
-        path = next((str(Path(d) / name) for d in FONT_DIRS if (Path(d) / name).exists()), None)
+        path = next((str(Path(d) / name) for name in TEXT_STANDIN[(kind, bold)] for d in FONT_DIRS
+                     if (Path(d) / name).exists()), None)
 
         def load(size):
-            # No DejaVu (a Windows host): Pillow's own scalable face stands in.
+            # None of them (a Windows host): Pillow's own scalable face stands in.
             # BASIC layout: one glyph per character, the same on every host. Raqm, where Pillow has
             # it, refuses to lay out a lone control character, which GetCharWidth(0, 255) asks for.
             if path:
