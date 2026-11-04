@@ -10,7 +10,8 @@ window that has it, runs the procedure here.
 The classes are registered the first time one is looked up: neww gives them their atoms then,
 where Wine registers every built-in class when user32 starts.
 
-SCROLLBAR (win32u scroll.c), BUTTON (user32 button.c) and STATIC (user32 static.c) are here.
+SCROLLBAR (win32u scroll.c), BUTTON (user32 button.c), STATIC (user32 static.c) and the dialog
+class #32770 (user32 defdlg.c, in user_dialog) are here.
 Each other built-in class still stops by name.
 """
 
@@ -23,13 +24,14 @@ from . import gdi16
 # include/ntuser.h enum ntuser_client_procs
 NTUSER_WNDPROC_SCROLLBAR = 0
 NTUSER_WNDPROC_BUTTON = 7
+NTUSER_WNDPROC_DIALOG = 10
 NTUSER_WNDPROC_STATIC = 14
 
 WINPROC_HANDLE = 0xFFFF0000
 THUNK_SIZE = 15            # sizeof(WINPROC_THUNK), packed: 2 + 2 + 4 + 2 + 1 + 4
 MAX_WINPROCS16 = 1024
 
-CS_VREDRAW, CS_HREDRAW, CS_DBLCLKS, CS_PARENTDC = 0x0001, 0x0002, 0x0008, 0x0080
+CS_VREDRAW, CS_HREDRAW, CS_DBLCLKS, CS_PARENTDC, CS_SAVEBITS = 0x0001, 0x0002, 0x0008, 0x0080, 0x0800
 IDC_ARROW = 32512
 
 # winuser.h
@@ -123,8 +125,11 @@ def builtin_class(wine, name):
     """The built-in class called name (a str, or an atom), registered on first use, or None."""
     from .user_wnd import WndClass, wm, user_module
     m = wm(wine)
-    key = name.lower() if isinstance(name, str) else next(
-        (k for k, v in wine.messages.items() if v == name), None)
+    if name == DIALOG_CLASS_ATOM or name == f"#{DIALOG_CLASS_ATOM}":
+        key = "#32770"
+    else:
+        key = name.lower() if isinstance(name, str) else next(
+            (k for k, v in wine.messages.items() if v == name), None)
     descr = BUILTIN.get(key)
     if descr is None:
         return None
@@ -134,7 +139,7 @@ def builtin_class(wine, name):
     cls = registered.get(key)
     if cls is None:
         index, cname, style, extra = descr
-        atom = wine.add_atom(cname)
+        atom = DIALOG_CLASS_ATOM if key == "#32770" else wine.add_atom(cname)
         cursor = system_cursor(wine, IDC_ARROW)
         cls = WndClass(atom, cname, user_module(wine), style, winproc16(wine, index), 0, extra,
                        user_module(wine), 0, cursor, 0, 0, 0)
@@ -339,20 +344,24 @@ def scroll_bar_window_proc(wine, hwnd, msg, wp, lp):
 
 
 from .user_buttons import button_window_proc, static_window_proc  # noqa: E402
+from .user_dialog import dialog_window_proc, DLGWINDOWEXTRA, DIALOG_CLASS_ATOM  # noqa: E402
 
 PROCS = {
     NTUSER_WNDPROC_SCROLLBAR: scroll_bar_window_proc,
     NTUSER_WNDPROC_BUTTON: button_window_proc,
     NTUSER_WNDPROC_STATIC: static_window_proc,
+    NTUSER_WNDPROC_DIALOG: dialog_window_proc,
 }
 
 # win32u class.c builtin_classes: (index, name, style, window extra bytes), in a 32-bit process.
 # ScrollBar: sizeof(struct scroll_info *). Button (class.c:99): sizeof(UINT) + 2 * sizeof(HANDLE).
-# Static (class.c:148): 2 * sizeof(HANDLE).
+# Static (class.c:148): 2 * sizeof(HANDLE). The dialog class #32770 (class.c:120): DLGWINDOWEXTRA,
+# its name the integer atom 32770 (DIALOG_CLASS_ATOM).
 BUILTIN = {
     "scrollbar": (NTUSER_WNDPROC_SCROLLBAR, "ScrollBar", CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC, 4),
     "button": (NTUSER_WNDPROC_BUTTON, "Button", CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC, 12),
     "static": (NTUSER_WNDPROC_STATIC, "Static", CS_DBLCLKS | CS_PARENTDC, 8),
+    "#32770": (NTUSER_WNDPROC_DIALOG, "#32770", CS_SAVEBITS | CS_DBLCLKS, DLGWINDOWEXTRA),
 }
 
 
