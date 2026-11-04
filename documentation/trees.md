@@ -37,7 +37,7 @@ It has not opened a book. The last wall was inside startup, before `OpenFile` of
 
 The stricter sandbox. Fixups between ToolBook modules are real far calls, selector and offset. `KERNEL` and `USER` are gates: the guest calls the gate, the sandbox answers, and `retf` pops the arguments that the contract names.
 
-An ordinal with no contract stops the run. Guessing the pop count was how `bf` walked off a stack. This tree refuses that. It is also the tree that has done the least of the actual startup. It is the shape to grow if the layer approach is the one that continues. It is not a reader.
+An ordinal with no contract stops the run. Guessing the pop count was how `bf` walked off a stack. This tree refuses that. It is the tree that has gone furthest into startup: it opens Logic Families, draws its pages and takes input. [host.md](host.md) names what it does and the tests that hold it. It is the shape to grow if the layer approach is the one that continues. It is not a reader.
 
 ## What is not a fourth tree
 
