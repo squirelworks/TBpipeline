@@ -1,0 +1,39 @@
+name: release
+
+# A release is a file in .github/release-notes/ named for its tag, for
+# example v0.1.0.md. The first line is the title ("# ..."); the rest is
+# the notes. Merging the pull request that adds the file publishes the
+# release: this job tags the merge commit and posts the notes. A tag that
+# already exists is left alone, so old notes files stay as a record.
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/release-notes/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: publish each new notes file
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          for f in .github/release-notes/*.md; do
+            tag=$(basename "$f" .md)
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "$tag: already tagged"
+              continue
+            fi
+            title=$(sed -n '1s/^# *//p' "$f")
+            tail -n +2 "$f" > "$RUNNER_TEMP/notes.md"
+            gh release create "$tag" --target "$GITHUB_SHA" --title "${title:-$tag}" --notes-file "$RUNNER_TEMP/notes.md"
+            echo "$tag: published"
+          done
