@@ -2904,6 +2904,17 @@ def unhook_windows_hook(wine, arg, id_, proc):
     return 1
 
 
+@api("USER", "CallNextHookEx")
+def call_next_hook_ex(wine, arg, hhook, code, wp, lp):
+    """hook.c:523-528 CallNextHookEx16 -> user32 CallNextHookEx -> win32u hook.c:362-393
+    NtUserCallNextHookEx: the hook after the thread's running one, from server hook.c:242-270
+    get_next_hook (the rest of that chain, then the global table). win32u call_hook
+    (hook.c:206-239) calls nothing and returns 0 when there is none. A 16-bit task has none:
+    hook.c:407-432 SetWindowsHookEx16 sets one thread hook per kind and no global ones, as
+    wine.hooks keeps them. So the answer is 0, and no hook procedure is called."""
+    return 0, 0
+
+
 @api("USER", "UnhookWindowsHookEx")
 def unhook_windows_hook_ex(wine, arg, hhook):
     """hook.c UnhookWindowsHookEx16: the hook with that handle, FALSE if there is none."""
