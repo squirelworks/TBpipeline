@@ -1199,7 +1199,11 @@ def _points(wine, ptr, count):
 
 @api("GDI", "Ellipse")
 def ellipse(wine, arg, hdc, l, t, r, b):
-    """Ellipse: inside the box, right and bottom edges excluded."""
+    """Ellipse: inside the box, right and bottom edges excluded.
+
+    Wine 2528aff2: dlls/gdi.exe16/gdi.c:682 Ellipse16 returns Ellipse(); dlls/win32u/painting.c:376
+    NtGdiEllipse answers FALSE for no DC, else dibdrv_Ellipse (dlls/win32u/dibdrv/graphics.c:995),
+    which is dibdrv_RoundRect (:997) and answers TRUE."""
     dc = _dc(wine, hdc)
     if dc is None:
         return 0
@@ -1218,6 +1222,8 @@ def ellipse(wine, arg, hdc, l, t, r, b):
 
 @api("GDI", "RoundRect")
 def round_rect(wine, arg, hdc, l, t, r, b, ew, eh):
+    """Wine 2528aff2: dlls/gdi.exe16/gdi.c:722 RoundRect16; dlls/win32u/painting.c:413 FALSE for no
+    DC; dlls/win32u/dibdrv/graphics.c:1447 dibdrv_RoundRect TRUE (also for an empty box, :1458)."""
     dc = _dc(wine, hdc)
     if dc is None:
         return 0
@@ -1237,7 +1243,11 @@ def round_rect(wine, arg, hdc, l, t, r, b, ew, eh):
 
 def _arc_shape(wine, hdc, l, t, r, b, xs, ys, xe, ye, kind):
     """Arc, Pie and Chord go counterclockwise from the start ray to the end ray. PIL goes
-    clockwise, so it draws from the end ray to the start ray."""
+    clockwise, so it draws from the end ray to the start ray.
+
+    Wine 2528aff2: dlls/gdi.exe16/gdi.c:672 Arc16, :702 Pie16, :2427 Chord16; each goes to
+    NtGdiArcInternal, dlls/win32u/painting.c:313 FALSE for no DC; dlls/win32u/dibdrv/graphics.c:314
+    draw_arc answers TRUE (also for an empty box, :325)."""
     dc = _dc(wine, hdc)
     if dc is None:
         return 0
@@ -1278,7 +1288,10 @@ def chord(wine, arg, hdc, l, t, r, b, xs, ys, xe, ye):
 @api("GDI", "Polygon")
 def polygon(wine, arg, hdc, ptr, count):
     """Polygon: closed, filled with the brush, outlined with the pen. Fewer than two points
-    draw nothing and answer FALSE."""
+    draw nothing and answer FALSE.
+
+    Wine 2528aff2: dlls/gdi.exe16/gdi.c:811 Polygon16 returns Polygon(); dlls/win32u/painting.c:573
+    FALSE for no DC; dlls/win32u/dibdrv/graphics.c:1260 FALSE for fewer than 2 points, else TRUE."""
     dc = _dc(wine, hdc)
     if dc is None or count < 2:
         return 0
@@ -1296,7 +1309,10 @@ def polygon(wine, arg, hdc, ptr, count):
 
 @api("GDI", "Polyline")
 def polyline(wine, arg, hdc, ptr, count):
-    """Polyline: the pen only, as LineTo from each point to the next."""
+    """Polyline: the pen only, as LineTo from each point to the next.
+
+    Wine 2528aff2: dlls/gdi.exe16/gdi.c:832 Polyline16; dlls/win32u/painting.c:573 FALSE for no DC;
+    dlls/win32u/dibdrv/graphics.c:1331 FALSE for fewer than 2 points, else TRUE."""
     dc = _dc(wine, hdc)
     if dc is None or count < 2:
         return 0
