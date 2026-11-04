@@ -7,7 +7,7 @@ Stage 2c says the debug files are there. Off unless the caller passed
 
 from pathlib import Path
 
-from .play import placed, render_new, render_old
+from .play import placed, placed_arcs, render_new, render_old
 from .resources import write as write_resources
 from .shapes import write as write_shapes
 from ..openbook import open_book
@@ -55,6 +55,10 @@ def run(book_path, out, dbgrender=False, theme="default", render="new"):
     shapes = {page.name: len(placed(page.blob)) for page in book.pages}
     wrote.append(
         f"  placed {sum(shapes.values())} polygons on {sum(1 for n in shapes.values() if n)} pages, at record twips / 15"
+    )
+    arcs = {page.name: len(placed_arcs(page.blob)) for page in book.pages}
+    wrote.append(
+        f"  placed {sum(arcs.values())} arcs on {sum(1 for n in arcs.values() if n)} pages, at record twips / 15"
     )
     wrote.append(f"  resources/ {len(resources['book'])} book, {sum(len(v) for v in resources['pages'].values())} in pages")
     if render == "old":

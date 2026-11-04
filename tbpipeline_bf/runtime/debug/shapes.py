@@ -71,6 +71,53 @@ def polygon_records(blob: bytes):
     return shapes
 
 
+ARC = 0x11
+# From an arc's end word to the next record's end word, in a page blob.
+ARC_STEP = 64
+
+
+def signed(rec, off):
+    return int.from_bytes(rec[off:off + 2], "little", signed=True)
+
+
+def arc_records(blob: bytes) -> list[dict]:
+    """Class 0x11 arcs in a page blob, in twips.
+
+    An arc is an end word, the class word 0x11, then the record from its
+    id. The end word less 0x10 is where the next record's end word sits,
+    64 bytes on. From the id: bounds are four signed words at +0x0F,
+    the stroke color is at +0x17, the two stored pairs are at +0x25 and
+    +0x29, the center pair at +0x2D, and the radii at +0x31 and +0x33.
+    The stored pairs map onto the bounds ellipse: the center goes to the
+    bounds center and each axis scales by the bounds half-size over the
+    radius. opentoolbook8 SETTLED.md "Arc" settles all of it.
+    """
+    arcs = []
+    for at in range(0, len(blob) - 4 - 0x35 + 1):
+        if word(blob, at + 2) != ARC or word(blob, at) - 0x10 - at != ARC_STEP:
+            continue
+        rec = blob[at + 4:]
+        left, top, right, bottom = (signed(rec, 0x0F + 2 * i) for i in range(4))
+        first, second, center = ((signed(rec, off), signed(rec, off + 2)) for off in (0x25, 0x29, 0x2D))
+        rx, ry = signed(rec, 0x31), signed(rec, 0x33)
+        if not rx or not ry:
+            continue
+
+        def mapped(point):
+            x = (left + right) / 2 + (point[0] - center[0]) * (right - left) / 2 / rx
+            y = (top + bottom) / 2 + (point[1] - center[1]) * (bottom - top) / 2 / ry
+            return round(x), round(y)
+
+        arcs.append({
+            "id": word(rec, 0),
+            "bounds": (left, top, right, bottom),
+            "start": mapped(first),
+            "end": mapped(second),
+            "stroke": tuple(rec[0x17:0x1A]),
+        })
+    return arcs
+
+
 def curves(blob: bytes):
     """Long runs of twip pairs that are not kind-04 polygons.
 
