@@ -35,3 +35,14 @@ The tests:
 python3 -m unittest discover -s tests -t .
 TBK_BIN=~/TBK/bin python3 -m unittest discover -s tests -t .
 ```
+
+## Roadmap
+
+Tick a box when its PR merges. The issues hold the detail.
+
+- [x] [Roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201), T0 to T9. Complete, released as `neww-v0.5.0`
+- [ ] [#221](https://github.com/squirelworks/TBpipeline/issues/221): metafile playback and `MM_ANISOTROPIC`, which stop the NIDA ATT course `93952606.TBK` after P430. This is next
+- [ ] Wingdings and Symbol-font characters (bullets, π) through a symbol-font mapping
+- [ ] The other NIDA ATT courses: on hold until the week of 2026-11-09
+
+[documentation/future.md](documentation/future.md) has the longer list. [CURSOR.md](CURSOR.md) is the handover note for Cursor (2026-11-08).
