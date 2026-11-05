@@ -9,29 +9,48 @@
 | One real handler | A click runs the page's `buttonClick`. `P20000` goes to `P20001` because the handler says so, and the next click comes back through `nextpage`. The rest of OpenScript is still not executed |
 | The RTM open | Pass 06 still exits after `TB80.INI`. `newl` dies earlier, inside startup, on a scan of an empty block |
 | Widget bounds | Kind-04 polygons: `+0x12`..`+0x18`, checked against their points on two books, and placed. Fields, buttons, and kind-01 records: still unknown |
-| Polygons on the page | Kind-04 polygons are on the page in `render.html` at their twips / 15. Curve runs are still files under `render/` |
+| Polygons on the page | Kind-04 polygons are on the page in `render.html` at their twips / 15. P430's class `0x11` arcs are placed at their record twips too (#219, roadmap #201 T6). Other curve runs are still files under `render/` |
 | The 606 `TB80BAS` ordinals | Still not bound. Ordinal 1 is startup. The painters are later ordinals |
-| Pictures | Windows BMPs are copied. `TB80BMP` ordinal 3 still stops at `0x1FCD` |
+| Pictures | Windows BMPs are copied. `TB80BMP` ordinal 3 still stops at `0x1FCD` in `bf`, but nothing calls it: a packed book picture goes from TB80RTM to `GDI.160 SetMetaFileBits` instead, and neww returns that block (#220, roadmap #201 T5) |
 
 ## Do this next
 
-In this order. Each one is a fact a person can check.
+Each one is a fact a person can check. Tick a box when its PR merges.
 
-1. **Place one widget.** P430's curve is decoded. The missing step is the record that says where it sits. Done means that curve is on the page, at the twips the record names, not in a file of its own.
-
-2. **Stop or finish the RTM open.** Either pass 06 reaches `OpenFile` on the `.tbk` and the handle is the book, or the run stops on the call that refuses it and that call is named. Another `AX = 1` that happens to pass the INI check is not the item.
-
-3. **One bitmap.** Bind the far call at `TB80BMP` `0x1FCD` and return a DIB. Done means a compressed picture from a book becomes a bitmap the reader can show.
+- [x] **Place one widget.** P430's curve is decoded. The missing step is the record that says where it sits. Done means that curve is on the page, at the twips the record names, not in a file of its own. Done in #219 (roadmap #201 T6): the eight class `0x11` arcs are drawn in `render.html` at their record twips.
+- [ ] **Stop or finish the RTM open.** Either pass 06 reaches `OpenFile` on the `.tbk` and the handle is the book, or the run stops on the call that refuses it and that call is named. Another `AX = 1` that happens to pass the INI check is not the item. Not started: `bf` takes bug fixes only.
+- [x] **One bitmap.** Bind the far call at `TB80BMP` `0x1FCD` and return a DIB. Done means a compressed picture from a book becomes a bitmap the reader can show. Settled differently in #220 (roadmap #201 T5): `TB80BMP` ordinal 3 has no caller. TB80RTM unpacks a packed picture itself and hands it to `GDI.160 SetMetaFileBits`, which neww now answers. Drawing it needs metafile playback, #221.
 
 `neww` now opens a book. It opens Logic Families, draws `P0` with the picture from `nida81.tbk`, and walks pages from `--input` clicks ([host.md](host.md#neww) names the tests). `newl` still has not, so it does not take a turn. Growing the layer by guessing the next return value is how `bf` spent r4 and r5. `neww`'s rule stands: a call with no contract stops the run.
 
 ### neww next
 
-From [roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201), in this order:
+[Roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201) is complete (neww-v0.5.0). Tick a box when its PR merges.
 
-- **T1.** Done in #205: the long run (title page, then `Next` ×10 at 500 ms) ends on the named `idle:` stop, not the 2,000,001-call limit ([host.md](host.md#neww)).
-- **T2.** `nida81` gets past 20,000 calls, or names why not. Run it with a higher `--cap`, take the first named stop, and fix only that one with a Wine-cited contract. The DLLs that are not shipped (`TYPELIB`, `OC25`, `PXENGWIN`) keep their `not linked` trap.
-- **T3.** The calls that a loaded spec row answers with no handler (`midiOutGetNumDevs`, `auxGetNumDevs`, `OleInitialize`, `CallNextHookEx`) each get a handler cited to Wine `2528aff2`, one per PR, or stop by name. `CallNextHookEx` calls the next hook, as `hook.c` does.
+- [x] **T0.** These docs describe neww as it is (#202).
+- [x] **T1.** The long run (title page, then `Next` ×10 at 500 ms) ends on the named `idle:` stop, not the 2,000,001-call limit (#205, [host.md](host.md#neww)).
+- [x] **T2.** A run with no `--input` also ends on the idle stop. nida81 ends at about call 17,989 with `P0` drawn and no error box (#214).
+- [x] **T3.** `midiOutGetNumDevs`, `auxGetNumDevs`, `OleInitialize` and `CallNextHookEx` each have a handler cited to Wine `2528aff2` (#206, #207, #209, #210).
+- [x] **T4.** Logic Families walks end to end: the menu, the Discussion Back cases, and the Pre-Test to P10303 (#211, #212).
+- [x] **T5.** A packed book picture reaches GDI through `SetMetaFileBits` (#220).
+- [x] **T6.** P430's arcs are placed at their record twips in `bf` (#219).
+- [x] **T7.** The GDI shape calls draw (#203).
+- [x] **T8.** Liberation fonts stand in for Arial, Times New Roman and Courier New (#204).
+- [x] **T9.** `Button` and `Static` controls (#215), and modal dialog boxes (#217).
+
+Next, from [#221](https://github.com/squirelworks/TBpipeline/issues/221), one PR per box. These stop the NIDA ATT course `93952606.TBK` after P430:
+
+- [ ] Metafile playback: `EnumMetaFile`, `PlayMetaFile` and `PlayMetaFileRecord` (Wine `dlls/gdi.exe16/metafile.c`), starting with `StretchDIB` records.
+- [ ] `GetMetaFileBits` and `DeleteMetaFile`.
+- [ ] The `*Ex` window and viewport origin and extent calls.
+- [ ] `MM_ISOTROPIC` / `MM_ANISOTROPIC` in `_map_points` and the drawing paths.
+
+Known gaps with no item yet:
+
+- [ ] Wingdings bullets draw as "w" (LF P100): there is no symbol-font mapping.
+- [ ] The Symbol font is unmapped the same way: π draws as "p" (93952606 P430).
+
+The other NIDA ATT courses are on hold until the week of 2026-11-09.
 
 ## Do not do this
 
