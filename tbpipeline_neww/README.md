@@ -127,3 +127,4 @@ Needs `unicorn` (`pip install -r requirements.txt`) for a run. `--help`, and a m
   - `Machine.on_idle` lets a test drive input from what is on the screen.
 
   With these, the Final Quiz runs to its score page, the lesson opens from the menu, and Lesson Exit gets through the DLL unloads. It then stops in `TB80OLE` (#233). `tests/test_neww_lesson_exit.py`.
+- The book sweep (#227). `python3 -m tbpipeline_neww.sweep --bin TBK_BIN --out results.jsonl BOOK...` opens each book in its own process with a time limit and records its stop, calls, screens seen, MessageBoxes, spec-row defaults and the call the stop names. Keep `--out` outside the repo. The findings table is in the project files, not here. `tests/test_neww_sweep.py`.
