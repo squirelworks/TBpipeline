@@ -818,6 +818,21 @@ class Wine(KernelState):
             self.task["dta"] = (reg("ds"), reg("dx"))
             self.trace[-1] += f" DTA {reg('ds'):#x}:{reg('dx'):#x}"
             return {}, None
+        if ah == 0x19:
+            # GET CURRENT DEFAULT DRIVE (int21.c:3966): INT21_GetCurrentDrive (:289), the letter
+            # of the current directory, BIN_DIR, as a number from A: = 0.
+            return {"ax": (ax & 0xFF00) | (ord(BIN_DIR[0].upper()) - ord("A"))}, None
+        if ah == 0x47:
+            # GET CURRENT DIRECTORY (int21.c:4463), INT21_GetCurrentDirectory: DL 0 is the current
+            # drive, else DL - 1 if it has a root (INT21_MapDrive); neww's disk is C: alone, so
+            # another is ERROR_INVALID_DRIVE (15) in AX with CF set (:4834). The path is the short
+            # form of BIN_DIR without its drive letter, colon and backslash, in DS:SI.
+            drive = ord(BIN_DIR[0].upper()) - ord("A")
+            dl = reg("dx") & 0xFF
+            if dl and dl - 1 != drive:
+                return {"ax": 15, "eflags_cf": 1}, None
+            self.write(reg("ds"), reg("si"), BIN_DIR[3:].encode("latin1") + b"\0")
+            return {"eflags_cf": 0}, None
         if ah in (0x4E, 0x4F):
             return self._find_file(reg, first=ah == 0x4E)
         if ax == 0x4300:
