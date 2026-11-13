@@ -63,10 +63,35 @@ def opened(result):
             and not any("(Untitled)" in t for t in result.get("titles") or []))
 
 
+WM_COMMAND, MF_GRAYED, MF_DISABLED = 0x111, 0x1, 0x2
+
+
+def next_command(wine):
+    """(hwnd, id) of the Next item on the Go menu of a visible top-level window, enabled; or
+    None. ToolBook's runtime menus have it (Go > Next); a book that hides its menu bar has
+    none. Choosing it ends in WM_COMMAND with that id (a menu click's last message), which
+    is what the walk posts: neww has no menu-bar tracking yet (WM_NCHITTEST stops)."""
+    from tbpipeline_neww.user_res import menu_items
+    from tbpipeline_neww.user_wnd import WS_VISIBLE, wm
+    m = wm(wine)
+    for h in m.children.get(m.desktop, []):
+        w = m.get(h)
+        if w is None or not w.style & WS_VISIBLE or not w.menu:
+            continue
+        for top in menu_items(wine, w.menu) or []:
+            if top["text"].replace("&", "").strip().lower() != "go" or not top["sub"]:
+                continue
+            for item in menu_items(wine, top["sub"]) or []:
+                label = item["text"].replace("&", "").split("\t")[0].strip().lower()
+                if label.startswith("next") and not item["flags"] & (MF_GRAYED | MF_DISABLED):
+                    return h, item["id"]
+    return None
+
+
 def run_one(root, book, pages, call_limit):
     from tbpipeline_neww import machine
     host = machine.Machine(root, book, input_script=FIRST, idle_stop=True)
-    screens, steps = [], [0]
+    screens, steps, menu_steps = [], [0], [0]
 
     def look(wine):
         h = hashlib.sha256(wine.gdi.screen.tobytes()).hexdigest()[:16]
@@ -74,11 +99,18 @@ def run_one(root, book, pages, call_limit):
             screens.append(h)
 
     def driver(wine):
+        from tbpipeline_neww.user_wnd import wm
         look(wine)
         if steps[0] >= pages:
             return None
         steps[0] += 1
-        return NEXT.format(x=320 + steps[0])
+        target = next_command(wine)
+        if target is None:
+            return NEXT.format(x=320 + steps[0])
+        m = wm(wine)
+        m.queue_of(m.task_of(target[0])).queue.append((target[0], WM_COMMAND, target[1], 0))
+        menu_steps[0] += 1
+        return "wait 4000; move {x},240".format(x=320 + steps[0])
     host.box.wine.on_idle = driver
     host.call_limit = call_limit
     host.timeout_us = max(host.timeout_us, call_limit * 1000)
@@ -89,7 +121,7 @@ def run_one(root, book, pages, call_limit):
     boxes = [t for t in trace if t.startswith("USER.1 MessageBox")]
     defaults = sorted({t.split(" (default")[0] for t in trace if "(default" in t})
     stop = str(host.stop)
-    return {"stop": stop, "titles": titles(wine), "cause": cause_of(stop), "calls": host.calls, "keys": steps[0],
+    return {"stop": stop, "titles": titles(wine), "cause": cause_of(stop), "calls": host.calls, "keys": steps[0] - menu_steps[0], "menu_next": menu_steps[0],
             "screens": len(set(screens)), "messageboxes": boxes[:3], "messagebox_count": len(boxes),
             "defaults": defaults[:5], "default_count": len(defaults)}
 

@@ -33,3 +33,25 @@ class Opened(unittest.TestCase):
         self.assertFalse(opened({**ok, "default_count": 1}))
         self.assertFalse(opened({**ok, "messagebox_count": 1}))
         self.assertFalse(opened({**ok, "cause": "USER.175 LoadBitmap"}))
+
+
+class NextCommand(unittest.TestCase):
+    def test_go_next_is_found_and_a_grayed_one_is_not(self):
+        from tests.test_neww_batch2 import window_wine
+        from tbpipeline_neww import user_res, user_wnd
+        from tbpipeline_neww.sweep import next_command
+        w = window_wine()
+        m = user_wnd.wm(w)
+        bar, go = user_res.new_menu(w, False), user_res.new_menu(w, True)
+        user_res.menu_items(w, bar).append({"flags": 0x10, "id": 0, "text": "&Go", "sub": go})
+        items = user_res.menu_items(w, go)
+        items.append({"flags": 0, "id": 101, "text": "&Back\\tCtrl+Left", "sub": 0})
+        items.append({"flags": 0, "id": 102, "text": "&Next\\tCtrl+Right", "sub": 0})
+        h = 0x40
+        win = user_wnd.Window(h, None, 0, 0)
+        win.style, win.menu = user_wnd.WS_VISIBLE, bar
+        m.windows[h] = win
+        m.children[m.desktop].append(h)
+        self.assertEqual(next_command(w), (h, 102))
+        items[1]["flags"] = 0x1
+        self.assertIsNone(next_command(w))
