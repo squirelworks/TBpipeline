@@ -186,12 +186,18 @@ def scroll_info(wine, hwnd, bar, alloc):
     return bars[bar]
 
 
-def refresh(wine, hwnd, bar):
-    """refresh_scroll_bar draws the bar at once with GetDCEx. neww draws no scroll bar yet: a
-    visible bar stops, an invisible one has nothing to draw."""
+def refresh(wine, hwnd, bar, arrows=True, interior=True):
+    """refresh_scroll_bar (win32u/scroll.c:379): draw_scroll_bar at once on a cache DC from
+    GetDCEx. A generator; returns a stop string or None. Scroll bars in a window's frame are
+    not drawn yet: a visible one stops."""
     uw = _uw()
-    if bar == SB_CTL and uw.is_visible(wine, hwnd):
-        return f"SCROLLBAR {hwnd:#x}: Wine draws a visible scroll bar (draw_scroll_bar), and neww draws none yet"
+    if bar == SB_CTL:
+        if not uw.is_visible(wine, hwnd):
+            return None
+        hdc = uw.get_dc(wine, hwnd)
+        yield from draw_scroll_bar(wine, hwnd, hdc, arrows, interior)
+        uw.release_dc(wine, hwnd, hdc)
+        return None
     if bar != SB_CTL:
         w = uw.wm(wine).get(hwnd)
         style = uw.WS_HSCROLL if bar == SB_HORZ else uw.WS_VSCROLL
@@ -201,7 +207,7 @@ def refresh(wine, hwnd, bar):
 
 
 def set_scroll_info(wine, hwnd, bar, mask, page, pos, nmin, nmax, redraw):
-    """set_scroll_info. Returns (value, stop)."""
+    """set_scroll_info (win32u/scroll.c), a generator. Returns (value, stop)."""
     info = scroll_info(wine, hwnd, bar, True)
     if info is None:
         return 0, None
@@ -242,8 +248,11 @@ def set_scroll_info(wine, hwnd, bar, mask, page, pos, nmin, nmax, redraw):
             if bar != SB_CTL and action_refresh:
                 show = True
         if bar == SB_CTL and redraw and _uw().is_visible(wine, hwnd) and new_flags in (ESB_ENABLE_BOTH, ESB_DISABLE_BOTH):
-            return 0, (f"SetScrollInfo({hwnd:#x}) with redraw on a visible scroll bar: Wine enables or disables "
-                       "the window and draws it, and neww draws none yet")
+            # NtUserEnableWindow: WM_ENABLE sets the flags and redraws (scroll.c:1290).
+            yield from _uw().enable_window(wine, None, hwnd, int(new_flags == ESB_ENABLE_BOTH))
+            info = scroll_info(wine, hwnd, bar, False)
+            if info is None:
+                return 0, None
         if info.flags != new_flags:
             info.flags = new_flags
             repaint_arrows = True
@@ -253,7 +262,7 @@ def set_scroll_info(wine, hwnd, bar, mask, page, pos, nmin, nmax, redraw):
         return ret, (f"SetScrollInfo({hwnd:#x}, bar {bar}) {'hides' if hide else 'shows'} the window's scroll bar: "
                      "Wine changes its frame with SWP_FRAMECHANGED, which neww does not do yet")
     if redraw or repaint_arrows:
-        why = refresh(wine, hwnd, bar)
+        why = yield from refresh(wine, hwnd, bar, True, bool(redraw))
         if why:
             return ret, why
     return ret, None
@@ -298,6 +307,180 @@ def create_scroll_bar(wine, hwnd, cs_ptr):
     return 0
 
 
+# win32u/scroll.c:43-49 and user32/scroll.c:30
+SCROLL_MIN_RECT, SCROLL_MIN_THUMB, SCROLL_ARROW_THUMB_OVERLAP = 4, 17, 0
+ESB_DISABLE_LTUP, ESB_DISABLE_RTDN = 0x1, 0x2
+WM_CTLCOLOR, CTLCOLOR_SCROLLBAR = 0x19, 5
+# winuser.h DrawFrameControl
+DFCS_SCROLLUP, DFCS_SCROLLDOWN, DFCS_SCROLLLEFT, DFCS_SCROLLRIGHT = 0x0, 0x1, 0x2, 0x3
+DFCS_INACTIVE, DFCS_PUSHED = 0x100, 0x200
+# SYS_COLORS indexes
+COLOR_WINDOWFRAME, COLOR_BTNFACE, COLOR_BTNSHADOW, COLOR_BTNTEXT = 6, 15, 16, 18
+COLOR_BTNHIGHLIGHT, COLOR_3DDKSHADOW, COLOR_3DLIGHT = 20, 21, 22
+
+
+def scroll_bar_rect(wine, hwnd):
+    """get_scroll_bar_rect (win32u/scroll.c:187) for SB_CTL: the client rectangle, then the
+    arrow size, the thumb's size and its position from the bar's start (:233-276). Returns
+    (rect, arrow, thumb_size, thumb_pos, vertical)."""
+    uw = _uw()
+    w = uw.wm(wine).get(hwnd)
+    rect = (0, 0, w.client[2] - w.client[0], w.client[3] - w.client[1])
+    vertical = bool(w.style & SBS_VERT)
+    pixels = rect[3] - rect[1] if vertical else rect[2] - rect[0]
+    if pixels <= 2 * SM_CXVSCROLL + SCROLL_MIN_RECT:
+        arrow = (pixels - SCROLL_MIN_RECT) // 2 if pixels > SCROLL_MIN_RECT else 0
+        return rect, arrow, 0, 0, vertical
+    info = scroll_info(wine, hwnd, SB_CTL, True)
+    arrow = SM_CXVSCROLL
+    pixels -= 2 * (SM_CXVSCROLL - SCROLL_ARROW_THUMB_OVERLAP)
+    if info.page:
+        thumb = max(gdi16._muldiv(pixels, info.page, info.max - info.min + 1), SCROLL_MIN_THUMB)
+    else:
+        thumb = SM_CXVSCROLL
+    pixels -= thumb
+    if pixels < 0 or (info.flags & ESB_DISABLE_BOTH) == ESB_DISABLE_BOTH:
+        return rect, arrow, 0, 0, vertical
+    top = info.max - max(info.page - 1, 0)
+    if info.min >= top:
+        pos = arrow - SCROLL_ARROW_THUMB_OVERLAP
+    else:
+        pos = arrow - SCROLL_ARROW_THUMB_OVERLAP + gdi16._muldiv(pixels, info.cur - info.min, top - info.min)
+    return rect, arrow, thumb, pos, vertical
+
+
+def _with(dc, pen=None, brush=None):
+    saved = (dc.pen, dc.brush)
+    if pen is not None:
+        dc.pen = pen
+    if brush is not None:
+        dc.brush = brush
+    return saved
+
+
+def _polygon(wine, dc, points, index):
+    """Polygon with the system color's brush and pen (SYSCOLOR_GetPen, PS_SOLID width 1)."""
+    uw = _uw()
+    saved = _with(dc, uw.sys_color_pen(wine, index), uw.sys_color_brush(wine, index))
+
+    def paint(draw, to, what, width):
+        xy = [to(*p) for p in points]
+        if what == "fill":
+            draw.polygon(xy, fill=1)
+        else:
+            draw.line(xy + xy[:1], fill=1, width=width)
+    gdi16.paint_shape(wine, dc, paint)
+    dc.pen, dc.brush = saved
+
+
+def draw_frame_scroll(wine, dc, rect, flags):
+    """UITOOLS95_DrawFrameScroll (user32/uitools.c:972) for the four arrows: the triangle in
+    the square in rect (UITOOLS_MakeSquareRect, :612), the button as EDGE_RAISED with
+    BF_MIDDLE (no BF_SOFT) or, pushed, UITOOLS95_DFC_ButtonPush, then the arrow: inactive, a
+    COLOR_BTNHIGHLIGHT one first and the COLOR_BTNSHADOW one a pixel up and left; else in
+    COLOR_BTNTEXT, a pixel up and left unless pushed."""
+    from .user_buttons import draw_rect_edge, draw_button_push
+    l, t, r, b = rect
+    width, height = r - l, b - t
+    diam = min(width, height)
+    ml, mt, mr, mb = l, t, r, b
+    if width < height:
+        mt = t + (height - width) // 2
+        mb = mt + diam
+    elif width > height:
+        ml = l + (width - height) // 2
+        mr = ml + diam
+    small = diam - 2
+    tri = max(2, int(290 * small / 1000) - 1) if small >= 0 else max(2, -(-290 * small // 1000) - 1)
+    c = lambda n: int(n * small / 1000)      # C integer division truncates toward zero
+    kind = flags & 0xFF
+    if kind == DFCS_SCROLLDOWN:
+        x2, y2 = ml + c(470) + 2, mt + c(687) + 1
+        line = [(x2 - tri, y2 - tri), (x2 + tri, y2 - tri), (x2, y2)]
+    elif kind == DFCS_SCROLLUP:
+        x2, y2 = ml + c(470) + 2, mb - (c(687) + 1)
+        line = [(x2 - tri, y2 + tri), (x2 + tri, y2 + tri), (x2, y2)]
+    elif kind == DFCS_SCROLLLEFT:
+        x2, y2 = mr - (c(687) + 1), mt + c(470) + 2
+        line = [(x2 + tri, y2 - tri), (x2 + tri, y2 + tri), (x2, y2)]
+    else:
+        x2, y2 = ml + c(687) + 1, mt + c(470) + 2
+        line = [(x2 - tri, y2 - tri), (x2 - tri, y2 + tri), (x2, y2)]
+    if not flags & 0xFF00:
+        draw_rect_edge(wine, dc, rect, COLOR_3DLIGHT, COLOR_BTNHIGHLIGHT, COLOR_3DDKSHADOW, COLOR_BTNSHADOW, True)
+    else:
+        draw_button_push(wine, dc, rect, pushed=bool(flags & DFCS_PUSHED))
+    if flags & DFCS_INACTIVE:
+        _polygon(wine, dc, line, COLOR_BTNHIGHLIGHT)
+    if flags & DFCS_INACTIVE or not flags & DFCS_PUSHED:
+        line = [(x - 1, y - 1) for x, y in line]
+    _polygon(wine, dc, line, COLOR_BTNSHADOW if flags & DFCS_INACTIVE else COLOR_BTNTEXT)
+
+
+def draw_scroll_bar(wine, hwnd, hdc, arrows=True, interior=True):
+    """draw_scroll_bar (win32u/scroll.c:286) for SB_CTL with arrows and interior, no tracking:
+    USER_ScrollBarDraw (user32/scroll.c:169), SCROLL_DrawArrows (:38) and SCROLL_DrawInterior
+    (:72). The interior's brush is the parent's answer to WM_CTLCOLORSCROLLBAR, the 16-bit
+    WM_CTLCOLOR with CTLCOLOR_SCROLLBAR; the thumb is a COLOR_BTNFACE Rectangle in the
+    COLOR_WINDOWFRAME pen under DrawEdge(EDGE_RAISED, BF_RECT)."""
+    from .user_buttons import draw_rect_edge
+    uw = _uw()
+    w = uw.wm(wine).get(hwnd)
+    dc = gdi16.gdi(wine).get(hdc, gdi16.OBJ_DC)
+    if w is None or dc is None or not uw.is_visible(wine, hwnd):
+        return
+    info = scroll_info(wine, hwnd, SB_CTL, True)
+    if w.style & (SBS_SIZEGRIP | SBS_SIZEBOX):
+        yield f"SCROLLBAR {hwnd:#x} WM_PAINT with SBS_SIZEGRIP or SBS_SIZEBOX: neww draws only the bar"
+        return
+    rect, arrow, thumb, pos, vertical = scroll_bar_rect(wine, hwnd)
+    l, t, r, b = rect
+    if r <= l or b <= t:
+        return
+    if arrows and arrow:
+        first = (l, t, r, t + arrow) if vertical else (l, t, l + arrow, b)
+        last = (l, b - arrow, r, b) if vertical else (r - arrow, t, r, b)
+        draw_frame_scroll(wine, dc, first, (DFCS_SCROLLUP if vertical else DFCS_SCROLLLEFT)
+                          | (DFCS_INACTIVE if info.flags & ESB_DISABLE_LTUP else 0))
+        draw_frame_scroll(wine, dc, last, (DFCS_SCROLLDOWN if vertical else DFCS_SCROLLRIGHT)
+                          | (DFCS_INACTIVE if info.flags & ESB_DISABLE_RTDN else 0))
+    if not interior:
+        return
+    # SendMessageW(GetParent(hwnd), WM_CTLCOLORSCROLLBAR): a popup with no owner has no
+    # parent, the send fails with 0 and SelectObject(0) leaves the DC's brush.
+    parent = uw.get_parent(wine, None, hwnd)
+    brush = 0
+    if parent:
+        brush = yield from uw.send(wine, parent, WM_CTLCOLOR, hdc, (CTLCOLOR_SCROLLBAR << 16) | hwnd)
+        brush = (brush[0] if isinstance(brush, tuple) else brush) & 0xFFFF
+    saved = _with(dc, uw.sys_color_pen(wine, COLOR_WINDOWFRAME),
+                  brush if gdi16.gdi(wine).get(brush, gdi16.OBJ_BRUSH) is not None else None)
+    span = arrow - SCROLL_ARROW_THUMB_OVERLAP
+    il, it, ir, ib = (l, t + span, r, b - span) if vertical else (l + span, t, r - span, b)
+
+    def patcopy(x0, y0, x1, y1):
+        gdi16.current_brush_blit(wine, dc, gdi16.device_rect(dc, x0, y0, x1, y1), 0xF00021)
+    if not pos:
+        patcopy(il, it, ir, ib)
+    else:
+        if vertical:
+            patcopy(il, it, ir, it + pos - span)
+            it += pos - span
+            patcopy(il, it + thumb, ir, ib)
+            ib = it + thumb
+        else:
+            patcopy(il, it, il + pos - span, ib)
+            il += pos - span
+            patcopy(il + thumb, it, ir, ib)
+            ir = il + thumb
+        dc.brush = uw.sys_color_brush(wine, COLOR_BTNFACE)
+        gdi16._device_rectangle(wine, dc, gdi16.gdi(wine).get(dc.pen, gdi16.OBJ_PEN), gdi16.device_rect(dc, il + 1, it + 1, ir - 1, ib - 1))
+        draw_rect_edge(wine, dc, (il, it, ir, ib), COLOR_3DLIGHT, COLOR_BTNHIGHLIGHT, COLOR_3DDKSHADOW, COLOR_BTNSHADOW, False)
+    dc.pen, dc.brush = saved
+    if hwnd == uw.wm(wine).focus:
+        yield f"SCROLLBAR {hwnd:#x} WM_PAINT with the focus: Wine moves the caret to the thumb, which neww does not do yet"
+
+
 def scroll_bar_window_proc(wine, hwnd, msg, wp, lp):
     """scroll_bar_window_proc on the 16-bit message, as WINPROC_CallProc16To32A passes it."""
     uw = _uw()
@@ -310,7 +493,7 @@ def scroll_bar_window_proc(wine, hwnd, msg, wp, lp):
         info = scroll_info(wine, hwnd, SB_CTL, False)
         if info is not None:
             info.flags = ESB_ENABLE_BOTH if wp else ESB_DISABLE_BOTH
-            why = refresh(wine, hwnd, SB_CTL)
+            why = yield from refresh(wine, hwnd, SB_CTL)
             if why:
                 yield why
         return 0
@@ -325,7 +508,17 @@ def scroll_bar_window_proc(wine, hwnd, msg, wp, lp):
         result = yield from uw.def_window_proc(wine, hwnd, msg, wp, lp)
         return result
     if msg == WM_PAINT:
-        yield f"SCROLLBAR {hwnd:#x} WM_PAINT: Wine draws the bar (draw_scroll_bar), and neww draws none yet"
+        # scroll.c:1355: the DC in wParam, else BeginPaint's.
+        if wp:
+            yield from draw_scroll_bar(wine, hwnd, wp)
+            return 0
+        mark = uw.scratch_mark(wine)
+        ps = uw.scratch(wine, bytes(32))
+        hdc = yield from uw.begin_paint(wine, hwnd, ps)
+        if hdc:
+            yield from draw_scroll_bar(wine, hwnd, hdc)
+            uw.end_paint(wine, hwnd, ps)
+        uw.scratch_release(wine, mark)
         return 0
     if msg in (WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_NCMOUSEMOVE,
                WM_NCMOUSELEAVE, WM_MOUSEMOVE, WM_MOUSELEAVE, WM_SYSTIMER, WM_SETFOCUS, WM_KILLFOCUS):
@@ -390,7 +583,7 @@ def set_scroll_pos16(wine, arg, hwnd, bar, pos, redraw):
         why = _ctl_proc_ok(wine, hwnd, "USER.62 SetScrollPos")
         if why:
             return 0, 0, why
-    value, why = set_scroll_info(wine, hwnd, bar, SIF_POS | SIF_RETURNPREV, 0, pos, 0, 0, redraw)
+    value, why = yield from set_scroll_info(wine, hwnd, bar, SIF_POS | SIF_RETURNPREV, 0, pos, 0, 0, redraw)
     if why:
         return 0, 0, f"USER.62 {why}"
     return value & 0xFFFF
@@ -423,7 +616,7 @@ def set_scroll_range16(wine, arg, hwnd, bar, nmin, nmax, redraw):
             return 0, 0, why
     if nmax - nmin > 0x7FFF:
         nmin = nmax = 0
-    _value, why = set_scroll_info(wine, hwnd, bar, SIF_RANGE, 0, 0, nmin, nmax, redraw)
+    _value, why = yield from set_scroll_info(wine, hwnd, bar, SIF_RANGE, 0, 0, nmin, nmax, redraw)
     if why:
         return 0, 0, f"USER.64 {why}"
     return ax, 0

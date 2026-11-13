@@ -581,9 +581,12 @@ def def_window_proc(wine, hwnd, msg, wp, lp):
         dc = gdi16.gdi(wine).get(wp, gdi16.OBJ_DC)
         kind = lp >> 16
         if dc is not None:
-            if kind == 5:  # CTLCOLOR_SCROLLBAR
-                dc.bk_color = 0xFFFFFF
-                return 0, 0, "DefWindowProc WM_CTLCOLOR scrollbar: Wine makes a dithered brush, neww has none"
+            if kind == 5:  # CTLCOLOR_SCROLLBAR, handle_control_color (win32u/defwnd.c:2337)
+                dc.text_color = _colorref(gdi16.SYS_COLORS[15])  # COLOR_3DFACE
+                dc.bk_color = _colorref(gdi16.SYS_COLORS[20])    # COLOR_3DHILIGHT
+                if gdi16.SYS_COLORS[20] == gdi16.SYS_COLORS[5]:  # COLOR_WINDOW
+                    return brush_55aa(wine)
+                return sys_color_brush(wine, 0)                  # COLOR_SCROLLBAR
             text = 8 if kind != 6 else 18  # COLOR_WINDOWTEXT, COLOR_BTNTEXT
             back = 5 if kind not in (4, 6) else 15  # COLOR_WINDOW, COLOR_BTNFACE
             dc.text_color = _colorref(gdi16.SYS_COLORS[text])
@@ -619,6 +622,41 @@ def sys_color_brush(wine, index):
         obj.stock = True
         brushes[index] = g.add(obj)
     return brushes[index]
+
+
+def sys_color_pen(wine, index):
+    """get_sys_color_pen (win32u/sysparams.c:7420): one PS_SOLID width 1 pen per system color,
+    made once, never deleted."""
+    m = wm(wine)
+    pens = getattr(m, "sys_pens", None)
+    if pens is None:
+        pens = m.sys_pens = {}
+    if index not in pens:
+        g = gdi16.gdi(wine)
+        obj = gdi16.GdiObject(gdi16.OBJ_PEN, style=gdi16.PS_SOLID, width=1, color=_colorref(gdi16.SYS_COLORS[index]))
+        obj.stock = True
+        pens[index] = g.add(obj)
+    return pens[index]
+
+
+def brush_55aa(wine):
+    """get_55aa_brush (win32u/sysparams.c:7382): a pattern brush of an 8x8 1-bit bitmap whose
+    rows are the words 0x5555 and 0xaaaa in turn, made once, never deleted."""
+    m = wm(wine)
+    handle = getattr(m, "brush_55aa", None)
+    if handle is None:
+        g = gdi16.gdi(wine)
+        bmp = g.new_bitmap(8, 8, 1)
+        for y in range(8):
+            row = 0x55 if y % 2 == 0 else 0xAA
+            for x in range(8):
+                if row >> (7 - x) & 1:
+                    bmp.image.putpixel((x, y), (255, 255, 255))
+        bmp.stock = True
+        obj = gdi16.GdiObject(gdi16.OBJ_BRUSH, style=gdi16.BS_PATTERN, color=0, hatch=0, bitmap=g.add(bmp))
+        obj.stock = True
+        handle = m.brush_55aa = g.add(obj)
+    return handle
 
 
 def draw_frame(wine, w, active=None):
