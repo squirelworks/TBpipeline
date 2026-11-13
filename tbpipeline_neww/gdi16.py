@@ -45,6 +45,7 @@ OBJ_PEN, OBJ_BRUSH, OBJ_DC, OBJ_METADC, OBJ_PAL, OBJ_FONT, OBJ_BITMAP, OBJ_REGIO
 BS_SOLID, BS_NULL, BS_HATCHED, BS_PATTERN = 0, 1, 2, 3
 PS_SOLID, PS_NULL = 0, 5
 TRANSPARENT, OPAQUE = 1, 2
+SYMBOL_CHARSET = 2
 MM_TEXT, MM_LOMETRIC, MM_HIMETRIC, MM_LOENGLISH, MM_HIENGLISH, MM_TWIPS, MM_ISOTROPIC, MM_ANISOTROPIC = range(1, 9)
 
 # win32u sysparams.c default system colors, COLOR_SCROLLBAR (0) to COLOR_MENUBAR (30).
@@ -123,6 +124,8 @@ class Gdi:
         self.next = 0x1004
         self.screen = Image.new("RGB", SCREEN, SYS_COLORS[1])
         self.fonts = {}
+        self.root = None
+        self.symbol_files = None
         self._stock()
 
     def _stock(self):
@@ -172,9 +175,44 @@ class Gdi:
 
     # -------------------------------------------------------------- fonts
 
+    def symbol_face(self, face):
+        """The TrueType file for a SYMBOL_CHARSET face, or None.
+
+        Wine's font list (Wine 2528aff2 dlls/win32u/font.c) holds the fonts installed on the system: Wine's own, which
+        its build puts in the Windows fonts folder (Wine 2528aff2 fonts/symbol.ttf, wingding.ttf,
+        webdings.ttf, marlett.ttf), and any a program's setup copied there. neww's system folder is
+        the `--b` directory, so a `.ttf` there is installed (a course's own face, such as NIDA's
+        nida.ttf), and Wine's own come from a Wine checkout named by WINE_SRC. A face is found by
+        its family name, case blind. A SYMBOL_CHARSET request whose face is not there gets Wine's
+        Symbol, as font.c's charset fallback picks a face that has the charset (the charset table
+        at dlls/win32u/font.c:309 gives SYMBOL_CHARSET only to FS_SYMBOL faces)."""
+        if self.symbol_files is None:
+            import os
+            self.symbol_files = {}
+            dirs = [Path(self.root)] if self.root else []
+            if os.environ.get("WINE_SRC"):
+                dirs.append(Path(os.environ["WINE_SRC"]) / "fonts")
+            for d in dirs:
+                for f in sorted(d.glob("*")) if d.is_dir() else []:
+                    if f.suffix.lower() != ".ttf":
+                        continue
+                    try:
+                        from PIL import ImageFont
+                        font = ImageFont.truetype(str(f), 10, encoding="symb")
+                    except OSError:
+                        continue  # no (3, 0) symbol cmap: not a symbol face
+                    self.symbol_files.setdefault(font.getname()[0].lower(), str(f))
+        return self.symbol_files.get(face.lower()) or self.symbol_files.get("symbol")
+
     def font_for(self, log):
         """A Pillow font for a LOGFONT: (font, height in pixels, ascent, descent)."""
         from PIL import ImageFont
+        # The face "Symbol" is SYMBOL_CHARSET whatever lfCharSet says, and only Symbol (Wine
+        # 2528aff2 dlls/win32u/font.c:4439).
+        if log["charset"] == SYMBOL_CHARSET or log["face"].lower() == "symbol":
+            path = self.symbol_face(log["face"])
+            if path:
+                return self._load(("symbol", path, log["height"]), path, log["height"], "symb")
         height = log["height"] or 16
         family = log["pitch_family"] & 0xF0
         face = log["face"].lower()
@@ -190,13 +228,23 @@ class Gdi:
             return self.fonts[key]
         path = next((str(Path(d) / name) for name in TEXT_STANDIN[(kind, bold)] for d in FONT_DIRS
                      if (Path(d) / name).exists()), None)
+        return self._load(key, path, height)
+
+    def _load(self, key, path, height, encoding="unic"):
+        from PIL import ImageFont
+        if key in self.fonts:
+            return self.fonts[key]
+        height = height or 16
 
         def load(size):
             # None of them (a Windows host): Pillow's own scalable face stands in.
             # BASIC layout: one glyph per character, the same on every host. Raqm, where Pillow has
             # it, refuses to lay out a lone control character, which GetCharWidth(0, 255) asks for.
             if path:
-                return ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.BASIC)
+                font = ImageFont.truetype(path, size, encoding=encoding, layout_engine=ImageFont.Layout.BASIC)
+                # A symbol face's (3, 0) cmap puts character code c at U+F000 + c.
+                font.neww_symbol = encoding == "symb"
+                return font
             return ImageFont.load_default(size)
         if height < 0:
             size = -height
@@ -230,6 +278,7 @@ def _logfont(height, width, weight, charset, pitch_family, face, italic=0, under
 def gdi(wine):
     if getattr(wine, "gdi", None) is None:
         wine.gdi = Gdi()
+        wine.gdi.root = getattr(wine, "root", None)
     return wine.gdi
 
 
@@ -1714,10 +1763,19 @@ def get_text_metrics(wine, arg, hdc, ptr):
     return 1
 
 
+def glyph(pil, ch):
+    """The character Pillow draws for ch: in a symbol face, U+F000 + its byte, as
+    get_glyph_index_symbol (Wine 2528aff2 dlls/win32u/freetype.c:2171) looks it up in the (3, 0)
+    cmap."""
+    if getattr(pil, "neww_symbol", False):
+        return chr(0xF000 + ch.encode("cp1252", "replace")[0])
+    return ch
+
+
 def char_width(pil, ch):
     """One character's advance in whole pixels, as GetCharWidth gives it. The extent of a string is
     the sum of these, so a caller that adds up GetCharWidth lands where TextOut stops."""
-    return round(pil.getlength(ch))
+    return round(pil.getlength(glyph(pil, ch)))
 
 
 def text_width(wine, dc, text):
@@ -1821,7 +1879,7 @@ def draw_text(wine, dc, x, y, text, opaque_rect=None, clip_rect=None):
     draw = ImageDraw.Draw(layer)
     cx = 0
     for ch in text:
-        draw.text((cx, 0), ch, font=pil, fill=255)
+        draw.text((cx, 0), glyph(pil, ch), font=pil, fill=255)
         cx += char_width(pil, ch) + dc.char_extra
     if log["underline"]:
         draw.line([(0, ascent + 1), (width, ascent + 1)], fill=255)

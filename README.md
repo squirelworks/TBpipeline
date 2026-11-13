@@ -42,7 +42,7 @@ Tick a box when its PR merges. The issues hold the detail.
 
 - [x] [Roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201), T0 to T9. Complete, released as `neww-v0.5.0`
 - [x] [#221](https://github.com/squirelworks/TBpipeline/issues/221): metafile playback and `MM_ANISOTROPIC`. The NIDA ATT course `93952606.TBK` now walks past P430 to its Lesson Menu
-- [ ] Wingdings and Symbol-font characters (bullets, π) through a symbol-font mapping
+- [x] [#225](https://github.com/squirelworks/TBpipeline/issues/225): Wingdings and Symbol-font characters (bullets, π) through the symbol faces Wine installs and the course's own `nida.ttf`
 - [ ] The other NIDA ATT courses: on hold until the week of 2026-11-09
 
 [documentation/future.md](documentation/future.md) has the longer list. [CURSOR.md](CURSOR.md) is the handover note for Cursor (2026-11-08).
