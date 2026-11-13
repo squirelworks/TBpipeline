@@ -47,10 +47,10 @@ Done for [#221](https://github.com/squirelworks/TBpipeline/issues/221), in one P
 
 Left over from #221: text through a scaling transform stops by name (font heights are not mapped yet), and the records neww does not play yet (`META_POLYPOLYGON`, `META_EXTTEXTOUT`, the region and bitmap records) stop by name.
 
-Known gaps with no item yet:
+Done for [#225](https://github.com/squirelworks/TBpipeline/issues/225):
 
-- [ ] Wingdings bullets draw as "w" (LF P100): there is no symbol-font mapping.
-- [ ] The Symbol font is unmapped the same way: π draws as "p" (93952606 P430).
+- [x] Wingdings bullets draw as Wingdings bullets (LF P100), not as "w".
+- [x] π on 93952606 P430 draws from the course's own symbol face, `nida.ttf`, not as "p".
 
 The other NIDA ATT courses are on hold until the week of 2026-11-09.
 
