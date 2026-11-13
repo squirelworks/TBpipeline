@@ -174,6 +174,19 @@ class MapModes(Base):
         self.assertEqual(self.pixel(dc, 3, 3), 0x00FF00)        # bottom right green
         self.assertEqual(self.pixel(dc, 1, 3), 0x0000FF)        # bottom left red
 
+    def test_offset_clip_rgn_moves_the_clip_by_the_scaled_offset(self):
+        # NtGdiOffsetClipRgn: NULLREGION with no clip; else muldiv by the extents, then the
+        # region's complexity. ToolBook calls it after each metafile picture on P440.
+        dc = self.dc(8, 8)
+        self.assertEqual(self.call("OffsetClipRgn", dc, 1, 1), 1)
+        self.call("IntersectClipRect", dc, 0, 0, 2, 2)
+        self.call("SetMapMode", dc, MM_ANISOTROPIC)
+        self.call("SetViewportExtEx", dc, 2, 2, NUL)
+        self.assertEqual(self.call("OffsetClipRgn", dc, 1, 2), 2)
+        self.call("SetMapMode", dc, MM_TEXT)
+        self.call("GetClipBox", dc, (DATA, 0x300))
+        self.assertEqual(struct.unpack("<hhhh", self.w.memory.read(DATA, 0x300, 8)), (2, 4, 4, 6))
+
     def test_text_through_a_scaling_transform_stops_by_name(self):
         dc = self.dc()
         self.call("SetMapMode", dc, MM_ANISOTROPIC)
@@ -307,7 +320,7 @@ class CourseGetsPastP430(unittest.TestCase):
         print(f"\n  stopped {host.stop} | calls {host.calls}")
         trace = host.box.wine.trace
         self.assertTrue(host.stop.startswith("idle:"), host.stop)
-        self.assertNotIn("default", " ".join(t for t in trace if "EnumMetaFile" in t))
+        self.assertEqual([t for t in trace if "(default" in t], [])
         self.assertIn("GDI.351 ExtTextOut 'P440'", trace)
         self.assertEqual(sum(1 for t in trace if t.startswith("GDI.175 EnumMetaFile")), 2)
         self.assertEqual(sum(1 for t in trace if t.startswith("GDI.176 PlayMetaFileRecord")), 22)

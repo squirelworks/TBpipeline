@@ -1255,6 +1255,23 @@ def exclude_clip_rect(wine, arg, hdc, l, t, r, b):
     return 0, 0, f"GDI ExcludeClipRect {rect} from {base}: the clip is no longer one rectangle, and neww keeps rectangles only"
 
 
+@api("GDI", "OffsetClipRgn")
+def offset_clip_rgn(wine, arg, hdc, x, y):
+    """OffsetClipRgn16 (Wine 2528aff2 dlls/gdi.exe16/gdi.c:757) -> NtGdiOffsetClipRgn
+    (dlls/win32u/clipping.c:234): with no clip region NULLREGION (1); else the offset scaled by
+    muldiv(x, viewport ext, window ext) moves the region, and the answer is its complexity."""
+    dc = _dc(wine, hdc)
+    if dc is None:
+        return 0
+    if dc.user_clip is None:
+        return 1
+    dx = _muldiv(x, dc.vp_ext[0], dc.wnd_ext[0])
+    dy = _muldiv(y, dc.vp_ext[1], dc.wnd_ext[1])
+    l, t, r, b = dc.user_clip
+    dc.user_clip = (l + dx, t + dy, r + dx, b + dy)
+    return 1 if _empty(dc.user_clip) else 2
+
+
 @api("GDI", "GetClipBox")
 def get_clip_box(wine, arg, hdc, ptr):
     """GetClipBox: the clip in logical coordinates."""
