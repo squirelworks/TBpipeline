@@ -77,9 +77,9 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] Not neww bugs: tb80a links `"tbfile32"` with no extension, which `OpenFile` does not add in Wine either; otb_cross_a is a fixture another project wrote by hand, and ToolBook calls it damaged.
 - [ ] "Not a valid OpenScript term: ." (chewbyte, tb80actr): the handler calls `tbk_hasHyperlinks`, from the system book `TB80HYP.SBK`, which this book never opens. learn1 opens it after its `*TbxBase*` step; chewbyte never reaches that step.
 - [x] Scroll bars are drawn as Wine draws them: arrows, the interior in the parent's `WM_CTLCOLORSCROLLBAR` brush (DefWindowProc's is the 0x55AA pattern) and the thumb. `SetScrollPos` and `SetScrollRange` with redraw draw at once.
-- [x] The walk tries Go > Next, then Ctrl+Right, then a click on text that reads like a Next button, and says when none of them moved the page.
+- [x] The walk tries Go > Next, a Next text, the button pictures on the screen (NIDA's bitmap Next), a click on the page (title pages), then Ctrl+Right, and says when none of them turned a page.
 - [x] The non-client hit test (`handle_nc_hit_test`): a click on the frame, caption or menu bar reaches `WM_SYSCOMMAND`.
-- [ ] Menu tracking (`track_mouse_menu_bar`), moving and sizing: `WM_SYSCOMMAND` stops there by name. Books that turn pages only with picture buttons.
+- [ ] Menu tracking (`track_mouse_menu_bar`), moving and sizing: `WM_SYSCOMMAND` stops there by name. 
 - [ ] The ~195 NIDA ATT courses in Drive, once they are reachable from the container.
 
 ## Do not do this
