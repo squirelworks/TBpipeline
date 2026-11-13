@@ -170,15 +170,15 @@ def _release_typeinfo(wine, ptr):
 def typeinfo_query_interface(wine, arg):
     """ITypeInfo_fnQueryInterface (dlls/oleaut32/typelib.c:5653): IUnknown and ITypeInfo are
     the object, with a reference; anything else E_NOINTERFACE and *ppv NULL. ITypeInfo2,
-    ICreateTypeInfo and ITypeComp stop: neww's object has none of them."""
+    ICreateTypeInfo, ICreateTypeInfo2 and ITypeComp stop: neww's object has none of them."""
     this, riid, ppv = _this(arg), arg(2) | arg(3) << 16, arg(4) | arg(5) << 16
     iid = wine.read(riid >> 16, riid & 0xFFFF, 16)
     if iid in (IID_IUNKNOWN, IID_ITYPEINFO):
         _com(wine)[this]["ref"] += 1
         _put_ptr(wine, ppv, this)
         return 0, 0, None
-    if iid[4:] == IID_ITYPEINFO[4:] and _struct.unpack("<I", iid[:4])[0] in (0x00020412, 0x00020405, 0x00020406, 0x00020403):
-        return 0, 0, "OLE2DISP.500 ITypeInfo::QueryInterface for ITypeInfo2, ICreateTypeInfo or ITypeComp, which neww's type info does not have"
+    if iid[4:] == IID_ITYPEINFO[4:] and _struct.unpack("<I", iid[:4])[0] in (0x00020412, 0x00020405, 0x0002040E, 0x00020403):
+        return 0, 0, "OLE2DISP.500 ITypeInfo::QueryInterface for ITypeInfo2, ICreateTypeInfo, ICreateTypeInfo2 or ITypeComp, which neww's type info does not have"
     _put_ptr(wine, ppv, 0)
     return E_NOINTERFACE & 0xFFFF, E_NOINTERFACE >> 16, None
 
