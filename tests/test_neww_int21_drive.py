@@ -42,3 +42,25 @@ class CurrentDirectory(unittest.TestCase):
         _text, regs, stop = self.call(1)
         self.assertIsNone(stop)
         self.assertEqual((regs["ax"], regs["eflags_cf"]), (15, 1))
+
+
+class DeleteFile(unittest.TestCase):
+    """int21.c:4382 "UNLINK": DeleteFileW of DS:DX, CF clear on success; else the DOS extended
+    error in AX with CF set. neww deletes only files the run wrote."""
+
+    def call(self, w, name):
+        from tests.test_neww_batch1_handlers import DATA
+        w.memory.write(DATA, 0x100, name + b"\0")
+        return w.int21(lambda r: {"ax": 0x4100, "ds": DATA, "dx": 0x100}.get(r, 0))
+
+    def test_a_written_file_goes_and_a_missing_one_is_not_found(self):
+        w = wine()
+        w._kstate()
+        w.written["TEMP.DAT"] = bytearray(b"x")
+        regs, stop = self.call(w, b"C:\\TBK\\temp.dat")
+        self.assertIsNone(stop)
+        self.assertEqual(regs["eflags_cf"], 0)
+        self.assertNotIn("TEMP.DAT", w.written)
+        regs, stop = self.call(w, b"C:\\TBK\\temp.dat")
+        self.assertIsNone(stop)
+        self.assertEqual((regs["ax"], regs["eflags_cf"]), (2, 1))

@@ -2346,7 +2346,8 @@ def validate_rgn(wine, arg, hwnd, hrgn):
     w = wm(wine).get(hwnd)
     if w is not None:
         rgn = gdi16.gdi(wine).get(hrgn, gdi16.OBJ_REGION) if hrgn else None
-        if rgn is None or (w.update is not None and gdi16._contains(rgn.rect, w.update)):
+        if rgn is None or (w.update is not None and not gdi16.region_op(
+                [w.update], gdi16.region_rects(rgn), gdi16.REGION_OPS[4])):
             w.update = None
     return arg.regs("ax"), 0
 
@@ -2426,6 +2427,16 @@ def fill_rect(wine, arg, hdc, ptr, brush):
         return 0
     gdi16.fill(wine, dc, read_rect(wine, ptr), brush)
     return 1
+
+
+@api("USER", "InvertRect")
+def invert_rect(wine, arg, hdc, ptr):
+    """InvertRect16 (user.exe16/user.c:775), void: PatBlt with DSTINVERT over the rectangle."""
+    dc = gdi16.gdi(wine).get(hdc, gdi16.OBJ_DC)
+    if dc is not None:
+        l, t, r, b = read_rect(wine, ptr)
+        gdi16.current_brush_blit(wine, dc, gdi16.device_rect(dc, l, t, r, b), 0x550009)
+    return arg.regs("ax"), arg.regs("dx")
 
 
 @api("USER", "GetSysColor")
@@ -2846,6 +2857,7 @@ def _idle(wine, arg, hwnd, first, last, call):
         if more:
             from .input16 import queue_script
             queue_script(wine, more)
+            wine.idle_fed = True
             return None
     sp, ss = arg.regs("sp"), arg.regs("ss")
     ip, cs = arg.word(ss, sp), arg.word(ss, sp + 2)
@@ -2875,6 +2887,11 @@ def get_message(wine, arg, ptr, hwnd, first, last):
     idle = _idle(wine, arg, hwnd, first, last, "GetMessage")
     if idle is not None:
         return 0, 0, idle
+    if wine.__dict__.pop("idle_fed", False):
+        # The driver gave more input: take it now, as the call would on its next look.
+        calls = _input(wine, hwnd, first, last)
+        if calls is not None:
+            return calls
     msg, nxt = _next_or_wait(wine, hwnd, first, last, True)
     if nxt is not None:
         wine.trace[-1] += f" (waits) -> {nxt.exe_name}"
@@ -3048,6 +3065,14 @@ def in_send_message(wine, arg):
 
 @api("USER", "GetTickCount", "GetCurrentTime")
 def get_tick_count(wine, arg):
+    """neww's clock. It moves when tasks wait; a program that waits by calling GetTickCount
+    over and over, with no other call between, would never see it move, where on Wine real
+    time passes. So each such call right after the last one moves the clock 1 ms."""
+    m = wm(wine)
+    here = len(wine.trace)
+    if getattr(m, "last_tick_call", None) == here - 1:
+        m.clock += 1
+    m.last_tick_call = here
     return m_time(wine)
 
 

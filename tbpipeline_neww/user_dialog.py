@@ -249,6 +249,75 @@ def _dlgcode(wine, hwnd):
     return code & 0xFFFF
 
 
+WS_GROUP, WS_EX_CONTROLPARENT, DLGC_BUTTON, DLGC_RADIOBUTTON = 0x00020000, 0x00010000, 0x2000, 0x0040
+
+
+def next_group_item(wine, hdlg, hctrl, previous):
+    """GetNextDlgGroupItem (user32/dialog.c:1528): the next (or previous) visible, enabled
+    control of hctrl's group, going round the group once; 0 for none."""
+    uw = _uw()
+    m = uw.wm(wine)
+
+    def style(h):
+        w = m.get(h)
+        return w.style if w is not None else 0
+
+    def child(h):
+        kids = [k for k in m.children.get(h, []) if m.get(k) is not None]
+        return kids[0] if kids else 0
+
+    def next_sibling(h):
+        w = m.get(h)
+        sib = [k for k in m.children.get(w.parent, []) if m.get(k) is not None]
+        i = sib.index(h) + 1
+        return sib[i] if i < len(sib) else 0
+
+    shown = lambda h: (style(h) & (uw.WS_VISIBLE | uw.WS_DISABLED)) == uw.WS_VISIBLE
+    if hdlg == hctrl:
+        hctrl = 0
+    if not hctrl and previous:
+        return 0
+    if hctrl:
+        if not uw.is_child_of(m, hctrl, hdlg):
+            return 0
+    else:
+        hctrl = child(hdlg)
+        if not hctrl:
+            return 0
+        if shown(hctrl):
+            return hctrl
+    looped = skipping = False
+    last_group = 0
+    ret = hwnd = hctrl
+    while True:
+        nxt = next_sibling(hwnd)
+        while not nxt:
+            if m.get(hwnd).parent == hdlg:
+                if looped:
+                    return ret
+                looped = True
+                nxt = child(hdlg)
+            else:
+                hwnd = m.get(hwnd).parent
+                nxt = next_sibling(hwnd)
+        hwnd = nxt
+        while m.get(hwnd).exstyle & WS_EX_CONTROLPARENT and shown(hwnd) and child(hwnd):
+            hwnd = child(hwnd)
+        if style(hwnd) & WS_GROUP:
+            last_group = hwnd
+            skipping = True
+        if hwnd == hctrl:
+            if not skipping or last_group == hwnd:
+                break
+            hwnd = last_group
+            skipping = looped = False
+        if not skipping and shown(hwnd):
+            ret = hwnd
+            if not previous:
+                break
+    return ret
+
+
 def find_def_button(wine, hdlg):
     """DEFDLG_FindDefButton (defdlg.c:110): the first child answering DLGC_DEFPUSHBUTTON."""
     for h in children(wine, hdlg):
@@ -620,7 +689,16 @@ def is_dialog_message(wine, hdlg, msg):
         yield from _send(wine, hdlg, WM_NEXTDLGCTL, int(shift), 0)
         return True
     if wp in (VK_LEFT, VK_UP, VK_RIGHT, VK_DOWN) and not code & DLGC_WANTARROWS:
-        yield f"IsDialogMessage arrow key {wp:#x}: GetNextDlgGroupItem is not in neww yet"
+        # dialog.c:1223: the next item of the control's group; a radio button gets the focus
+        # (and an auto radio button a click), anything else WM_NEXTDLGCTL.
+        nxt = next_group_item(wine, hdlg, h, wp in (VK_LEFT, VK_UP))
+        if nxt:
+            ncode = yield from _send(wine, nxt, WM_GETDLGCODE, wp, 0)
+            if ncode & 0xFFFF == DLGC_BUTTON | DLGC_RADIOBUTTON:
+                yield (f"IsDialogMessage arrow key {wp:#x} to radio button {nxt:#x}: Wine focuses it and "
+                       "clicks an auto radio button with BM_CLICK, which neww does not map to 16 bits yet")
+                return True
+        yield from _send(wine, hdlg, WM_NEXTDLGCTL, nxt, 1)
         return True
     if wp in (VK_CANCEL, VK_ESCAPE):
         cancel = get_dlg_item(wine, hdlg, IDCANCEL)

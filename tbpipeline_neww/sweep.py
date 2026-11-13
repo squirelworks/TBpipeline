@@ -5,10 +5,13 @@
 Each book runs in its own process, with a time limit, so one that hangs or crashes does not
 take the others with it. The walk is the same for every book: the first page, then up to
 --pages steps to the next page, each followed by a wait and a mouse move so the book's
-timers run. A step is Go > Next (the menu item's WM_COMMAND), Ctrl+Right (ToolBook's next
-page key) or a click on text that reads like a Next button; a way that leaves the screen
-unchanged gives way to the next, and the walk ends when none moves it. The walk letters
-(m, k, t; upper case when the screen changed) and the screens count say how far it got.
+timers run. A step is Go > Next (the menu item's WM_COMMAND), a click on text that reads like a
+Next button, a click on a button-sized picture (bottom-right first; the one that turned a
+page is tried first after that), a click in the middle of the window (a title page), or
+Ctrl+Right (ToolBook's next page key). A way that leaves
+the screen unchanged gives way to the next, and the walk ends when none moves it. The walk
+letters (m, t, p, k; upper case when the screen changed) and the screens count say how far
+it got.
 
 A result line holds the stop, the calls, how many distinct screens were seen, the MessageBox
 texts, the spec-row defaults, and the stop's cause: the "MODULE.ordinal Name" it names when
@@ -58,11 +61,16 @@ def titles(wine):
 
 
 def opened(result):
-    """A pass: idle with no MessageBox and no spec-row defaults, and a main window that is not
-    the runtime's empty "(Untitled)" one."""
-    return (result.get("cause") == "idle" and not result.get("messagebox_count")
-            and not result.get("default_count")
-            and not any("(Untitled)" in t for t in result.get("titles") or []))
+    """A pass: the book opened (idle with no MessageBox, no spec-row defaults, and a main window
+    that is not the runtime's empty "(Untitled)" one) and the walk ended idle, or in the book's
+    own exit after the walk clicked something (its Exit button). MessageBoxes and titles count
+    as they were when the book first went idle, when the sweep has them."""
+    cause = result.get("cause")
+    ended = cause == "idle" or (cause == "exit" and bool(result.get("walk")))
+    boxes = result.get("open_messagebox_count", result.get("messagebox_count"))
+    titles = result.get("open_titles", result.get("titles")) or []
+    return (ended and not boxes and not result.get("default_count")
+            and not any("(Untitled)" in t for t in titles))
 
 
 WM_COMMAND, MF_GRAYED, MF_DISABLED = 0x111, 0x1, 0x2
@@ -106,10 +114,12 @@ def _overlaps(a, b):
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
-class Texts:
-    """Where text is drawn, followed through blits to the screen: gdi16 calls drawn() for each
+class Marks:
+    """What is drawn where, followed through blits to the screen: gdi16 calls drawn() for each
     TextOut/ExtTextOut and blitted() for each raster operation when wine.draw_watch is set.
-    Boxes are in the surface's pixels; a page drawn off screen and copied up keeps its words."""
+    A mark is (box, kind, value): a "text" with its string, or a "picture", a button-sized
+    bitmap copied in (value its size). Boxes are in the surface's pixels, so a page composed
+    off screen and copied up keeps its words and pictures."""
 
     def __init__(self):
         self.by_image = {}
@@ -121,29 +131,47 @@ class Texts:
         return entry[1]
 
     def drawn(self, img, box, text):
-        texts = self._list(img)
-        texts[:] = [t for t in texts if not _overlaps(t[0], box)]
+        marks = self._list(img)
+        # Text over a picture (a caption on a button) leaves the picture.
+        marks[:] = [m for m in marks if m[1] != "text" or not _overlaps(m[0], box)]
         if text.strip():
-            texts.append((box, text))
+            marks.append((box, "text", text))
 
     def blitted(self, img, box, src, srcpos):
-        texts = self._list(img)
-        texts[:] = [t for t in texts if not _overlaps(t[0], box)]
+        marks = self._list(img)
+        marks[:] = [m for m in marks if not _overlaps(m[0], box)]
         if src is None or src is img:
             return
         sl, st = srcpos
         sbox = (sl, st, sl + box[2] - box[0], st + box[3] - box[1])
         dx, dy = box[0] - sl, box[1] - st
-        for b, text in self._list(src):
-            if _inside(b, sbox):
-                texts.append(((b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy), text))
+        for b, kind, value in self._list(src):
+            # A mark the copy cuts (the window's edge clips a button by a pixel) comes along
+            # cut; text must come whole.
+            if _inside(b, sbox) or (kind == "picture" and _overlaps(b, sbox)):
+                b = (max(b[0], sbox[0]), max(b[1], sbox[1]), min(b[2], sbox[2]), min(b[3], sbox[3]))
+                marks.append(((b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy), kind, value))
+        if button_sized(src.size) and button_sized((box[2] - box[0], box[3] - box[1])):
+            marks.append((box, "picture", src.size))
 
-    def on(self, img):
+    def on(self, img, kind=None):
         entry = self.by_image.get(id(img))
-        return list(entry[1]) if entry is not None and entry[0] is img else []
+        if entry is None or entry[0] is not img:
+            return []
+        return [m for m in entry[1] if kind is None or m[1] == kind]
+
+
+def button_sized(size):
+    """A bitmap the size of a button or icon: from 8 x 8 up to 160 x 120 pixels."""
+    w, h = size
+    return 8 <= w <= 160 and 8 <= h <= 120
 
 
 NEXT_TEXT = re.compile(r"^\s*(next(\s+page)?|continue|forward|>|>>|\u2192)\s*(>|>>|\u00bb)?\s*$", re.I)
+
+
+def _centre(b):
+    return (b[0] + b[2]) // 2, (b[1] + b[3]) // 2
 
 
 def next_text(wine):
@@ -153,32 +181,72 @@ def next_text(wine):
     g = getattr(wine, "gdi", None)
     if watch is None or g is None:
         return None
-    hits = [b for b, text in watch.on(g.screen) if NEXT_TEXT.match(text)]
+    hits = [b for b, _kind, text in watch.on(g.screen, "text") if NEXT_TEXT.match(text)]
     if not hits:
         return None
-    b = max(hits, key=lambda b: (b[3], b[2]))
-    return (b[0] + b[2]) // 2, (b[1] + b[3]) // 2
+    return _centre(max(hits, key=lambda b: (b[3], b[2])))
+
+
+def pictures(wine):
+    """The centres of the button-sized pictures on the screen, bottom-right first: where a
+    course's Next button usually is."""
+    watch = getattr(wine, "draw_watch", None)
+    g = getattr(wine, "gdi", None)
+    if watch is None or g is None:
+        return []
+    spots = []
+    for b, _kind, _size in watch.on(g.screen, "picture"):
+        c = _centre(b)
+        if c not in spots:
+            spots.append(c)
+    return sorted(spots, key=lambda c: (-(c[0] + c[1]), -c[0]))
+
+
+def window_centre(wine):
+    """The centre of the active window's client area on the screen (a title page that goes on
+    with a click anywhere), or None."""
+    from tbpipeline_neww.user_wnd import screen_origin, wm
+    m = wm(wine)
+    w = m.get(m.active) if m.active else None
+    if w is None:
+        return None
+    x, y = screen_origin(wine, w.hwnd)
+    cx, cy = w.client[2] - w.client[0], w.client[3] - w.client[1]
+    if cx <= 0 or cy <= 0:
+        return None
+    return x + cx // 2, y + cy // 2
 
 
 class Walk:
     """The page walk: on each idle, one way of going to the next page. A way that left the
-    screen as it was gives way to the next one (Go > Next as a WM_COMMAND, Ctrl+Right, a click
-    on a Next text); when every way in a row left it unchanged, the walk is stuck and ends.
-    log holds one letter per step, upper case when the screen changed after it."""
+    screen as it was gives way to the next one: Go > Next as a WM_COMMAND, a click on a Next
+    text, a click on a button picture, a click in the middle of the window (a title page),
+    Ctrl+Right. Pictures are tried one after another,
+    bottom-right first, and the one that turned a page is tried first after that. When every
+    way in a row left the screen unchanged, the walk is stuck and ends. log holds one letter
+    per step, upper case when the screen changed after it."""
 
-    WAYS = ("menu", "key", "text")
-    LETTER = {"menu": "m", "key": "k", "text": "t"}
+    WAYS = ("menu", "text", "picture", "centre", "key")
+    LETTER = {"menu": "m", "key": "k", "text": "t", "picture": "p", "centre": "c"}
+    PROBES = 8          # pictures tried on one screen before giving up on them
 
-    def __init__(self, pages, find_menu=None, find_text=None, post=None):
+    def __init__(self, pages, find_menu=None, find_text=None, post=None, find_pictures=None, find_centre=None):
         self.pages = pages
         self.find_menu = find_menu or next_command
         self.find_text = find_text or next_text
+        self.find_pictures = find_pictures or pictures
+        self.find_centre = find_centre or window_centre
         self.post = post or _post_command
         self.way, self.unchanged, self.steps = 0, 0, 0
         self.before = None
         self.log = []
         self.screens = []
         self.stuck = False
+        self.last_way = self.last_spot = self.known = None
+        self.failed = {}
+        self.visited = set()
+        self.opened_at = None       # the trace length at the first idle: the book is open
+        self.clicked = []
 
     def look(self, wine):
         h = screen_hash(wine)
@@ -186,34 +254,63 @@ class Walk:
             self.screens.append(h)
         return h
 
+    def _rotate(self):
+        self.unchanged += 1
+        self.way = (self.way + 1) % len(self.WAYS)
+
     def __call__(self, wine):
         now = self.look(wine)
+        new = now not in self.visited
+        self.visited.add(now)
+        if self.opened_at is None:
+            self.opened_at = len(getattr(wine, "trace", []))
         if self.log:
-            if now != self.before:
+            # A page turned when the screen is one the walk has not seen: going back to a
+            # page already seen (a Back button) is no progress.
+            if new:
                 self.log[-1] = self.log[-1].upper()
                 self.unchanged = 0
+                if self.last_way == "picture":
+                    self.known = self.last_spot
+                elif self.last_way == "centre":
+                    # Past a title page: look for buttons first, then click through again.
+                    self.way = self.WAYS.index("picture")
+            elif self.last_way == "picture":
+                self.failed.setdefault(self.before, set()).add(self.last_spot)
+                if self.known == self.last_spot:
+                    self.known = None
+                if self._picture(wine, now) is None:
+                    self._rotate()
             else:
-                self.unchanged += 1
-                self.way = (self.way + 1) % len(self.WAYS)
+                self._rotate()
         if self.steps >= self.pages:
             return None
         tried = 0
         while tried < len(self.WAYS) and self.unchanged < len(self.WAYS):
             way = self.WAYS[self.way]
-            script = self._try(wine, way)
+            script = self._try(wine, way, now)
             if script is not None:
                 self.steps += 1
                 self.before = now
+                self.last_way = way
                 self.log.append(self.LETTER[way])
                 return script
             # Not there to try: counts as a way that did not move the page.
-            self.unchanged += 1
-            self.way = (self.way + 1) % len(self.WAYS)
+            self._rotate()
             tried += 1
         self.stuck = True
         return None
 
-    def _try(self, wine, way):
+    def _picture(self, wine, screen):
+        failed = self.failed.get(screen, set())
+        if len(failed) >= self.PROBES:
+            return None
+        spots = [c for c in self.find_pictures(wine) if c not in failed]
+        if self.known in spots:
+            return self.known
+        return spots[0] if spots else None
+
+    def _try(self, wine, way, screen):
         x = 320 + self.steps + 1
         if way == "menu":
             target = self.find_menu(wine)
@@ -223,16 +320,26 @@ class Walk:
             return f"wait 4000; move {x},240"
         if way == "key":
             return NEXT.format(x=x)
-        spot = self.find_text(wine)
+        if way == "text":
+            spot = self.find_text(wine)
+        elif way == "picture":
+            spot = self._picture(wine, screen)
+        else:
+            spot = self.find_centre(wine)
         if spot is None:
             return None
+        self.last_spot = spot
+        if spot not in self.clicked:
+            self.clicked.append(spot)
         return f"click {spot[0]},{spot[1]}; wait 4000; move {x},240"
 
     def summary(self):
         letters = "".join(self.log).lower()
         return {"walk": "".join(self.log), "menu_next": letters.count("m"), "keys": letters.count("k"),
-                "text_clicks": letters.count("t"), "moved": sum(c.isupper() for c in self.log),
-                "stuck": self.stuck, "screens": len(set(self.screens))}
+                "text_clicks": letters.count("t"), "picture_clicks": letters.count("p"),
+                "centre_clicks": letters.count("c"),
+                "moved": sum(c.isupper() for c in self.log), "stuck": self.stuck,
+                "screens": len(set(self.screens)), "clicked": [list(c) for c in self.clicked[:6]]}
 
 
 def _post_command(wine, target):
@@ -245,8 +352,14 @@ def run_one(root, book, pages, call_limit):
     from tbpipeline_neww import machine
     host = machine.Machine(root, book, input_script=FIRST, idle_stop=True)
     walk = Walk(pages)
-    host.box.wine.draw_watch = Texts()
-    host.box.wine.on_idle = walk
+    host.box.wine.draw_watch = Marks()
+    first = {}
+
+    def on_idle(wine):
+        if not first:
+            first["titles"] = titles(wine)
+        return walk(wine)
+    host.box.wine.on_idle = on_idle
     host.call_limit = call_limit
     host.timeout_us = max(host.timeout_us, call_limit * 1000)
     host.run(limit=call_limit * 1000)
@@ -256,8 +369,12 @@ def run_one(root, book, pages, call_limit):
     boxes = [t for t in trace if t.startswith("USER.1 MessageBox")]
     defaults = sorted({t.split(" (default")[0] for t in trace if "(default" in t})
     stop = str(host.stop)
+    opened_at = walk.opened_at if walk.opened_at is not None else len(trace)
+    open_boxes = [t for t in trace[:opened_at] if t.startswith("USER.1 MessageBox")]
     return {"stop": stop, "titles": titles(wine), "cause": cause_of(stop), "calls": host.calls,
-            **walk.summary(), "messageboxes": boxes[:3], "messagebox_count": len(boxes),
+            **walk.summary(), "open_titles": first.get("titles", titles(wine)),
+            "open_messagebox_count": len(open_boxes),
+            "messageboxes": boxes[:3], "messagebox_count": len(boxes),
             "defaults": defaults[:5], "default_count": len(defaults)}
 
 

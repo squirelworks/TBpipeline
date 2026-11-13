@@ -635,7 +635,11 @@ class Wine(KernelState):
             return label.value[0], label.value[1], None
         handler = HANDLERS.get((label.module, label.ordinal))
         if handler is not None:
-            return handler(self, arg)
+            from .gdi16 import flush_clip_guards
+            flush_clip_guards(self)
+            out = handler(self, arg)
+            flush_clip_guards(self)
+            return out
         if label.default:
             return self._default(label, arg)
         if module == "KERNEL":
@@ -833,6 +837,22 @@ class Wine(KernelState):
                 return {"ax": 15, "eflags_cf": 1}, None
             self.write(reg("ds"), reg("si"), BIN_DIR[3:].encode("latin1") + b"\0")
             return {"eflags_cf": 0}, None
+        if ah == 0x41:
+            # "UNLINK" - DELETE FILE (int21.c:4382): DeleteFileW of DS:DX; on failure the DOS
+            # extended error (GetLastError) in AX with CF set. A file this run wrote goes; neww
+            # deletes nothing on the host, so a host file stops; a missing one is
+            # ERROR_FILE_NOT_FOUND (2).
+            path = bytes(self.read(reg("ds"), reg("dx"), 128)).split(b"\x00", 1)[0].decode("cp437", "replace")
+            self.trace[-1] += f" DELETE {path!r}"
+            name_only = path.replace("/", "\\").rsplit("\\", 1)[-1].upper()
+            self._kstate()
+            if name_only in self.written:
+                del self.written[name_only]
+                self.profiles.pop(name_only, None)
+                return {"eflags_cf": 0}, None
+            if self.resolve(path) is not None:
+                return {}, f"INT 21h AH=41h delete {path!r}: a file in --b or the book, and neww deletes nothing on the host"
+            return {"ax": 2, "eflags_cf": 1}, None
         if ah in (0x4E, 0x4F):
             return self._find_file(reg, first=ah == 0x4E)
         if ax == 0x4300:

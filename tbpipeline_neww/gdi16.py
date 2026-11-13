@@ -104,14 +104,14 @@ class DC(GdiObject):
                          bitmap=FIRST_GDI_HANDLE + DEFAULT_BITMAP, palette=FIRST_GDI_HANDLE + 15,
                          text_color=0, bk_color=0xFFFFFF, bk_mode=OPAQUE, rop2=13, map_mode=MM_TEXT,
                          wnd_org=(0, 0), vp_org=(0, 0), wnd_ext=(1, 1), vp_ext=(1, 1), text_align=0,
-                         pos=(0, 0), brush_org=(0, 0), stretch_mode=1, poly_fill=1, saved=[], user_clip=None,
+                         pos=(0, 0), brush_org=(0, 0), stretch_mode=1, poly_fill=1, saved=[], user_clip=None, clip_rects=None,
                          char_extra=0, mapper_flags=0, layout=0)
         self.__dict__.update(fields)
 
     def state(self):
         keys = ("pen", "brush", "font", "bitmap", "palette", "text_color", "bk_color", "bk_mode", "rop2",
                 "map_mode", "wnd_org", "vp_org", "wnd_ext", "vp_ext", "text_align", "pos", "brush_org",
-                "stretch_mode", "poly_fill", "user_clip", "char_extra")
+                "stretch_mode", "poly_fill", "user_clip", "clip_rects", "char_extra")
         return {k: getattr(self, k) for k in keys}
 
 
@@ -316,7 +316,10 @@ def surface(wine, dc):
 
 
 def clip_box(wine, dc):
-    """The device clip rectangle in the surface's pixels: (l, t, r, b)."""
+    """The device clip rectangle in the surface's pixels: (l, t, r, b). With a clip region of
+    more than one rectangle it is their bounding box, and the drawing that follows is held to
+    the rectangles themselves (clip_guard)."""
+    flush_clip_guards(wine)
     img, (ox, oy) = surface(wine, dc)
     box = (0, 0, img.width, img.height)
     if dc.clip is not None:
@@ -324,7 +327,36 @@ def clip_box(wine, dc):
     if dc.user_clip is not None:
         l, t, r, b = dc.user_clip
         box = _intersect(box, (l + ox, t + oy, r + ox, b + oy))
+    if getattr(dc, "clip_rects", None) and not _empty(box):
+        clip_guard(wine, img, box, [(l + ox, t + oy, r + ox, b + oy) for l, t, r, b in dc.clip_rects])
     return box
+
+
+def clip_guard(wine, img, box, rects):
+    """Keep the pixels of box outside rects as they are now; flush_clip_guards puts them back
+    after the drawing, so the drawing lands inside the region only. dibdrv clips each primitive
+    to the region's rectangles (get_clipped_rects); neww draws to the bounding box and keeps
+    the rest."""
+    from PIL import Image, ImageDraw
+    mask = Image.new("1", (box[2] - box[0], box[3] - box[1]), 1)
+    draw = ImageDraw.Draw(mask)
+    for r in rects:
+        i = _intersect(r, box)
+        if not _empty(i):
+            draw.rectangle([i[0] - box[0], i[1] - box[1], i[2] - box[0] - 1, i[3] - box[1] - 1], fill=0)
+    guards = wine.__dict__.setdefault("clip_guards", [])
+    guards.append((img, box, img.crop(box), mask))
+
+
+def flush_clip_guards(wine):
+    """Put back the pixels outside the clip regions (clip_guard), newest guard first so the
+    oldest snapshot wins."""
+    guards = getattr(wine, "clip_guards", None)
+    if not guards:
+        return
+    for img, box, snapshot, mask in reversed(guards):
+        img.paste(snapshot, box[:2], mask)
+    guards.clear()
 
 
 def _intersect(a, b):
@@ -699,9 +731,26 @@ def _select_clip(dc, region):
     if region.rect is None:
         dc.user_clip = None
         return 2
-    dc.user_clip = region.rect
-    l, t, r, b = region.rect
-    return 1 if r <= l or b <= t else 2
+    return _set_clip(dc, region_rects(region))
+
+
+def _set_clip(dc, rects):
+    """The DC's clip region in device units: user_clip its bounding box (an empty one at
+    (0, 0) when the region is empty), clip_rects the rectangles when there are more than one.
+    Answers the region's kind."""
+    dc.clip_rects = list(rects) if len(rects) > 1 else None
+    if not rects:
+        dc.user_clip = (0, 0, 0, 0)
+        return 1
+    dc.user_clip = (min(r[0] for r in rects), min(r[1] for r in rects),
+                    max(r[2] for r in rects), max(r[3] for r in rects))
+    return 2 if len(rects) == 1 else 3
+
+
+def _clip_rects(dc):
+    if dc.clip_rects:
+        return list(dc.clip_rects)
+    return [] if _empty(dc.user_clip) else [dc.user_clip]
 
 
 @api("GDI", "GetObject")
@@ -1201,20 +1250,22 @@ def get_nearest_color(wine, arg, hdc, color):
 @api("GDI", "CreateRectRgn")
 def create_rect_rgn(wine, arg, l, t, r, b):
     """A rectangle region, normalized; neww keeps rectangle regions only."""
-    return gdi(wine).add(GdiObject(OBJ_REGION, rect=(min(l, r), min(t, b), max(l, r), max(t, b))))
+    rgn = GdiObject(OBJ_REGION, rect=None)
+    set_region(rgn, [] if l == r or t == b else [(min(l, r), min(t, b), max(l, r), max(t, b))])
+    return gdi(wine).add(rgn)
 
 
 @api("GDI", "CreateRectRgnIndirect")
 def create_rect_rgn_indirect(wine, arg, ptr):
     l, t, r, b = struct.unpack("<hhhh", read(wine, ptr, 8))
-    return gdi(wine).add(GdiObject(OBJ_REGION, rect=(min(l, r), min(t, b), max(l, r), max(t, b))))
+    return create_rect_rgn(wine, arg, l, t, r, b)
 
 
 @api("GDI", "SetRectRgn")
 def set_rect_rgn(wine, arg, hrgn, l, t, r, b):
     rgn = gdi(wine).get(hrgn, OBJ_REGION)
     if rgn is not None:
-        rgn.rect = (min(l, r), min(t, b), max(l, r), max(t, b))
+        set_region(rgn, [] if l == r or t == b else [(min(l, r), min(t, b), max(l, r), max(t, b))])
     return arg.regs("ax"), 0
 
 
@@ -1225,80 +1276,89 @@ def get_rgn_box(wine, arg, hrgn, ptr):
         return 0
     l, t, r, b = rgn.rect
     write(wine, ptr, struct.pack("<hhhh", l, t, r, b))
-    return 1 if r <= l or b <= t else 2
+    return region_kind(rgn)
+
+
+def region_rects(rgn):
+    """A region's rectangles, y-x banded as win32u keeps them: one band per run of rows,
+    each band's rectangles left to right, bands with the same columns that touch merged."""
+    rects = getattr(rgn, "rects", None)
+    if rects is not None:
+        return list(rects)
+    return [] if rgn.rect is None or _empty(rgn.rect) else [rgn.rect]
+
+
+def set_region(rgn, rects):
+    """Keep rects, and rect as their bounding box ((0, 0, 0, 0) for an empty region, as
+    win32u's empty_region leaves extents)."""
+    rgn.rects = list(rects)
+    if not rects:
+        rgn.rect = (0, 0, 0, 0)
+    else:
+        rgn.rect = (min(r[0] for r in rects), min(r[1] for r in rects),
+                    max(r[2] for r in rects), max(r[3] for r in rects))
+
+
+def region_kind(rgn):
+    """NULLREGION 1, SIMPLEREGION 2, COMPLEXREGION 3 (get_region_type, region.c)."""
+    n = len(region_rects(rgn))
+    return 1 if n == 0 else 2 if n == 1 else 3
+
+
+REGION_OPS = {
+    1: lambda a, b: a and b,          # RGN_AND
+    2: lambda a, b: a or b,           # RGN_OR
+    3: lambda a, b: a != b,           # RGN_XOR
+    4: lambda a, b: a and not b,      # RGN_DIFF
+}
+
+
+def region_op(ra, rb, op):
+    """REGION_RegionOp (win32u/region.c) by bands: the rows split at every rectangle's top and
+    bottom, each band's columns split at every edge in it, op(in a, in b) keeps a column,
+    touching kept columns join (REGION_UnionO), and a band with the same columns as the one
+    just above it joins it (REGION_Coalesce). The result is the region win32u builds, in its
+    order."""
+    ys = sorted({y for r in ra + rb for y in (r[1], r[3])})
+    bands = []
+    for y0, y1 in zip(ys, ys[1:]):
+        sa = [r for r in ra if r[1] <= y0 and r[3] >= y1]
+        sb = [r for r in rb if r[1] <= y0 and r[3] >= y1]
+        xs = sorted({x for r in sa + sb for x in (r[0], r[2])})
+        spans = []
+        for x0, x1 in zip(xs, xs[1:]):
+            ina = any(r[0] <= x0 and r[2] >= x1 for r in sa)
+            inb = any(r[0] <= x0 and r[2] >= x1 for r in sb)
+            if op(ina, inb):
+                if spans and spans[-1][1] == x0:
+                    spans[-1] = (spans[-1][0], x1)
+                else:
+                    spans.append((x0, x1))
+        if not spans:
+            continue
+        if bands and bands[-1][1] == y0 and bands[-1][2] == spans:
+            bands[-1] = (bands[-1][0], y1, spans)
+        else:
+            bands.append((y0, y1, spans))
+    return [(x0, y0, x1, y1) for y0, y1, spans in bands for x0, x1 in spans]
 
 
 @api("GDI", "CombineRgn")
 def combine_rgn(wine, arg, dest, src1, src2, mode):
-    """CombineRgn for results that stay one rectangle. Others stop, naming the mode."""
+    """NtGdiCombineRgn (win32u/region.c): RGN_COPY copies src1; AND, OR, XOR and DIFF are
+    region_op. Answers the result's kind, ERROR (0) for a bad mode or handle."""
     g = gdi(wine)
     d, a = g.get(dest, OBJ_REGION), g.get(src1, OBJ_REGION)
     if d is None or a is None:
         return 0
     if mode == 5:  # RGN_COPY
-        d.rect = a.rect
-    else:
-        b = g.get(src2, OBJ_REGION)
-        if b is None:
-            return 0
-        if mode == 1:  # RGN_AND
-            d.rect = _intersect(a.rect, b.rect)
-        elif mode == 2 and _union_rect(a.rect, b.rect):
-            d.rect = _union_rect(a.rect, b.rect)
-        elif mode == 4 and _diff_rect(a.rect, b.rect) is not None:
-            d.rect = _diff_rect(a.rect, b.rect)
-        elif mode == 2 and _contains(a.rect, b.rect):
-            d.rect = a.rect
-        elif mode == 2 and _contains(b.rect, a.rect):
-            d.rect = b.rect
-        elif _empty(b.rect) and mode in (2, 3, 4):
-            d.rect = a.rect
-        elif _empty(a.rect) and mode in (2, 3):
-            # REGION_UnionRegion / REGION_XorRegion with an empty first region: the second.
-            d.rect = b.rect
-        elif _empty(a.rect) and mode == 4:
-            d.rect = (0, 0, 0, 0)
-        else:
-            return 0, 0, f"GDI CombineRgn mode {mode} of {a.rect} and {b.rect}: the result is not one rectangle, and neww keeps rectangles only"
-    return 1 if _empty(d.rect) else 2
-
-
-def _union_rect(a, b):
-    """REGION_UnionRegion (win32u/region.c:1966) when its result is one rectangle: two non-empty
-    rectangles with the same columns whose rows overlap or touch become one band set that
-    REGION_Coalesce (:1400) merges; with the same rows whose columns overlap or touch, REGION_UnionO (:1918)
-    merges them in one band. Else None."""
-    if _empty(a) or _empty(b):
-        return None
-    if a[0] == b[0] and a[2] == b[2] and b[1] <= a[3] and a[1] <= b[3]:
-        return (a[0], min(a[1], b[1]), a[2], max(a[3], b[3]))
-    if a[1] == b[1] and a[3] == b[3] and b[0] <= a[2] and a[0] <= b[2]:
-        return (min(a[0], b[0]), a[1], max(a[2], b[2]), a[3])
-    return None
-
-
-def _diff_rect(a, b):
-    """REGION_SubtractRegion (region.c:2178) when its result is one rectangle: b misses a (a), or covers a's
-    whole width from its top or bottom, or its whole height from its left or right, or all of
-    it (empty). Else None (a hole, or two or more pieces)."""
-    if _empty(a):
-        return None
-    i = _intersect(a, b)
-    if _empty(i):
-        return a
-    if i == a:
-        return (0, 0, 0, 0)
-    if i[0] == a[0] and i[2] == a[2]:
-        if i[1] == a[1]:
-            return (a[0], i[3], a[2], a[3])
-        if i[3] == a[3]:
-            return (a[0], a[1], a[2], i[1])
-    if i[1] == a[1] and i[3] == a[3]:
-        if i[0] == a[0]:
-            return (i[2], a[1], a[2], a[3])
-        if i[2] == a[2]:
-            return (a[0], a[1], i[0], a[3])
-    return None
+        set_region(d, region_rects(a))
+        return region_kind(d)
+    b = g.get(src2, OBJ_REGION)
+    if b is None or mode not in REGION_OPS:
+        return 0
+    set_region(d, region_op(region_rects(a), region_rects(b), REGION_OPS[mode]))
+    return region_kind(d)
 
 
 def _empty(r):
@@ -1316,6 +1376,7 @@ def select_clip_rgn(wine, arg, hdc, hrgn):
         return 0
     if not hrgn:
         dc.user_clip = None
+        dc.clip_rects = None
         return 2
     rgn = gdi(wine).get(hrgn, OBJ_REGION)
     if rgn is None:
@@ -1329,8 +1390,9 @@ def intersect_clip_rect(wine, arg, hdc, l, t, r, b):
     if dc is None:
         return 0
     rect = device_rect(dc, l, t, r, b)
-    dc.user_clip = _intersect(dc.user_clip, rect) if dc.user_clip is not None else rect
-    return 1 if _empty(dc.user_clip) else 2
+    if dc.user_clip is None:
+        return _set_clip(dc, [] if _empty(rect) else [rect])
+    return _set_clip(dc, region_op(_clip_rects(dc), [] if _empty(rect) else [rect], REGION_OPS[1]))
 
 
 @api("GDI", "ExcludeClipRect")
@@ -1344,13 +1406,8 @@ def exclude_clip_rect(wine, arg, hdc, l, t, r, b):
         img, (ox, oy) = surface(wine, dc)
         cl = clip_box(wine, dc)
         base = (cl[0] - ox, cl[1] - oy, cl[2] - ox, cl[3] - oy)
-    if _empty(_intersect(base, rect)):
-        dc.user_clip = base
-        return 2
-    if _contains(rect, base):
-        dc.user_clip = (base[0], base[1], base[0], base[1])
-        return 1
-    return 0, 0, f"GDI ExcludeClipRect {rect} from {base}: the clip is no longer one rectangle, and neww keeps rectangles only"
+    rects = _clip_rects(dc) if dc.user_clip is not None else ([] if _empty(base) else [base])
+    return _set_clip(dc, region_op(rects, [] if _empty(rect) else [rect], REGION_OPS[4]))
 
 
 @api("GDI", "OffsetClipRgn")
@@ -1365,9 +1422,7 @@ def offset_clip_rgn(wine, arg, hdc, x, y):
         return 1
     dx = _muldiv(x, dc.vp_ext[0], dc.wnd_ext[0])
     dy = _muldiv(y, dc.vp_ext[1], dc.wnd_ext[1])
-    l, t, r, b = dc.user_clip
-    dc.user_clip = (l + dx, t + dy, r + dx, b + dy)
-    return 1 if _empty(dc.user_clip) else 2
+    return _set_clip(dc, [(l + dx, t + dy, r + dx, b + dy) for l, t, r, b in _clip_rects(dc)])
 
 
 @api("GDI", "GetClipBox")
@@ -1383,7 +1438,12 @@ def get_clip_box(wine, arg, hdc, ptr):
     ll, lt = dp_to_lp(dc, l, t)
     lr, lb = dp_to_lp(dc, r, b)
     write(wine, ptr, struct.pack("<hhhh", ll, lt, lr, lb))
-    return 1 if r <= l or b <= t else 2
+    if r <= l or b <= t:
+        return 1
+    if dc.clip_rects:
+        # get_clip_region's kind: the clip region within the visible box.
+        return 3 if len(region_op(dc.clip_rects, [(l, t, r, b)], REGION_OPS[1])) > 1 else 2
+    return 2
 
 
 @api("GDI", "PtVisible")
@@ -2276,8 +2336,8 @@ def fill_rgn(wine, arg, hdc, hrgn, hbrush):
     rgn = g.get(hrgn, OBJ_REGION)
     if dc is None or rgn is None or g.get(hbrush, OBJ_BRUSH) is None:
         return 0
-    if not _empty(rgn.rect):
-        fill(wine, dc, rgn.rect, hbrush)
+    for r in region_rects(rgn):
+        fill(wine, dc, r, hbrush)
     return 1
 
 
@@ -2290,10 +2350,7 @@ def rect_in_region(wine, arg, hrgn, ptr):
     l, t, r, b = struct.unpack("<hhhh", read(wine, ptr, 8))
     l, r = sorted((l, r))
     t, b = sorted((t, b))
-    rl, rt, rr, rb = rgn.rect
-    if _empty(rgn.rect):
-        return 0
-    return 1 if rr > l and rl < r and rb > t and rt < b else 0
+    return 1 if any(rr > l and rl < r and rb > t and rt < b for rl, rt, rr, rb in region_rects(rgn)) else 0
 
 
 # ------------------------------------------------------------------ metafile playback
@@ -2604,7 +2661,7 @@ def play_metafile16(wine, arg, hdc, hmf):
     if dc is None:
         # Not a DC: every call the records make fails, and PlayMetaFile still answers TRUE.
         return 0, 0, f"GDI PlayMetaFile({hdc:#x}): not a DC neww made"
-    pen, brush, palette, clip = dc.pen, dc.brush, dc.palette, dc.user_clip
+    pen, brush, palette, clip, clip_rects = dc.pen, dc.brush, dc.palette, dc.user_clip, dc.clip_rects
     table = HostHandleTable(objects)
     offset = header * 2
     while offset < size * 2:
@@ -2621,7 +2678,7 @@ def play_metafile16(wine, arg, hdc, hmf):
     for name, handle in (("SelectObject", pen), ("SelectObject", brush)):
         _gdi_call(wine, arg, name, "PlayMetaFile", hdc, handle)
     dc.palette = palette
-    dc.user_clip = clip
+    dc.user_clip, dc.clip_rects = clip, clip_rects
     for handle in table.slots:
         if handle:
             _gdi_call(wine, arg, "DeleteObject", "PlayMetaFile", handle)
