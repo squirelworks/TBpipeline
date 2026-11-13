@@ -38,12 +38,14 @@ Each one is a fact a person can check. Tick a box when its PR merges.
 - [x] **T8.** Liberation fonts stand in for Arial, Times New Roman and Courier New (#204).
 - [x] **T9.** `Button` and `Static` controls (#215), and modal dialog boxes (#217).
 
-Next, from [#221](https://github.com/squirelworks/TBpipeline/issues/221), one PR per box. These stop the NIDA ATT course `93952606.TBK` after P430:
+Done for [#221](https://github.com/squirelworks/TBpipeline/issues/221), in one PR. These stopped the NIDA ATT course `93952606.TBK` after P430; it now walks on to the Lesson Menu, P900:
 
-- [ ] Metafile playback: `EnumMetaFile`, `PlayMetaFile` and `PlayMetaFileRecord` (Wine `dlls/gdi.exe16/metafile.c`), starting with `StretchDIB` records.
-- [ ] `GetMetaFileBits` and `DeleteMetaFile`.
-- [ ] The `*Ex` window and viewport origin and extent calls.
-- [ ] `MM_ISOTROPIC` / `MM_ANISOTROPIC` in `_map_points` and the drawing paths.
+- [x] Metafile playback: `EnumMetaFile`, `PlayMetaFile` and `PlayMetaFileRecord` (Wine `dlls/gdi.exe16/metafile.c`, `dlls/gdi32/metafile.c`).
+- [x] `GetMetaFileBits` and `DeleteMetaFile`.
+- [x] The `*Ex` window and viewport origin and extent calls.
+- [x] `MM_ISOTROPIC` / `MM_ANISOTROPIC` in `_map_points` and the drawing paths.
+
+Left over from #221: text through a scaling transform stops by name (font heights are not mapped yet), and the records neww does not play yet (`META_POLYPOLYGON`, `META_EXTTEXTOUT`, the region and bitmap records) stop by name.
 
 Known gaps with no item yet:
 
