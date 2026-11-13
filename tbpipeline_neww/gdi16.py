@@ -2075,16 +2075,28 @@ def set_di_bits(wine, arg, hdc, hbitmap, start, lines, bits, info, usage):
 
 @api("GDI", "GetBitmapBits")
 def get_bitmap_bits(wine, arg, hbitmap, count, ptr):
+    """GetBitmapBits16 -> NtGdiGetBitmapBits (Wine 2528aff2 dlls/win32u/bitmap.c:231): rows top
+    down at get_bitmap_stride (16-bit aligned), count bytes of them (all for a negative count
+    or one past the end); with no buffer, the size. A 32-bit bitmap is B, G, R and an unused
+    byte per pixel, which neww's RGB image keeps as 0."""
     bmp = gdi(wine).get(hbitmap, OBJ_BITMAP)
     if bmp is None:
         return 0
-    if bmp.bpp != 1:
-        return 0, 0, f"GDI GetBitmapBits of a {bmp.bpp}-bit bitmap: neww keeps color bitmaps as RGB"
-    stride = ((bmp.width + 15) // 16) * 2
-    data = bmp.image.convert("1").tobytes("raw", "1", stride)
-    n = min(count, len(data))
-    write(wine, ptr, data[:n])
-    return n
+    if bmp.bpp not in (1, 32):
+        return 0, 0, f"GDI GetBitmapBits of a {bmp.bpp}-bit bitmap: neww keeps 1- and 32-bit bitmaps only"
+    stride = ((bmp.width * bmp.bpp + 15) >> 3) & ~1
+    size = stride * bmp.height
+    if not ptr:
+        return size & 0xFFFF, size >> 16
+    count = count - 0x100000000 if count & 0x80000000 else count
+    if count < 0 or count > size:
+        count = size
+    if bmp.bpp == 1:
+        data = bmp.image.convert("1").tobytes("raw", "1", stride)
+    else:
+        data = bmp.image.convert("RGB").tobytes("raw", "BGRX")
+    write(wine, ptr, data[:count])
+    return count & 0xFFFF, count >> 16
 
 
 @api("GDI", "SetBitmapBits")

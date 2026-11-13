@@ -623,6 +623,39 @@ def get_system_menu(wine, arg, hwnd, revert):
     return w.sysmenu
 
 
+ICON_HOTSPOT = 0x4242    # dlls/user.exe16/user.c:269: the hotspot that marks an icon
+
+
+@api("USER", "CreateIcon")
+def create_icon(wine, arg, inst, width, height, planes, bpp, and_ptr, xor_ptr):
+    """CreateIcon16 (user.c:2345) -> CreateCursorIconIndirect16 (:2366): 0 without both masks
+    or for planes other than 1; else a moveable block with CURSORICONINFO (hotspot
+    ICON_HOTSPOT, the XOR row width), the AND rows (1 bit, 16-bit aligned) and the XOR rows.
+    neww keeps a picture of the XOR bits for DrawIcon, as it does for a loaded icon."""
+    from PIL import Image
+    width = width - 0x10000 if 0 <= width and width & 0x8000 else width
+    height = height - 0x10000 if 0 <= height and height & 0x8000 else height
+    planes, bpp = planes & 0xFF, bpp & 0xFF
+    if not and_ptr or not xor_ptr or planes != 1:
+        return 0
+    if width <= 0 or height <= 0:
+        return 0, 0, f"USER.407 CreateIcon {width}x{height}: neww makes icons of a positive size only"
+    if bpp not in (1, 32):
+        return 0, 0, f"USER.407 CreateIcon of {bpp} bits a pixel: neww reads 1- and 32-bit icons only"
+    and_bytes = ((width + 15) // 16) * 2
+    xor_bytes = ((width * bpp + 15) // 16) * 2
+    and_bits = gdi16.read(wine, and_ptr, and_bytes * height)
+    xor_bits = gdi16.read(wine, xor_ptr, xor_bytes * height)
+    if bpp == 1:
+        image = Image.frombytes("1", (width, height), xor_bits, "raw", "1", xor_bytes).convert("RGB")
+    else:
+        image = Image.frombytes("RGB", (width, height), xor_bits, "raw", "BGRX", xor_bytes)
+    handle, why = _icon_block(wine, width, height, (ICON_HOTSPOT, ICON_HOTSPOT), bpp, and_bits, xor_bits, image)
+    if why:
+        return 0, 0, f"USER.407 CreateIcon: {why}"
+    return handle
+
+
 @api("USER", "CopyIcon", "CopyCursor")
 def copy_icon(wine, arg, inst, hicon):
     """user.c CopyIcon16: CreateCursorIconIndirect16 of the same CURSORICONINFO and bits."""
