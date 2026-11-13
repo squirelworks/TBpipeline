@@ -67,10 +67,15 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] Group C: `RegOpenKeyA`, `RegOpenKeyExA`, `RegCloseKey` (one registry with SHELL's) and `GetShortPathNameA`.
 - [x] user32's OBM_ bitmaps for `LoadBitmap(0, id)`, read from `WINE_SRC` (new3_a, new3_b).
 - [ ] `EnumFonts` / `EnumFontFamiliesEx` over the installed faces (tb80.sbk).
-- [ ] The EDIT control (scrwalk), the common file dialog (Preventing_Fraud), and `GetBitmapBits` on a 32-bit bitmap (tb80acta).
+- [x] `GetBitmapBits` on a 32-bit bitmap and `CreateIcon` (tb80acta).
+- [x] Blocks over 1 MB: page-granular selectors, as `global.c:209` and `selector.c:66` give them (Walkthrough).
+- [x] `DrawText` (single-line and plain multi-line, `DT_CALCRECT`, alignment) and `DrawFocusRect`. Word breaks, tabs, ellipses and the mnemonic's underscore stop by name.
+- [x] Page walking: the sweep chooses Go > Next from the runtime's menu (a `WM_COMMAND`, a menu click's last message). Ctrl+Right does not turn a TB80 page. A pass also needs a main window that is not the runtime's "(Untitled)" one.
+- [ ] The EDIT control (scrwalk) and the common file dialog.
 - [ ] OLE controls: `CoGetClassObject`, `StringFromGUID2`, then `TB80OCX` (actxexpl, Quizbldr, tb80x, tb80web).
-- [ ] Blocks over 1 MB (Walkthrough) and cross-task `SendMessage` (tb80ftp).
-- [ ] Page walking: menu-bar clicks (non-client hit test, menu tracking), so Go > Next works in every book.
+- [ ] Cross-task `SendMessage` (tb80ftp).
+- [ ] "Not a valid OpenScript term: ." (chewbyte, tb80actr), `tbfile32` (tb80a), and "Initialization failed" (otb_cross_a).
+- [ ] Menu-bar clicks (non-client hit test, menu tracking), and books that hide the menu bar and turn pages with their own buttons.
 - [ ] The ~195 NIDA ATT courses in Drive, once they are reachable from the container.
 
 ## Do not do this
