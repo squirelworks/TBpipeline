@@ -57,7 +57,7 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] The Final Quiz runs to its score page (P10303), and exit from there goes to the objectives to review (P10410).
 - [x] "1. Parallel Resonance" opens the lesson (P1001).
 - [x] Lesson Exit asks "Are you sure you want to Exit the Lesson?". Yes unloads ToolBook's DLLs (`FreeLibrary` at a module's last use calls its WEP).
-- [ ] Lesson Exit then stops in `TB80OLE` `UNINITIALIZEOLEREMOTE`, which releases an automation object Wine's `CreateDispTypeInfo` stub never made: [#233](https://github.com/squirelworks/TBpipeline/issues/233).
+- [x] Lesson Exit then ends the task: `TB80OLE` releases the automation object `CreateDispTypeInfo` and `CreateStdDispatch` make, and `FreeLibrary32W` detaches and unloads the 32-bit DLLs ([#233](https://github.com/squirelworks/TBpipeline/issues/233)).
 
 The other NIDA ATT courses are on hold until the week of 2026-11-09.
 

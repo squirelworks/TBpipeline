@@ -126,4 +126,10 @@ Needs `unicorn` (`pip install -r requirements.txt`) for a run. `--help`, and a m
   - `OleFlushClipboard` is `E_FAIL` before `OleInitialize`, else `S_OK` (no source object). `NotifyRegister` and `NotifyUnregister` keep `toolhelp.c`'s list.
   - `Machine.on_idle` lets a test drive input from what is on the screen.
 
-  With these, the Final Quiz runs to its score page, the lesson opens from the menu, and Lesson Exit gets through the DLL unloads. It then stops in `TB80OLE` (#233). `tests/test_neww_lesson_exit.py`.
+  With these, the Final Quiz runs to its score page, the lesson opens from the menu, and Lesson Exit gets through the DLL unloads. `tests/test_neww_lesson_exit.py`.
+- OLE automation and the 32-bit unload (#233). Lesson Exit now ends the task with `dos exit 0x0`.
+  - Wine's 16-bit `CreateDispTypeInfo` is `E_NOTIMPL` and `CreateStdDispatch` leaves its out pointer NULL (`ole2disp.c:477`, `:489`). `TB80OLE` keeps the object they make and releases it at exit, so neww makes them as `oleaut32` does in 32 bits (`typelib.c:8669`, `dispatch.c:450`). The objects count references and answer `QueryInterface`.
+  - Their methods are cdecl rows of `OLE2DISP` from 500 up, the way Wine's other 16-bit COM objects export theirs (`compobj.dll16.spec:210`). The caller pops. A method neww does not have yet stops by name.
+  - `OleUninitialize` takes one from the task's `ole_inits` (`ole32/ole2.c:218`).
+  - `FreeLibrary32W` at a PE module's last reference runs `LdrUnloadDll` (`loader.c:4137`): the count drops down its imports, `DllMain(DLL_PROCESS_DETACH)` runs in reverse initialization order, and the modules with no count left go.
+  `tests/test_neww_ole_automation.py`.
