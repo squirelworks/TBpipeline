@@ -21,3 +21,15 @@ class CauseOf(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Opened(unittest.TestCase):
+    def test_untitled_is_not_a_pass(self):
+        # TB80RTM shows "ToolBook II - (Untitled)" and asks for a file when the book did not open.
+        from tbpipeline_neww.sweep import opened
+        ok = {"cause": "idle", "titles": ["Advanced Training"]}
+        self.assertTrue(opened(ok))
+        self.assertFalse(opened({**ok, "titles": ["ToolBook II - (Untitled)"]}))
+        self.assertFalse(opened({**ok, "default_count": 1}))
+        self.assertFalse(opened({**ok, "messagebox_count": 1}))
+        self.assertFalse(opened({**ok, "cause": "USER.175 LoadBitmap"}))

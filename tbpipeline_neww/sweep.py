@@ -42,6 +42,27 @@ def cause_of(stop):
     return re.sub(r"0x[0-9a-fA-F]+", "N", stop)[:80]
 
 
+def titles(wine):
+    """The captions of the visible top-level windows: the runtime's main window names the
+    book it has open, or says (Untitled) when it opened none."""
+    from tbpipeline_neww.user_wnd import WS_VISIBLE, wm
+    m = wm(wine)
+    out = []
+    for h in m.children.get(m.desktop, []):
+        w = m.get(h)
+        if w is not None and w.style & WS_VISIBLE and w.text:
+            out.append(w.text if isinstance(w.text, str) else w.text.decode("cp1252", "replace"))
+    return out
+
+
+def opened(result):
+    """A pass: idle with no MessageBox and no spec-row defaults, and a main window that is not
+    the runtime's empty "(Untitled)" one."""
+    return (result.get("cause") == "idle" and not result.get("messagebox_count")
+            and not result.get("default_count")
+            and not any("(Untitled)" in t for t in result.get("titles") or []))
+
+
 def run_one(root, book, pages, call_limit):
     from tbpipeline_neww import machine
     host = machine.Machine(root, book, input_script=FIRST, idle_stop=True)
@@ -68,7 +89,7 @@ def run_one(root, book, pages, call_limit):
     boxes = [t for t in trace if t.startswith("USER.1 MessageBox")]
     defaults = sorted({t.split(" (default")[0] for t in trace if "(default" in t})
     stop = str(host.stop)
-    return {"stop": stop, "cause": cause_of(stop), "calls": host.calls, "keys": steps[0],
+    return {"stop": stop, "titles": titles(wine), "cause": cause_of(stop), "calls": host.calls, "keys": steps[0],
             "screens": len(set(screens)), "messageboxes": boxes[:3], "messagebox_count": len(boxes),
             "defaults": defaults[:5], "default_count": len(defaults)}
 
@@ -119,8 +140,9 @@ def main(argv=None):
     out = open(args.out, "a") if args.out else None
     with ThreadPoolExecutor(args.jobs) as pool:
         for r in pool.map(lambda b: run_book(args, b), args.books):
+            r["pass"] = opened(r)
             line = json.dumps(r)
-            print(f"{os.path.basename(r['book'])}: {r.get('cause')} | screens {r.get('screens')} | "
+            print(f"{os.path.basename(r['book'])}: {'pass' if r['pass'] else 'stop'} {r.get('cause')} | screens {r.get('screens')} | "
                   f"calls {r.get('calls')} | {r.get('stop', '')[:120]}", flush=True)
             if out:
                 out.write(line + "\n")
