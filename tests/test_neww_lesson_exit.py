@@ -4,7 +4,7 @@ FreeLibrary at a module's last use, OleFlushClipboard, NotifyRegister and Notify
 The synthetic tests run the handlers on fake memory (tests/test_neww_batch2.py's harness), each
 against the Wine 2528aff2 function its comment names. The course tests need TBK_BIN and
 TBK_BOOK3, and walk the course from its Lesson Menu (P900): the Final Quiz to its score page,
-the lesson, and Lesson Exit.
+the lesson, and Lesson Exit, which ends the task.
 """
 
 import os
@@ -180,9 +180,11 @@ class Course(unittest.TestCase):
         for name in ("TBCBT", "TBWIN", "TBFILE32"):
             self.assertIn(f"  {name} unloaded, its WEP called", trace)
         self.assertIn("OLE2.76 OleFlushClipboard", trace)
-        # Where it stops now: TB80OLE releases the automation object CreateDispTypeInfo would
-        # have made (Wine's is E_NOTIMPL), a null pointer (#233).
-        self.assertIn("UNINITIALIZEOLEREMOTE", host.stop)
+        # TB80OLE releases its automation object (#233), and the 32-bit DLLs are detached.
+        for name in ("TB80F32L", "TB80RMT", "TB80W32"):
+            self.assertIn(f"  {name} DllMain(PROCESS_DETACH)", trace)
+            self.assertIn(f"  {name} unloaded", trace)
+        self.assertEqual(host.stop, "dos exit 0x0")
 
 
 if __name__ == "__main__":
