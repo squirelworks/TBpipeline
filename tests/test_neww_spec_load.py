@@ -111,11 +111,12 @@ class Gate(unittest.TestCase):
         self.assertEqual((ax, sp), (0, sp0 - 4))
 
     def test_void_leaves_ax(self):
-        # USER.166 HideCaret(word) returns void in Wine's user.c.
-        host, sp0, sp, ax, dx = run_one("USER", 166, push_word(1), ax=0x4321)
+        # USER.20 SetDoubleClickTime(word) returns void in Wine's user.c. (HideCaret, used here
+        # before, has a handler now: user_caret.py.)
+        host, sp0, sp, ax, dx = run_one("USER", 20, push_word(500), ax=0x4321)
         self.assertTrue(host.stop.startswith("dos exit"), host.stop)
         self.assertEqual((ax, sp), (0x4321, sp0 - 4))
-        self.assertIn(("USER", 166, "HideCaret", "void"), host.box.wine.defaults)
+        self.assertIn(("USER", 20, "SetDoubleClickTime", "void"), host.box.wine.defaults)
 
     def test_register_stops_without_pop(self):
         # KERNEL.203 DebugBreak is -register and has no handler. The stub has no retf and the

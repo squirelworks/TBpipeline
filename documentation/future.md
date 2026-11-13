@@ -59,7 +59,24 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] Lesson Exit asks "Are you sure you want to Exit the Lesson?". Yes unloads ToolBook's DLLs (`FreeLibrary` at a module's last use calls its WEP).
 - [x] Lesson Exit then ends the task: `TB80OLE` releases the automation object `CreateDispTypeInfo` and `CreateStdDispatch` make, and `FreeLibrary32W` detaches and unloads the 32-bit DLLs ([#233](https://github.com/squirelworks/TBpipeline/issues/233)).
 
-The other NIDA ATT courses are on hold until the week of 2026-11-09.
+## The book sweep (#227)
+
+`python3 -m tbpipeline_neww.sweep` opens every TB80 book we have, one process per book. The findings table lives in the project files (`neww/sweep/findings.md`), not in the repo. Run 1 covered 78 unique books: 54 opened cleanly and 24 stopped.
+
+- [x] Group A: the caret (`CreateCaret`, `SetCaretPos`, `ShowCaret`, `HideCaret`, and the blink through `WM_SYSTIMER`). The five NetClass system books.
+- [x] Group C: `RegOpenKeyA`, `RegOpenKeyExA`, `RegCloseKey` (one registry with SHELL's) and `GetShortPathNameA`.
+- [x] user32's OBM_ bitmaps for `LoadBitmap(0, id)`, read from `WINE_SRC` (new3_a, new3_b).
+- [ ] `EnumFonts` / `EnumFontFamiliesEx` over the installed faces (tb80.sbk).
+- [x] `GetBitmapBits` on a 32-bit bitmap and `CreateIcon` (tb80acta).
+- [x] Blocks over 1 MB: page-granular selectors, as `global.c:209` and `selector.c:66` give them (Walkthrough).
+- [x] `DrawText` (single-line and plain multi-line, `DT_CALCRECT`, alignment) and `DrawFocusRect`. The mnemonic is underscored as `TEXT_DrawUnderscore` draws it. Word breaks, tabs and ellipses stop by name.
+- [x] Page walking: the sweep chooses Go > Next from the runtime's menu (a `WM_COMMAND`, a menu click's last message). Ctrl+Right does not turn a TB80 page. A pass also needs a main window that is not the runtime's "(Untitled)" one.
+- [ ] The EDIT control (scrwalk) and the common file dialog.
+- [ ] OLE controls: `CoGetClassObject`, `StringFromGUID2`, then `TB80OCX` (actxexpl, Quizbldr, tb80x, tb80web).
+- [ ] Cross-task `SendMessage` (tb80ftp).
+- [ ] "Not a valid OpenScript term: ." (chewbyte, tb80actr), `tbfile32` (tb80a), and "Initialization failed" (otb_cross_a).
+- [ ] Menu-bar clicks (non-client hit test, menu tracking), and books that hide the menu bar and turn pages with their own buttons.
+- [ ] The ~195 NIDA ATT courses in Drive, once they are reachable from the container.
 
 ## Do not do this
 

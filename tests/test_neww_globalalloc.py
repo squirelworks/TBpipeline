@@ -51,9 +51,15 @@ class GlobalAllocDword(unittest.TestCase):
         self.assertEqual(handle, sel | 4)
         self.assertEqual(size, 0x40)
 
-    def test_size_zero_and_over_1m_stop_by_name(self):
+    def test_size_zero_stops_by_name(self):
         self.assertIn("KERNEL.15 GlobalAlloc flags=0x0 size 0", alloc_then(0, 0).stop)
-        self.assertIn("KERNEL.15 GlobalAlloc size 0x100001", alloc_then(0, 0x100001).stop)
+
+    def test_over_1m_is_a_page_rounded_block(self):
+        # global.c:209-211 (#227): the selector limit is in pages, so the size rounds to one.
+        host = alloc_then(0, 0x100001)
+        self.assertIn("KERNEL.999", host.stop)
+        (_handle, (_sel, size, _flags)), = host.box.wine.heap.items()
+        self.assertEqual(size, 0x101000)
 
 
 if __name__ == "__main__":

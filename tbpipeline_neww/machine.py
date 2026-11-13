@@ -936,7 +936,12 @@ class Machine:
             seg.selector = sel
             seg.base = base + i * 0x10000
             self.box.selectors[sel] = seg
-            self._write_descriptor(sel, _descriptor(seg.base, left - 1, 0x92))
+            # selector.c:256 SELECTOR_SetEntries: each limit is the rest of the block, and
+            # ldt_set_limit (:66) makes one of 1M or more page-granular.
+            limit, flags = left - 1, 0
+            if limit >= 0x100000:
+                limit, flags = limit >> 12, 0x80
+            self._write_descriptor(sel, _descriptor(seg.base, limit, 0x92, flags))
             first = sel if first is None else first
         return first
 

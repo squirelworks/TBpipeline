@@ -1801,11 +1801,14 @@ class Wine(KernelState):
         """Wine global.c GlobalAlloc16 / GLOBAL_Alloc. size is the whole dword."""
         if size == 0:
             return 0, 0, f"KERNEL.15 GlobalAlloc flags={flags:#x} size 0: Wine makes a discarded block, neww does not have one"
-        if size > 0x100000:
-            return 0, 0, f"KERNEL.15 GlobalAlloc size {size:#x}: over 1M needs page-granular selectors, neww has none"
+        # global.c:209-211: over 1M the selector limit is in pages, so the size rounds to a page;
+        # GLOBAL_MAX_ALLOC_SIZE (:59) is 16M - 64K.
+        align = 0xFFF if size > 0x100000 else 0x1F
+        if size >= 0x00FF0000 - align:
+            return 0, 0, None
         if self.allocate is None:
             return 0, 0, "KERNEL.15 GlobalAlloc with no CPU to map the block"
-        size = (size + 0x1F) & ~0x1F
+        size = (size + align) & ~align
         sel = self.allocate(size)
         handle = moveable_handle(sel) if flags & GMEM_MOVEABLE else sel
         self.heap[handle] = (sel, size, flags)
@@ -1876,4 +1879,4 @@ class Wine(KernelState):
 
 
 # Handler modules register themselves in HANDLERS when imported.
-from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, user_dialog, tasks, win32, kernel32, mmsystem16, ole16, selector16, input16  # noqa: E402,F401
+from . import kernel16, user16, shell16, gdi16, user_wnd, user_res, user_controls, user_dialog, user_text, tasks, win32, kernel32, mmsystem16, ole16, selector16, input16  # noqa: E402,F401

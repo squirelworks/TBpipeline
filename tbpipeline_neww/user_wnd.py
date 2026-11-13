@@ -26,6 +26,8 @@ import struct
 from .guest import Call
 from .handlers import api, signed
 from . import gdi16
+from . import user_caret
+from .user_caret import SYSTEM_TIMER, SYSTEM_TIMER_CARET
 
 FIRST_USER_HANDLE = 0x0020
 
@@ -129,6 +131,7 @@ class TaskQueue:
         self.peek = None         # (raw, message or None) cooked for a peek that leaves it queued
         self.peek_fresh = False
         self.after = {}          # cooked message -> a message posted once it is read (WM_KEYF1)
+        self.caret = None        # user_caret.Caret: the server keeps it per thread input
 
 
 class WM:
@@ -2440,6 +2443,9 @@ def next_message(wine, hwnd, first, last, remove, task=None, advance=True):
         m.clock = max(m.clock, timer[2])
         if remove:
             timer[2] = m.clock + timer[0]
+        if key[1] & SYSTEM_TIMER:
+            # A system timer (NtUserSetSystemTimer) is WM_SYSTIMER, with no callback.
+            return (key[0], WM_SYSTIMER, key[1] & 0xFFFF, 0)
         return (key[0], WM_TIMER, key[1], timer[1])
     return None
 
@@ -2750,6 +2756,10 @@ def dispatch_message(wine, arg, ptr):
     if msg in (WM_TIMER, WM_SYSTIMER) and lp:
         ax, dx = yield from call_proc(wine, lp, h, msg, wp, time_)
         return ax | dx << 16
+    if msg == WM_SYSTIMER and wp == SYSTEM_TIMER_CARET:
+        # dlls/win32u/message.c:4055: DispatchMessage blinks the caret itself.
+        user_caret.toggle(wine, h)
+        return 0
     w = m.get(h)
     if w is None:
         return 0

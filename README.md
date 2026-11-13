@@ -45,6 +45,9 @@ Tick a box when its PR merges. The issues hold the detail.
 - [x] [#225](https://github.com/squirelworks/TBpipeline/issues/225): Wingdings and Symbol-font characters (bullets, π) through the symbol faces Wine installs and the course's own `nida.ttf`
 - [x] [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest of `93952606.TBK`. The Final Quiz runs to its score page, the lesson opens from the menu, and Lesson Exit unloads ToolBook's DLLs
 - [x] [#233](https://github.com/squirelworks/TBpipeline/issues/233): OLE automation objects and the 32-bit DLL unload. Lesson Exit now ends the task cleanly
-- [ ] The other NIDA ATT courses: on hold until the week of 2026-11-09
+- [ ] [#227](https://github.com/squirelworks/TBpipeline/issues/227): the book sweep. Every TB80 book we have runs through neww, and its stops are fixed by group. This is the top item of [Roadmap 2](https://github.com/squirelworks/TBpipeline/issues/230)
+  - [x] The runner (`python3 -m tbpipeline_neww.sweep`), plus the caret, the advapi32 registry, `GetShortPathNameA` and user32's OBM_ bitmaps
+  - [ ] Font enumeration, the EDIT control, the common file dialog, OLE controls, blocks over 1 MB, cross-task `SendMessage`
+  - [ ] Page walking (menu-bar clicks), and the ~195 NIDA ATT courses from Drive
 
 [documentation/future.md](documentation/future.md) has the longer list. [CURSOR.md](CURSOR.md) is the handover note for Cursor (2026-11-08).

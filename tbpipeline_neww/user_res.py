@@ -113,14 +113,43 @@ def dib_from_bytes(data):
     return (img, w, h, mono), None
 
 
+def user32_bitmap(name):
+    """user32's OBM_ bitmaps, the RT_BITMAP resources dlls/user32/user32.rc:118-218 builds from
+    dlls/user32/resources/obm_*.bmp, its ids include/winuser.rh:1017-1054. neww reads them
+    from the Wine checkout WINE_SRC names (the .bmp less its 14-byte BITMAPFILEHEADER is the
+    resource). Returns (data, None) or (None, why); an id user32 has no bitmap for is
+    (None, "") as a missing resource."""
+    import os
+    import re
+    from pathlib import Path
+    src = os.environ.get("WINE_SRC")
+    if not src:
+        return None, "a user32 OBM_ bitmap, read from the Wine checkout WINE_SRC, which is not set"
+    if not isinstance(name, int):
+        return None, ""
+    rh = (Path(src) / "include" / "winuser.rh").read_text("latin1")
+    ids = {int(v): k for k, v in re.findall(r"#define\s+(OBM_\w+)\s+(\d+)", rh)}
+    rc = (Path(src) / "dlls" / "user32" / "user32.rc").read_text("latin1")
+    files = dict(re.findall(r"^(OBM_\w+)\s+BITMAP\s+(\S+)", rc, re.M))
+    symbol = ids.get(name)
+    if symbol not in files:
+        return None, ""
+    raw = (Path(src) / "dlls" / "user32" / files[symbol]).read_bytes()
+    return raw[14:], None
+
+
 @api("USER", "LoadBitmap")
 def load_bitmap(wine, arg, inst, name_ptr):
     """user.c LoadImage16 IMAGE_BITMAP: the RT_BITMAP resource through LoadImageW from a file,
     which makes a screen-compatible bitmap (mono for a black-and-white 1-bit DIB)."""
     name = res_arg(wine, name_ptr)
     if not inst:
-        return 0, 0, f"USER.175 LoadBitmap(0, {name!r}): a user32 OBM_ bitmap, and neww has no user32 resources"
-    data, _h = resource_bytes(wine, wine._exe_ptr(inst) or inst, name, RT_BITMAP)
+        # LoadBitmap16(0, id) is user32's own bitmap (LoadImageW with no module).
+        data, why = user32_bitmap(name)
+        if why:
+            return 0, 0, f"USER.175 LoadBitmap(0, {name!r}): {why}"
+    else:
+        data, _h = resource_bytes(wine, wine._exe_ptr(inst) or inst, name, RT_BITMAP)
     if data is None:
         wine.trace[-1] += f" {name!r} not found"
         return 0
@@ -592,6 +621,39 @@ def get_system_menu(wine, arg, hwnd, revert):
     if not w.sysmenu:
         w.sysmenu = new_menu(wine, True)
     return w.sysmenu
+
+
+ICON_HOTSPOT = 0x4242    # dlls/user.exe16/user.c:269: the hotspot that marks an icon
+
+
+@api("USER", "CreateIcon")
+def create_icon(wine, arg, inst, width, height, planes, bpp, and_ptr, xor_ptr):
+    """CreateIcon16 (user.c:2345) -> CreateCursorIconIndirect16 (:2366): 0 without both masks
+    or for planes other than 1; else a moveable block with CURSORICONINFO (hotspot
+    ICON_HOTSPOT, the XOR row width), the AND rows (1 bit, 16-bit aligned) and the XOR rows.
+    neww keeps a picture of the XOR bits for DrawIcon, as it does for a loaded icon."""
+    from PIL import Image
+    width = width - 0x10000 if 0 <= width and width & 0x8000 else width
+    height = height - 0x10000 if 0 <= height and height & 0x8000 else height
+    planes, bpp = planes & 0xFF, bpp & 0xFF
+    if not and_ptr or not xor_ptr or planes != 1:
+        return 0
+    if width <= 0 or height <= 0:
+        return 0, 0, f"USER.407 CreateIcon {width}x{height}: neww makes icons of a positive size only"
+    if bpp not in (1, 32):
+        return 0, 0, f"USER.407 CreateIcon of {bpp} bits a pixel: neww reads 1- and 32-bit icons only"
+    and_bytes = ((width + 15) // 16) * 2
+    xor_bytes = ((width * bpp + 15) // 16) * 2
+    and_bits = gdi16.read(wine, and_ptr, and_bytes * height)
+    xor_bits = gdi16.read(wine, xor_ptr, xor_bytes * height)
+    if bpp == 1:
+        image = Image.frombytes("1", (width, height), xor_bits, "raw", "1", xor_bytes).convert("RGB")
+    else:
+        image = Image.frombytes("RGB", (width, height), xor_bits, "raw", "BGRX", xor_bytes)
+    handle, why = _icon_block(wine, width, height, (ICON_HOTSPOT, ICON_HOTSPOT), bpp, and_bits, xor_bits, image)
+    if why:
+        return 0, 0, f"USER.407 CreateIcon: {why}"
+    return handle
 
 
 @api("USER", "CopyIcon", "CopyCursor")

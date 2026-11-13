@@ -1348,3 +1348,111 @@ def global_realloc(wine, h, size, flags):
         return h
     hflags = 0 if flags & LMEM_MOVEABLE else in_place
     return k32_heap_realloc(wine, heap, hflags, h, size)
+
+
+# ---------------------------------------------------------------- the registry, from 32 bits
+#
+# One registry, as in Wine: SHELL's 16-bit calls (shell16.py) forward to advapi32 over it.
+
+def _reg32(wine, hkey):
+    """get_special_root_hkey (kernelbase registry.c): a predefined key or an open one. 0 and 1
+    are HKEY_CLASSES_ROOT only from 16 bits (shell.dll16 fix_win16_hkey)."""
+    from .shell16 import _reg
+    reg = _reg(wine)
+    return reg, (None if hkey in (0, 1) else reg.key(hkey))
+
+
+@win32("ADVAPI32", "RegOpenKeyExA")
+def reg_open_key_ex_a(wine, hkey, name_ptr, options, access, out):
+    """kernelbase/registry.c:688 RegOpenKeyExA: a predefined key with no name is itself; else
+    the subkey opened (ERROR_FILE_NOT_FOUND when it is not there: neww's registry starts as
+    an empty prefix's does, with only what the guest made)."""
+    from .shell16 import PREDEFINED
+    name = read_str(wine, name_ptr).decode("cp1252", "replace") if name_ptr else ""
+    wine.trace[-1] += f" {name!r}"
+    if out and not name and hkey in PREDEFINED:
+        _dword(wine, out, hkey)
+        return 0
+    if hkey == 0x80000000 and name.startswith("\\"):
+        name = name[1:]                     # :705, NT allows it for HKEY_CLASSES_ROOT
+    reg, key = _reg32(wine, hkey)
+    if key is None:
+        return 6                            # ERROR_INVALID_HANDLE
+    found = reg.walk(key, name)
+    if found is None:
+        return 2                            # ERROR_FILE_NOT_FOUND
+    if out:
+        _dword(wine, out, reg.handle(found))
+    return 0
+
+
+@win32("ADVAPI32", "RegOpenKeyA")
+def reg_open_key_a(wine, hkey, name_ptr, out):
+    """advapi32/registry.c:154 RegOpenKeyA: ERROR_INVALID_PARAMETER with no out pointer, the
+    key itself for no name, else RegOpenKeyExA."""
+    if not out:
+        return 87
+    if not name_ptr or not read_str(wine, name_ptr):
+        _dword(wine, out, hkey)
+        return 0
+    return reg_open_key_ex_a(wine, hkey, name_ptr, 0, 0x02000000, out)
+
+
+@win32("ADVAPI32", "RegCloseKey")
+def reg_close_key_32(wine, hkey):
+    """kernelbase RegCloseKey: a predefined key is ERROR_SUCCESS; else its handle closes."""
+    from .shell16 import PREDEFINED, _reg
+    if hkey in PREDEFINED:
+        return 0
+    return 0 if _reg(wine).open.pop(hkey, None) is not None else 6
+
+
+# ---------------------------------------------------------------- short names
+
+@win32("KERNEL32", "GetShortPathNameA")
+def get_short_path_name_a(wine, long_ptr, out, size):
+    """kernelbase/file.c:2233 GetShortPathNameW through kernel32/path.c:76: the drive is kept,
+    each component is the name FindFirstFile finds for it (its 8.3 alias when it has one),
+    "." and ".." stay; a component that is not there is ERROR_FILE_NOT_FOUND. The answer is
+    copied (path.c:49) when it fits: its length; else the size it needs."""
+    if not long_ptr:
+        _error(wine, 87)                    # ERROR_INVALID_PARAMETER
+        return 0
+    path = read_str(wine, long_ptr).decode("latin1")
+    wine.trace[-1] += f" {path!r}"
+    if not path:
+        _error(wine, 161)                   # ERROR_BAD_PATHNAME
+        return 0
+    if "*" in path or "?" in path:
+        _error(wine, 123)                   # ERROR_INVALID_NAME
+        return 0
+    short, i = "", 0
+    if len(path) > 1 and path[0] != "/" and path[1] == ":":
+        short, i = path[:2], 2
+    while i < len(path):
+        if path[i] in "\\/":
+            short += path[i]
+            i += 1
+            continue
+        j = i
+        while j < len(path) and path[j] not in "\\/":
+            j += 1
+        part = path[i:j]
+        if part in (".", ".."):
+            short += part
+        else:
+            sofar = short + part
+            if directory_exists(wine, sofar):
+                short = sofar
+            elif wine.file_exists(sofar):
+                host = wine.resolve(sofar)
+                short += wine.dos_name(host) if host is not None else part
+            else:
+                _error(wine, 2)             # ERROR_FILE_NOT_FOUND
+                return 0
+        i = j
+    raw = short.encode("latin1") + b"\x00"
+    if out and len(raw) <= size:
+        _w(wine, out, raw)
+        return len(raw) - 1
+    return len(raw)
