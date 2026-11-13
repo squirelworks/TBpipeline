@@ -69,7 +69,7 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [ ] `EnumFonts` / `EnumFontFamiliesEx` over the installed faces (tb80.sbk).
 - [x] `GetBitmapBits` on a 32-bit bitmap and `CreateIcon` (tb80acta).
 - [x] Blocks over 1 MB: page-granular selectors, as `global.c:209` and `selector.c:66` give them (Walkthrough).
-- [x] `DrawText` (single-line and plain multi-line, `DT_CALCRECT`, alignment) and `DrawFocusRect`. Word breaks, tabs, ellipses and the mnemonic's underscore stop by name.
+- [x] `DrawText` (single-line and plain multi-line, `DT_CALCRECT`, alignment) and `DrawFocusRect`. The mnemonic is underscored as `TEXT_DrawUnderscore` draws it. Word breaks, tabs and ellipses stop by name.
 - [x] Page walking: the sweep chooses Go > Next from the runtime's menu (a `WM_COMMAND`, a menu click's last message). Ctrl+Right does not turn a TB80 page. A pass also needs a main window that is not the runtime's "(Untitled)" one.
 - [ ] The EDIT control (scrwalk) and the common file dialog.
 - [ ] OLE controls: `CoGetClassObject`, `StringFromGUID2`, then `TB80OCX` (actxexpl, Quizbldr, tb80x, tb80web).

@@ -4,7 +4,7 @@ DrawText16 (dlls/user.exe16/user.c:809) copies the RECT16 to a RECT and back aro
 which is DrawTextExW (dlls/user32/text.c:865). neww has the lines it can lay out the way
 TEXT_NextLineW (text.c:602) does without breaking or shortening them: one line with
 DT_SINGLELINE, else a line per CR/LF. Word breaks, ellipses, tab expansion, DT_MODIFYSTRING
-and a mnemonic's underscore stop by name.
+stop by name.
 """
 
 import struct
@@ -36,12 +36,14 @@ def next_line(text, i, flags):
         ch = text[i]
         if ch in (CR, LF) and not flags & DT_SINGLELINE:
             break
-        if not flags & DT_NOPREFIX and ch == PREFIX and i + 1 < len(text):
+        if not flags & DT_NOPREFIX and ch == PREFIX:
+            # text.c:655-665: the prefix is thrown away; "&&" keeps one; the last one counts.
             i += 1
-            if text[i] != PREFIX:
+            if i < len(text) and text[i] == PREFIX:
+                out.append(text[i])
+                i += 1
+            else:
                 prefix_at = len(out)
-            out.append(text[i])
-            i += 1
             continue
         out.append(ch)
         i += 1
@@ -54,6 +56,26 @@ def next_line(text, i, flags):
     elif text[i] == LF:
         i += 1
     return "".join(out), (i if i < len(text) else None), prefix_at
+
+
+def draw_underscore(wine, dc, x, y, line, offset, rect):
+    """TEXT_DrawUnderscore (text.c:823): a 1-pixel solid line in the text color under the
+    character at offset, from the extent before it to the extent through it less one, cut to
+    the rectangle unless DT_NOCLIP; drawn as MoveToEx and LineTo, so its last pixel is left out."""
+    start = x + gdi16.text_width(wine, dc, line[:offset])
+    end = x + gdi16.text_width(wine, dc, line[:offset + 1]) - 1
+    if rect:
+        l, t, r, b = rect
+        if start > r or end < l or y < t or y > b:
+            return
+        start, end = max(start, l), min(end, r)
+    g = gdi16.gdi(wine)
+    pen = g.add(gdi16.GdiObject(gdi16.OBJ_PEN, style=0, width=1, color=dc.text_color))   # CreatePen(PS_SOLID, 1, GetTextColor)
+    old = dc.pen
+    dc.pen = pen
+    gdi16.pen_line(wine, dc, [(start, y), (end, y)])
+    dc.pen = old
+    del g.objects[pen]                                   # DeleteObject
 
 
 @api("USER", "DrawText")
@@ -94,8 +116,6 @@ def draw_text16(wine, arg, hdc, ptr, count, rect_ptr, flags):
     while True:
         last_line = not flags & DT_NOCLIP and y + lh > bottom
         line, i, prefix_at = next_line(text, i, flags)
-        if prefix_at != -1 and not flags & DT_CALCRECT:
-            return 0, 0, f"USER.85 DrawText {text!r}: the mnemonic's underscore (TEXT_DrawUnderscore), which neww does not draw yet"
         width = gdi16.text_width(wine, dc, line)
         if flags & DT_CENTER:
             x = (left + right - width) // 2
@@ -111,9 +131,11 @@ def draw_text16(wine, arg, hdc, ptr, count, rect_ptr, flags):
             # ExtTextOutW with ETO_CLIPPED to the rectangle unless DT_NOCLIP (text.c:1004).
             saved = dc.text_align
             dc.text_align = saved & 1                        # TA_LEFT | TA_TOP, keeping TA_UPDATECP
-            gdi16.draw_text(wine, dc, x, y, line,
-                            clip_rect=None if flags & DT_NOCLIP else (left, top, right, bottom))
+            clip = None if flags & DT_NOCLIP else (left, top, right, bottom)
+            gdi16.draw_text(wine, dc, x, y, line, clip_rect=clip)
             dc.text_align = saved
+            if 0 <= prefix_at < len(line):                   # text.c:1021
+                draw_underscore(wine, dc, x, y + m["ascent"] + 1, line, prefix_at, clip)
         else:
             max_width = max(max_width, width)
         y += lh

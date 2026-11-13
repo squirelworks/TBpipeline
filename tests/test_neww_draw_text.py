@@ -18,6 +18,9 @@ class NextLine(unittest.TestCase):
         self.assertEqual(next_line("one\r\ntwo", 0, 0), ("one", 5, -1))
         self.assertEqual(next_line("one\r\ntwo", 5, 0), ("two", None, -1))
         self.assertEqual(next_line("one\ntwo", 0, DT_SINGLELINE), ("one\ntwo", None, -1))
+        # text.c:655: a last "&" is thrown away too; the offset is then past the line.
+        self.assertEqual(next_line("Open&", 0, 0), ("Open", None, 4))
+        self.assertEqual(next_line("&a&b", 0, 0), ("ab", None, 1))
 
 
 class FocusPoints(unittest.TestCase):
@@ -59,6 +62,32 @@ class DrawText(unittest.TestCase):
         (ax, _dx, stop, _), _rect = self.draw((0, 0, 64, 32), 0x20, count=0)
         self.assertIsNone(stop)
         self.assertGreater(ax, 0)
+
+    def pixels(self, text, flags):
+        from tbpipeline_neww import gdi16
+        self.w.memory.write(DATA, 0x100, text + b"\0")
+        dc = gdi16._dc(self.w, self.dc)
+        img, _origin = gdi16.surface(self.w, dc)
+        img.paste((0, 0, 0), (0, 0) + img.size)
+        by_name(self.w, "GDI", "SetTextColor", self.dc, (0xFF, 0xFFFF))
+        by_name(self.w, "GDI", "SetBkMode", self.dc, 1)
+        (_ax, _dx, stop, _), _rect = self.draw((0, 0, 64, 32), flags)
+        self.assertIsNone(stop)
+        return img.copy(), dc
+
+    def test_the_prefixed_character_is_underscored(self):
+        """TEXT_DrawUnderscore (text.c:823): a text-colored line at tmAscent + 1 from the extent
+        before the character to the extent through it less one, its last pixel left out."""
+        from tbpipeline_neww import gdi16
+        plain, dc = self.pixels(b"Open", 0x20)
+        marked, _dc = self.pixels(b"&Open", 0x20)
+        y = gdi16.text_metrics(self.w, dc)["ascent"] + 1
+        end = gdi16.text_width(self.w, dc, "O") - 1
+        changed = {(x, yy) for x in range(64) for yy in range(32)
+                   if plain.getpixel((x, yy)) != marked.getpixel((x, yy))}
+        self.assertTrue(changed)
+        self.assertTrue(all(yy == y and 0 <= x < end for x, yy in changed), changed)
+        self.assertEqual(marked.getpixel((0, y)), (255, 255, 255))
 
     def test_word_break_stops_by_name(self):
         (_ax, _dx, stop, _), _rect = self.draw((0, 0, 64, 32), 0x10)
