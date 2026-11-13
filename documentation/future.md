@@ -52,6 +52,13 @@ Done for [#225](https://github.com/squirelworks/TBpipeline/issues/225):
 - [x] Wingdings bullets draw as Wingdings bullets (LF P100), not as "w".
 - [x] π on 93952606 P430 draws from the course's own symbol face, `nida.ttf`, not as "p".
 
+Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest of `93952606.TBK` from its Lesson Menu, P900.
+
+- [x] The Final Quiz runs to its score page (P10303), and exit from there goes to the objectives to review (P10410).
+- [x] "1. Parallel Resonance" opens the lesson (P1001).
+- [x] Lesson Exit asks "Are you sure you want to Exit the Lesson?". Yes unloads ToolBook's DLLs (`FreeLibrary` at a module's last use calls its WEP).
+- [ ] Lesson Exit then stops in `TB80OLE` `UNINITIALIZEOLEREMOTE`, which releases an automation object Wine's `CreateDispTypeInfo` stub never made: [#233](https://github.com/squirelworks/TBpipeline/issues/233).
+
 The other NIDA ATT courses are on hold until the week of 2026-11-09.
 
 ## Do not do this

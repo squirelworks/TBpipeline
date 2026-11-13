@@ -218,6 +218,18 @@ class Mouse(unittest.TestCase):
         hwnd, msg, wp, lp = get(self.w, answer(HTCLIENT))[2][:4]
         self.assertEqual((hwnd, msg, lp), (self.hwnd, 0x200, 9 << 16 | 7))
 
+    def test_set_cursor_pos_goes_before_script_steps_not_yet_due(self):
+        # The server stamps set_cursor_pos's move with the time of the call and queues it then
+        # (Wine 2528aff2 server/queue.c:576, :580). A script step that is not due has not
+        # happened yet, so the move comes first; it used to wait behind the whole script.
+        from tbpipeline_neww.input16 import queue_script
+        queue_script(self.w, f"wait 750; click {self.ox + 1},{self.oy + 1}")
+        by_name(self.w, "USER", "SetCursorPos", self.ox + 7, self.oy + 9)
+        _hwnd, msg, _wp, lp = get(self.w, answer(HTCLIENT))[2][:4]
+        self.assertEqual((msg, lp), (0x200, 9 << 16 | 7))
+        _hwnd, msg, _wp, lp = get(self.w, answer(HTCLIENT))[2][:4]
+        self.assertEqual((msg, lp), (0x200, 1 << 16 | 1))
+
     def test_queue_status_and_input_state(self):
         from tbpipeline_neww.input16 import queue_script
         self.assertEqual(by_name(self.w, "USER", "GetInputState")[0], 0)

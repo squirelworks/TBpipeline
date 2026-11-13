@@ -480,18 +480,34 @@ def get_exe_ptr(wine, arg):
 
 @handles("KERNEL", 96)
 def free_library(wine, arg):
-    """ne_module.c FreeLibrary16 -> NE_FreeModule: the module's count goes down by 1. At 0 Wine
-    calls the DLL's WEP and unloads it and what it imported; neww stops there, as it never
-    unloads. A gate module, or a handle that is no module, changes nothing. Void."""
+    """ne_module.c FreeLibrary16 -> NE_FreeModule (Wine 2528aff2
+    dlls/krnl386.exe16/ne_module.c:1143): the module's count goes down by 1. At 0 the module is
+    unloaded: its classes go, its WEP runs, and it leaves the module list (machine._unload). A
+    gate module, or a handle that is no module, changes nothing. Void."""
+    from .guest import GuestCalls
     module = wine._exe_ptr(arg(0))
     name = next((n for n, h in wine.modules.items() if h == module), None) if module else None
     if name is None or wine.release_module is None:
         return arg.regs("ax"), 0, None
+    ax = arg.regs("ax")
     if wine.usage.get(module, 1) <= 1:
-        return 0, 0, (f"KERNEL.96 FreeLibrary({arg(0):#x}): the last use of {name}, so Wine calls its WEP "
-                      "and unloads it, and neww does not unload modules")
+        if wine.unload_module is None:
+            return 0, 0, f"KERNEL.96 FreeLibrary({arg(0):#x}): the last use of {name}, and this host cannot unload it"
+        out = wine.unload_module(name)
+        if isinstance(out, str):
+            return 0, 0, f"KERNEL.96 FreeLibrary({arg(0):#x}): {out}"
+        calls, finish = out
+        if not calls:
+            finish()
+            return ax, 0, None
+
+        def done(results):
+            finish()
+            return ax, 0
+        wine.registers = {"guest": GuestCalls(calls, done)}
+        return ax, 0, None
     wine.release_module(name)
-    return arg.regs("ax"), 0, None
+    return ax, 0, None
 
 
 @handles("KERNEL", 107)
