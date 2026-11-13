@@ -512,10 +512,19 @@ class Machine:
         self.tramp_retired.append((state["slots"].pop(), self.hook_serial))
         task, saved, wait, done = state["sent"]
         ax, dx = uc.reg_read(UC_X86_REG_AX), uc.reg_read(UC_X86_REG_DX)
-        nxt = done(ax, dx)
         self.box.wine.trace.append(f"  <- reply {dx << 16 | ax:#x}")
-        # The task goes back to waiting where it was.
+        # The task goes back to waiting where it was, before done, which may send it another.
         task.context, task.wait = saved, wait
+        nxt = done(ax, dx)
+        if isinstance(nxt, str):
+            self.stop = nxt
+            uc.emu_stop()
+            return
+        if isinstance(nxt, tasks.Switch):
+            # done chains another sent message (a broadcast's next window): run it in its
+            # task the same way, from where that task waits.
+            self._inject(uc, nxt.task, nxt.call, nxt.done)
+            return
         self._resume(uc, nxt, retf=True)
 
     def _resume(self, uc, task, retf):

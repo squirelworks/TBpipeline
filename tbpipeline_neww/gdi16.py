@@ -1236,6 +1236,10 @@ def combine_rgn(wine, arg, dest, src1, src2, mode):
             return 0
         if mode == 1:  # RGN_AND
             d.rect = _intersect(a.rect, b.rect)
+        elif mode == 2 and _union_rect(a.rect, b.rect):
+            d.rect = _union_rect(a.rect, b.rect)
+        elif mode == 4 and _diff_rect(a.rect, b.rect) is not None:
+            d.rect = _diff_rect(a.rect, b.rect)
         elif mode == 2 and _contains(a.rect, b.rect):
             d.rect = a.rect
         elif mode == 2 and _contains(b.rect, a.rect):
@@ -1250,6 +1254,44 @@ def combine_rgn(wine, arg, dest, src1, src2, mode):
         else:
             return 0, 0, f"GDI CombineRgn mode {mode} of {a.rect} and {b.rect}: the result is not one rectangle, and neww keeps rectangles only"
     return 1 if _empty(d.rect) else 2
+
+
+def _union_rect(a, b):
+    """REGION_UnionRegion (win32u/region.c:1966) when its result is one rectangle: two non-empty
+    rectangles with the same columns whose rows overlap or touch become one band set that
+    REGION_Coalesce (:1400) merges; with the same rows whose columns overlap or touch, REGION_UnionO (:1918)
+    merges them in one band. Else None."""
+    if _empty(a) or _empty(b):
+        return None
+    if a[0] == b[0] and a[2] == b[2] and b[1] <= a[3] and a[1] <= b[3]:
+        return (a[0], min(a[1], b[1]), a[2], max(a[3], b[3]))
+    if a[1] == b[1] and a[3] == b[3] and b[0] <= a[2] and a[0] <= b[2]:
+        return (min(a[0], b[0]), a[1], max(a[2], b[2]), a[3])
+    return None
+
+
+def _diff_rect(a, b):
+    """REGION_SubtractRegion (region.c:2178) when its result is one rectangle: b misses a (a), or covers a's
+    whole width from its top or bottom, or its whole height from its left or right, or all of
+    it (empty). Else None (a hole, or two or more pieces)."""
+    if _empty(a):
+        return None
+    i = _intersect(a, b)
+    if _empty(i):
+        return a
+    if i == a:
+        return (0, 0, 0, 0)
+    if i[0] == a[0] and i[2] == a[2]:
+        if i[1] == a[1]:
+            return (a[0], i[3], a[2], a[3])
+        if i[3] == a[3]:
+            return (a[0], a[1], a[2], i[1])
+    if i[1] == a[1] and i[3] == a[3]:
+        if i[0] == a[0]:
+            return (i[2], a[1], a[2], a[3])
+        if i[2] == a[2]:
+            return (a[0], a[1], i[0], a[3])
+    return None
 
 
 def _empty(r):

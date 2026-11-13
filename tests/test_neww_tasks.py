@@ -351,6 +351,43 @@ class SentMessages(unittest.TestCase):
         self.assertTrue(any(line.endswith("for a sent message") for line in wine.trace))
 
 
+def record_dde_initiate(code):
+    # cmp word [bp+0Ch], 3E0h ; jne def ; mov ax, [bp+0Ah] ; mov [72h], ax ; xor ax, ax ;
+    # xor dx, dx ; pop bp ; retf 0Ah
+    code.emit(0x81, 0x7E, 0x0C, 0xE0, 0x03, 0x75, 0x0E)
+    code.emit(0x8B, 0x46, 0x0A, 0xA3, 0x72, 0x00, 0x31, 0xC0, 0x31, 0xD2, 0x5D, 0xCA, 0x0A, 0x00)
+
+
+class Broadcast(unittest.TestCase):
+    """SendMessage16(HWND_BROADCAST) is win32u broadcast_message (message.c:4098): each top-level
+    window gets it in its own task, then the sender gets 1. tb80ftp broadcasts WM_DDE_INITIATE
+    with TB80NET's window up (#227)."""
+
+    def run_broadcast(self, msg):
+        parent = win_exec(Asm()).store("ax", 0x40)
+        parent.push(0xFFFF).push(msg).push(7).push(0).push(0).call(USER, SEND_MESSAGE)
+        parent.store("ax", 0x42).exit(0)
+        code, data, fixups = window_child(record_dde_initiate)
+        return run(parent, code, data, fixups)
+
+    def test_another_tasks_window_gets_it_in_that_task(self):
+        host = self.run_broadcast(0x3E0)
+        self.assertEqual(host.stop, "dos exit 0x0")
+        parent = host.box.exe.segments[1].selector
+        kid = host.box.images["CHILD"].segments[1].selector
+        self.assertEqual(word(host, kid, 0x72), 7)
+        self.assertEqual(word(host, parent, 0x42), 1)
+        self.assertEqual(host.box.wine.tasks[1].wait, "message")
+
+    def test_a_private_message_is_not_broadcast(self):
+        # is_message_broadcastable (:4090): WM_USER up to 0xBFFF goes nowhere; the answer is 1.
+        host = self.run_broadcast(0x400)
+        parent = host.box.exe.segments[1].selector
+        kid = host.box.images["CHILD"].segments[1].selector
+        self.assertEqual(word(host, kid, 0x72), 0)
+        self.assertEqual(word(host, parent, 0x42), 1)
+
+
 class Messages(unittest.TestCase):
     """Per-task queues: a posted message goes to the window's task, and GetMessage waits."""
 

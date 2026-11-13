@@ -226,6 +226,30 @@ class Gdi(unittest.TestCase):
         self.call("GetRgnBox", d, (DATA, 0x300))
         self.assertEqual(rect(self.w, 0x300), (0, 2, 152, 23))
 
+    def test_combine_or_of_rects_that_coalesce_is_one_rect(self):
+        # REGION_UnionRegion's bands, coalesced (REGION_Coalesce): two rectangles with the same
+        # columns that overlap or touch, or the same rows, are one rectangle (tb80ftp's dialog).
+        for a, b, want in (((11, 221, 228, 241), (11, 238, 228, 258), (11, 221, 228, 258)),
+                           ((0, 0, 10, 5), (0, 5, 10, 9), (0, 0, 10, 9)),
+                           ((0, 0, 4, 8), (4, 0, 9, 8), (0, 0, 9, 8))):
+            ra, rb = self.call("CreateRectRgn", *a), self.call("CreateRectRgn", *b)
+            d = self.call("CreateRectRgn", 0, 0, 0, 0)
+            self.assertEqual(self.call("CombineRgn", d, ra, rb, 2), 2, (a, b))
+            self.call("GetRgnBox", d, (DATA, 0x300))
+            self.assertEqual(rect(self.w, 0x300), want)
+
+    def test_combine_diff_that_leaves_one_rect(self):
+        # REGION_SubtractRegion: a band cut off one side of the first rectangle leaves one.
+        for a, b, want in (((0, 0, 10, 10), (0, 0, 10, 4), (0, 4, 10, 10)),
+                           ((0, 0, 10, 10), (-2, 6, 12, 20), (0, 0, 10, 6)),
+                           ((0, 0, 10, 10), (7, -1, 10, 10), (0, 0, 7, 10)),
+                           ((0, 0, 10, 10), (20, 20, 30, 30), (0, 0, 10, 10))):
+            ra, rb = self.call("CreateRectRgn", *a), self.call("CreateRectRgn", *b)
+            d = self.call("CreateRectRgn", 0, 0, 0, 0)
+            self.assertEqual(self.call("CombineRgn", d, ra, rb, 4), 2, (a, b))
+            self.call("GetRgnBox", d, (DATA, 0x300))
+            self.assertEqual(rect(self.w, 0x300), want)
+
     def test_memory_dc_caps_are_the_displays(self):
         # The dib driver has no GetDeviceCaps: nulldrv answers for a memory DC too.
         dc = self.color_dc()

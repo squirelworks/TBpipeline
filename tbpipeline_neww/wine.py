@@ -321,6 +321,19 @@ def _ole2disp():
 
 OLE2DISP = _ole2disp()
 
+# compobj.dll16.spec:210-218: the IMalloc16 methods CoGetMalloc's allocator's vtable points at.
+COMPOBJ = _table("COMPOBJ", "dlls/compobj.dll16/compobj.dll16.spec", [
+    "500 cdecl IMalloc16_QueryInterface(ptr ptr ptr) IMalloc16_fnQueryInterface",
+    "501 cdecl IMalloc16_AddRef(ptr) IMalloc16_fnAddRef",
+    "502 cdecl IMalloc16_Release(segptr) IMalloc16_fnRelease",
+    "503 cdecl IMalloc16_Alloc(ptr long) IMalloc16_fnAlloc",
+    "504 cdecl IMalloc16_Realloc(ptr segptr long) IMalloc16_fnRealloc",
+    "505 cdecl IMalloc16_Free(ptr segptr) IMalloc16_fnFree",
+    "506 cdecl IMalloc16_GetSize(ptr segptr) IMalloc16_fnGetSize",
+    "507 cdecl IMalloc16_DidAlloc(ptr segptr) IMalloc16_fnDidAlloc",
+    "508 cdecl IMalloc16_HeapMinimize(ptr) IMalloc16_fnHeapMinimize",
+])
+
 WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
     "1 pascal -register __fpMath()",
 ])
@@ -384,7 +397,7 @@ LOADED = {
     for module, rows in SPEC_ROWS.items()
 }
 HAND = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "MMSYSTEM": MMSYSTEM, "WIN87EM": WIN87EM,
-        "OLE2DISP": OLE2DISP}
+        "OLE2DISP": OLE2DISP, "COMPOBJ": COMPOBJ}
 
 
 def row_for(module, ordinal):
@@ -805,6 +818,21 @@ class Wine(KernelState):
             self.task["dta"] = (reg("ds"), reg("dx"))
             self.trace[-1] += f" DTA {reg('ds'):#x}:{reg('dx'):#x}"
             return {}, None
+        if ah == 0x19:
+            # GET CURRENT DEFAULT DRIVE (int21.c:3966): INT21_GetCurrentDrive (:289), the letter
+            # of the current directory, BIN_DIR, as a number from A: = 0.
+            return {"ax": (ax & 0xFF00) | (ord(BIN_DIR[0].upper()) - ord("A"))}, None
+        if ah == 0x47:
+            # GET CURRENT DIRECTORY (int21.c:4463), INT21_GetCurrentDirectory: DL 0 is the current
+            # drive, else DL - 1 if it has a root (INT21_MapDrive); neww's disk is C: alone, so
+            # another is ERROR_INVALID_DRIVE (15) in AX with CF set (:4834). The path is the short
+            # form of BIN_DIR without its drive letter, colon and backslash, in DS:SI.
+            drive = ord(BIN_DIR[0].upper()) - ord("A")
+            dl = reg("dx") & 0xFF
+            if dl and dl - 1 != drive:
+                return {"ax": 15, "eflags_cf": 1}, None
+            self.write(reg("ds"), reg("si"), BIN_DIR[3:].encode("latin1") + b"\0")
+            return {"eflags_cf": 0}, None
         if ah in (0x4E, 0x4F):
             return self._find_file(reg, first=ah == 0x4E)
         if ax == 0x4300:

@@ -32,6 +32,7 @@ from .user_caret import SYSTEM_TIMER, SYSTEM_TIMER_CARET
 FIRST_USER_HANDLE = 0x0020
 
 WS_POPUP, WS_CHILD, WS_MINIMIZE, WS_VISIBLE = 0x80000000, 0x40000000, 0x20000000, 0x10000000
+WM_USER = 0x0400
 WS_DISABLED, WS_CLIPSIBLINGS, WS_CLIPCHILDREN, WS_MAXIMIZE = 0x08000000, 0x04000000, 0x02000000, 0x01000000
 WS_CAPTION, WS_BORDER, WS_DLGFRAME = 0x00C00000, 0x00800000, 0x00400000
 WS_VSCROLL, WS_HSCROLL, WS_SYSMENU, WS_THICKFRAME = 0x00200000, 0x00100000, 0x00080000, 0x00040000
@@ -2260,10 +2261,19 @@ def get_sys_color_brush(wine, arg, index):
 
 @api("USER", "SendMessage")
 def send_message16(wine, arg, hwnd, msg, wp, lp):
-    """SendMessage16: HWND_BROADCAST (0xFFFF) goes to every top-level window."""
+    """SendMessage16 (user.exe16/message.c:1497). HWND_BROADCAST (0xFFFF) is win32u
+    broadcast_message (message.c:4098): a message below WM_USER or registered (:4090) goes to
+    each top-level window that is not WS_CHILD-only, in turn, a window of another task in that
+    task; the answer is 1."""
     m = wm(wine)
     if hwnd == 0xFFFF:
-        for top in list(m.children.get(m.desktop, [])):
+        if not (msg < WM_USER or msg >= 0xC000):
+            return 1
+        targets = [t for t in list(m.children.get(m.desktop, []))
+                   if m.get(t) is not None and (m.get(t).style & (WS_POPUP | WS_CHILD)) != WS_CHILD]
+        if wine.tasks and any(m.get(t).task and m.get(t).task != wine.htask for t in targets):
+            return broadcast_across_tasks(wine, targets, msg, wp, lp)
+        for top in targets:
             if m.get(top) is not None:
                 yield from send(wine, top, msg, wp, lp)
         return 1
@@ -2303,6 +2313,60 @@ def inter_task_send(wine, w, msg, wp, lp):
     switch.call, switch.done = call, done
     wine.registers = {"switch": switch}
     return 0, 0
+
+
+def broadcast_across_tasks(wine, targets, msg, wp, lp):
+    """A broadcast that reaches a window of another task. The sender waits; each window's
+    procedure runs in its own task, one after the other (a window of the sender's task from
+    where the sender waits), and then the sender gets 1. A window whose procedure is not guest
+    code (DefWindowProc, a Wine control) is answered here when that makes no guest call, and
+    stops by name when it would."""
+    from .tasks import by_handle, Switch
+    m = wm(wine)
+    sender = wine.current
+    name = MESSAGE_NAMES.get(msg, hex(msg))
+    queue = list(targets)
+
+    def next_switch():
+        while queue:
+            hwnd = queue.pop(0)
+            w = m.get(hwnd)
+            if w is None:
+                continue
+            task = sender if not w.task or w.task == sender.htask else by_handle(wine, w.task)
+            if task is None or (task is not sender and task.context is None):
+                continue
+            from .user_controls import host_index, call_host
+            index = host_index(wine, w.proc)
+            if proc_is_def(wine, w.proc) or index is not None:
+                wine.trace.append(f"  -> {hwnd:#x} {name} {wp:#x} {lp:#x} (task {task.exe_name}, broadcast)")
+                gen = (def_window_proc(wine, hwnd, msg, wp, lp) if index is None
+                       else call_host(wine, index, hwnd, msg, wp, lp))
+                try:
+                    next(gen)
+                except StopIteration:
+                    continue
+                return (f"SendMessage(HWND_BROADCAST, {name}) to {hwnd:#x} of task {task.exe_name}: its "
+                        "procedure is Wine's, and it makes a guest call, which neww makes only inside a gate call")
+            wine.trace.append(f"  -> {hwnd:#x} {name} {wp:#x} {lp:#x} (task {task.exe_name}, broadcast)")
+            # The sender is still running when the first window is its own.
+            ss = task.context["ss"] if task.context else wine.ss
+            sw = Switch("answer", task)
+            sw.call = Call(w.proc >> 16, w.proc & 0xFFFF, regs={"ds": ss, "es": ss, "ax": w.inst or ss},
+                           words=[hwnd, msg & 0xFFFF, wp & 0xFFFF, (lp >> 16) & 0xFFFF, lp & 0xFFFF])
+            sw.done = lambda ax, dx: next_switch()
+            return sw
+        return sender
+
+    first = next_switch()
+    if isinstance(first, str):
+        return 0, 0, first
+    if first is sender:
+        return 1
+    switch = Switch("answer", first.task, wait="reply", answer=(1, 0))
+    switch.call, switch.done = first.call, first.done
+    wine.registers = {"switch": switch}
+    return 1, 0
 
 
 @api("USER", "DefWindowProc")
