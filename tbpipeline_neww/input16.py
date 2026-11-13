@@ -194,19 +194,6 @@ def queue_raw(wine, raw):
     state(wine).raw.append(raw)
 
 
-def queue_now(wine, raw):
-    """A hardware message made now by a call (SetCursorPos), stamped with the current time
-    (Wine 2528aff2 server/queue.c:576, alloc_hardware_message with get_tick_count(), then
-    queue_hardware_message at :580). The system queue is in time order, and a script step that
-    has not come due yet is input that has not happened, so the message goes before it. Before,
-    it went to the end, behind every step the script had queued, and played after them."""
-    from .user_wnd import wm
-    st, clock = state(wine), wm(wine).clock
-    at = next((i for i, r in enumerate(st.raw) if r.idle and (r.due is None or r.due > clock)),
-              len(st.raw))
-    st.raw.insert(at, raw)
-
-
 # ------------------------------------------------------------------ routing
 
 def _top_window_at(wine, x, y):

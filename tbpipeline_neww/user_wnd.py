@@ -2822,12 +2822,11 @@ def get_cursor(wine, arg):
 def set_cursor_pos(wine, arg, x, y):
     """SetCursorPos16 -> NtUserSetCursorPos: the desktop's cursor moves (clipped to the screen),
     and GetCursorPos answers the new position. The server's set_cursor_pos also queues a
-    WM_MOUSEMOVE hardware message, whether or not the position changes, in time order
-    (input16.queue_now). Void."""
-    from .input16 import queue_now, Raw, WM_MOUSEMOVE as MOVE
+    WM_MOUSEMOVE hardware message, whether or not the position changes. Void."""
+    from .input16 import queue_raw, Raw, WM_MOUSEMOVE as MOVE
     m = wm(wine)
     m.cursor_pos = (max(0, min(x, SCREEN_W - 1)), max(0, min(y, SCREEN_H - 1)))
-    queue_now(wine, Raw(MOVE, *m.cursor_pos))
+    queue_raw(wine, Raw(MOVE, *m.cursor_pos))
     return arg.regs("ax"), 0
 
 
