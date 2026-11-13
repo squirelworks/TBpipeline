@@ -72,9 +72,10 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] `DrawText` (single-line and plain multi-line, `DT_CALCRECT`, alignment) and `DrawFocusRect`. The mnemonic is underscored as `TEXT_DrawUnderscore` draws it. Word breaks, tabs and ellipses stop by name.
 - [x] Page walking: the sweep chooses Go > Next from the runtime's menu (a `WM_COMMAND`, a menu click's last message). Ctrl+Right does not turn a TB80 page. A pass also needs a main window that is not the runtime's "(Untitled)" one.
 - [ ] The EDIT control (scrwalk) and the common file dialog.
-- [ ] OLE controls: `CoGetClassObject`, `StringFromGUID2`, then `TB80OCX` (actxexpl, Quizbldr, tb80x, tb80web).
-- [ ] Cross-task `SendMessage` (tb80ftp).
-- [ ] "Not a valid OpenScript term: ." (chewbyte, tb80actr), `tbfile32` (tb80a), and "Initialization failed" (otb_cross_a).
+- [x] OLE controls: `CoGetClassObject`, `StringFromGUID2`, `ProgIDFromCLSID`, `StringFromCLSID` and the IMalloc16 task allocator. The four books (actxexpl, Quizbldr, tb80x, tb80web) ask for the Internet Explorer control, which is not registered, then call `StringFromCLSID` before anything sets `compobj_malloc`. Wine faults there (its `OleInitialize16` goes to ole32 and never sets it), so neww stops by name. Decided: follow Wine.
+- [x] Broadcast `SendMessage` across tasks, one-rectangle region unions and differences, and INT 21h 19h and 47h (tb80ftp opens and walks).
+- [x] Not neww bugs: tb80a links `"tbfile32"` with no extension, which `OpenFile` does not add in Wine either; otb_cross_a is a fixture another project wrote by hand, and ToolBook calls it damaged.
+- [ ] "Not a valid OpenScript term: ." (chewbyte, tb80actr): the handler calls `tbk_hasHyperlinks`, from the system book `TB80HYP.SBK`, which this book never opens. learn1 opens it after its `*TbxBase*` step; chewbyte never reaches that step.
 - [ ] Menu-bar clicks (non-client hit test, menu tracking), and books that hide the menu bar and turn pages with their own buttons.
 - [ ] The ~195 NIDA ATT courses in Drive, once they are reachable from the container.
 
