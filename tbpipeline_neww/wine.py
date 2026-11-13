@@ -76,8 +76,8 @@ class Contract:
         head, _, rest = line.partition("(")
         words = head.split()
         ordinal = int(words[0])
-        if words[1] not in ("pascal", "varargs"):
-            raise ValueError(f"{path}:{ordinal} is {words[1]}, not a pascal or varargs entry")
+        if words[1] not in ("pascal", "varargs", "cdecl"):
+            raise ValueError(f"{path}:{ordinal} is {words[1]}, not a pascal, varargs or cdecl entry")
         flags = words[2:-1]
         name = words[-1]
         types = rest.partition(")")[0].split()
@@ -90,8 +90,8 @@ class Contract:
             ret = "long"
         row = cls(module, ordinal, name, args, ret, spec=(path, line), binary=binary, value=value,
                   default=default, void=void)
-        # A varargs entry is cdecl: the caller pops, so the gate's retf pops nothing.
-        row.caller_pops = words[1] == "varargs"
+        # A varargs or cdecl entry: the caller pops, so the gate's retf pops nothing.
+        row.caller_pops = words[1] in ("varargs", "cdecl")
         return row
 
     def __repr__(self):
@@ -281,6 +281,46 @@ MMSYSTEM = _table("MMSYSTEM", MMSYSTEM_SPEC, [
     ("350 pascal auxGetNumDevs() auxGetNumDevs16", (0, 0)),
 ])
 
+OLE2DISP_SPEC = "dlls/ole2disp.dll16/ole2disp.dll16.spec"
+# The methods of the 16-bit COM objects neww makes for CreateDispTypeInfo and CreateStdDispatch.
+# Wine's ole2disp.dll16 has no such rows (its two functions are stubs); its other 16-bit COM
+# objects export their methods the same way, as cdecl entries from 500 up that the vtable
+# points at (dlls/compobj.dll16/compobj.dll16.spec:210, dlls/ole2.dll16/ole2.dll16.spec:149).
+# The method order is the interface's, as oleaut32 lays it out (dlls/oleaut32/typelib.c,
+# dlls/oleaut32/dispatch.c). neww's own rows, so they cite neww.
+OLE2DISP_NEWW = "tbpipeline_neww/ole16.py (no Wine row: oleaut32's methods, compobj.dll16.spec:210's convention)"
+TYPEINFO_METHODS = ("QueryInterface(segptr ptr ptr)", "AddRef(segptr)", "Release(segptr)",
+                    "GetTypeAttr(segptr ptr)", "GetTypeComp(segptr ptr)", "GetFuncDesc(segptr word ptr)",
+                    "GetVarDesc(segptr word ptr)", "GetNames(segptr long ptr word ptr)",
+                    "GetIDsOfNames(segptr ptr word ptr)",
+                    "Invoke(segptr ptr long word ptr ptr ptr ptr)", "GetDocumentation(segptr long ptr ptr ptr ptr)",
+                    "GetDllEntry(segptr long word ptr ptr ptr)", "GetRefTypeInfo(segptr long ptr)",
+                    "AddressOfMember(segptr long word ptr)", "CreateInstance(segptr ptr ptr ptr)",
+                    "GetMops(segptr long ptr)", "GetContainingTypeLib(segptr ptr ptr)",
+                    "ReleaseTypeAttr(segptr ptr)", "ReleaseFuncDesc(segptr ptr)", "ReleaseVarDesc(segptr ptr)")
+UNKNOWN_METHODS = TYPEINFO_METHODS[:3]
+DISPATCH_METHODS = UNKNOWN_METHODS + ("GetTypeInfoCount(segptr ptr)", "GetTypeInfo(segptr word long ptr)",
+                                      "GetIDsOfNames(segptr ptr ptr word long ptr)",
+                                      "Invoke(segptr long ptr long word ptr ptr ptr ptr)")
+COM16 = {"ITypeInfo16": (500, TYPEINFO_METHODS), "StdDispatchInner16": (530, UNKNOWN_METHODS),
+         "StdDispatch16": (540, DISPATCH_METHODS)}
+
+
+def _ole2disp():
+    rows = {
+        31: Contract.from_spec("OLE2DISP", OLE2DISP_SPEC, "31 pascal CreateDispTypeInfo(ptr long ptr) CreateDispTypeInfo16"),
+        32: Contract.from_spec("OLE2DISP", OLE2DISP_SPEC, "32 pascal CreateStdDispatch(ptr ptr ptr ptr) CreateStdDispatch16"),
+    }
+    for prefix, (first, methods) in COM16.items():
+        for i, method in enumerate(methods):
+            name = method.partition("(")[0]
+            line = f"{first + i} cdecl {prefix}_{method} {prefix}_fn{name}"
+            rows[first + i] = Contract.from_spec("OLE2DISP", OLE2DISP_NEWW, line)
+    return rows
+
+
+OLE2DISP = _ole2disp()
+
 WIN87EM = _table("WIN87EM", WIN87EM_SPEC, [
     "1 pascal -register __fpMath()",
 ])
@@ -343,7 +383,8 @@ LOADED = {
     module: {row.ordinal: row for row in (_loaded(module, *item) for item in rows)}
     for module, rows in SPEC_ROWS.items()
 }
-HAND = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "MMSYSTEM": MMSYSTEM, "WIN87EM": WIN87EM}
+HAND = {"KERNEL": KERNEL, "USER": USER, "GDI": GDI, "MMSYSTEM": MMSYSTEM, "WIN87EM": WIN87EM,
+        "OLE2DISP": OLE2DISP}
 
 
 def row_for(module, ordinal):

@@ -38,7 +38,7 @@ WIN32_MODULES = ("KERNEL32", "USER32", "GDI32", "ADVAPI32", "WOW32", "SHELL32", 
 HMODULE_BASE = 0x7B000000
 # include/winnt.h CPEX_DEST_CDECL, a flag in nrofargs of _CallProcEx32W.
 CPEX_DEST_CDECL = 0x80000000
-DLL_PROCESS_ATTACH = 1
+DLL_PROCESS_DETACH, DLL_PROCESS_ATTACH = 0, 1
 
 # The 32-bit layout. The 16-bit segments sit from 0x200000 up.
 PE_LOW = 0x10000000
@@ -114,6 +114,8 @@ class Module:
         self.path = path
         self.pe = pe
         self.refs = 1
+        self.deps = []             # the PE modules it imports (its DDAG node's dependencies)
+        self.attached = False      # DllMain(DLL_PROCESS_ATTACH) ran: LDR_PROCESS_ATTACHED
         self.by_name = {}
         self.by_ordinal = {}
         self.export_range = (0, 0)
@@ -131,6 +133,7 @@ class State:
         self.stub_at = {}
         self.ranges = []
         self.last_error = 0
+        self.init_order = []
 
 
 def state(wine):
@@ -303,6 +306,7 @@ def load_pe(wine, path, new=None):
             else:
                 other.refs += 1
             target = other
+            module.deps.append(other)
         for iat, what in items:
             addr = proc_address(wine, target, what, bind=True)
             if isinstance(addr, str):
@@ -363,6 +367,8 @@ def load_library(wine, name):
         wine.trace.append(f"  {each.name} DllMain(PROCESS_ATTACH)")
         ok = yield each.base + each.pe.entry, [each.base, DLL_PROCESS_ATTACH, 0]
         wine.trace.append(f"  {each.name} DllMain -> {ok:#x}")
+        each.attached = True
+        st.init_order.append(each)
         if not ok:
             yield (f"{each.name}'s DllMain(DLL_PROCESS_ATTACH) answered FALSE: Wine's loader would "
                    "call it with DLL_PROCESS_DETACH and unload it, which neww does not do yet")
@@ -383,10 +389,44 @@ def load_library_ex32w(wine, arg):
     return call32(wine, load_library(wine, name))
 
 
+def unload_pe(wine, module):
+    """LdrUnloadDll (Wine 2528aff2 dlls/ntdll/loader.c:4137), as a generator for a Call32:
+    MODULE_DecRefCount (:4105) takes 1 from the module's count and, when it reaches 0, from
+    each module it imports, and so on down. process_detach (:1833) then walks the modules in
+    reverse initialization order and calls DllMain(DLL_PROCESS_DETACH, NULL) for each one that
+    was attached and has no count left; MODULE_FlushModrefs (:4074) drops them. neww keeps the
+    memory they were mapped in. Returns TRUE."""
+    st = state(wine)
+
+    def dec_ref(mod):
+        if mod.refs <= 0:
+            return
+        mod.refs -= 1
+        if mod.refs == 0:
+            for dep in mod.deps:
+                dec_ref(dep)
+    dec_ref(module)
+    for mod in reversed(list(st.init_order)):
+        if not mod.attached or mod.refs:
+            continue
+        mod.attached = False
+        if mod.pe.entry:
+            wine.trace.append(f"  {mod.name} DllMain(PROCESS_DETACH)")
+            yield mod.base + mod.pe.entry, [mod.base, DLL_PROCESS_DETACH, 0]
+    for name, mod in list(st.modules.items()):
+        if not mod.builtin and mod.refs == 0:
+            del st.modules[name]
+            if mod in st.init_order:
+                st.init_order.remove(mod)
+            wine.trace.append(f"  {mod.name} unloaded")
+    return 1
+
+
 @handles("KERNEL", 514)
 def free_library32w(wine, arg):
     """thunk.c FreeLibrary32W16 -> FreeLibrary. A builtin stays loaded: TRUE. A PE module's
-    count drops; at 0 Wine runs DllMain(DLL_PROCESS_DETACH) and unmaps it, which stops here."""
+    count drops by 1; at 0 it is unloaded (unload_pe), its DllMain called with
+    DLL_PROCESS_DETACH."""
     handle = arg(0) | arg(1) << 16
     module = module_at(wine, handle)
     if module is None:
@@ -396,7 +436,7 @@ def free_library32w(wine, arg):
     if module.refs > 1:
         module.refs -= 1
         return 1, 0, None
-    return 0, 0, f"KERNEL.514 FreeLibrary32W({module.name}): the last reference, and neww does not unload a PE module yet"
+    return call32(wine, unload_pe(wine, module))
 
 
 @handles("KERNEL", 515)
