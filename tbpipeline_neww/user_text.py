@@ -118,13 +118,14 @@ def draw_text16(wine, arg, hdc, ptr, count, rect_ptr, flags):
         line, i, prefix_at = next_line(text, i, flags)
         width = gdi16.text_width(wine, dc, line)
         if flags & DT_CENTER:
-            x = (left + right - width) // 2
+            # C division (text.c:986): a line wider than the rectangle truncates toward zero.
+            x = gdi16._cdiv(left + right - width, 2)
         elif flags & DT_RIGHT:
             x = right - width
         if flags & DT_SINGLELINE:
             # size.cy is the line's extent height, tmHeight (text.c:986-990).
             if flags & DT_VCENTER:
-                y = top + (bottom - top) // 2 - m["height"] // 2
+                y = top + gdi16._cdiv(bottom - top, 2) - gdi16._cdiv(m["height"], 2)
             elif flags & DT_BOTTOM:
                 y = bottom - m["height"]
         if not flags & DT_CALCRECT:

@@ -89,6 +89,19 @@ class DrawText(unittest.TestCase):
         self.assertTrue(all(yy == y and 0 <= x < end for x, yy in changed), changed)
         self.assertEqual(marked.getpixel((0, y)), (255, 255, 255))
 
+    def test_a_centered_line_wider_than_the_rectangle_truncates_toward_zero(self):
+        """text.c:986 x = (left + right - size.cx) / 2 is C division: -3 / 2 is -1, not -2."""
+        from unittest import mock
+        from tbpipeline_neww import gdi16, user_text
+        dc = gdi16._dc(self.w, self.dc)
+        width = gdi16.text_width(self.w, dc, "Choice #1")
+        right = width - 3                    # left + right - width = -3
+        seen = []
+        with mock.patch.object(user_text.gdi16, "draw_text", lambda w, d, x, y, *a, **k: seen.append(x)):
+            (_ax, _dx, stop, _), _rect = self.draw((0, 0, right, 32), 0x20 | 0x1 | 0x100)
+        self.assertIsNone(stop)
+        self.assertEqual(seen, [-1])
+
     def test_word_break_stops_by_name(self):
         (_ax, _dx, stop, _), _rect = self.draw((0, 0, 64, 32), 0x10)
         self.assertIn("word breaks", stop)
