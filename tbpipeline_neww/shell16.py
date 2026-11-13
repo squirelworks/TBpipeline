@@ -187,3 +187,15 @@ def drag_accept_files(wine, arg):
     if why:
         return 0, 0, f"SHELL.9 DragAcceptFiles: {why}"
     return arg.regs("ax"), 0, None
+
+
+@handles("SHELL", 21)
+def find_executable(wine, arg):
+    """FindExecutable16 (shell.dll16/shell.c:216) -> FindExecutableA -> SHELL_FindExecutable
+    (shell32/shlexec.c:592): App Paths, the search path, then the extension's class in
+    HKEY_CLASSES_ROOT and win.ini's [extensions]. neww has none of that yet, so it stops,
+    naming the file."""
+    name = cstr(wine, arg(5), arg(4)).decode("cp1252", "replace") if segptr(arg(4), arg(5)) else None
+    folder = cstr(wine, arg(3), arg(2)).decode("cp1252", "replace") if segptr(arg(2), arg(3)) else None
+    return 0, 0, (f"SHELL.21 FindExecutable({name!r}, {folder!r}): SHELL_FindExecutable searches App Paths, "
+                  "the path and the file's class, which neww does not do yet")

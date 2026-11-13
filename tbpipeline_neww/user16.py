@@ -45,6 +45,28 @@ def oem_to_ansi(wine, arg):
     return 0xFFFF, 0, None
 
 
+def _code_page_buff(wine, arg, from_cp, to_cp):
+    """len bytes of s converted one by one into d; nothing when len is 0. Void."""
+    length = arg(0)
+    if length:
+        data = wine.read(arg(4), arg(3), length)
+        out = b"".join(bytes([c]).decode(from_cp, "replace").encode(to_cp, "replace")[:1] or b"?" for c in data)
+        wine.write(arg(2), arg(1), out)
+    return arg.regs("ax"), arg.regs("dx"), None
+
+
+@handles("KEYBOARD", 134)
+def ansi_to_oem_buff(wine, arg):
+    """keyboard.c:177 AnsiToOemBuff16(s, d, len): CharToOemBuffA when len is not 0. Void."""
+    return _code_page_buff(wine, arg, "cp1252", "cp437")
+
+
+@handles("KEYBOARD", 135)
+def oem_to_ansi_buff(wine, arg):
+    """keyboard.c:185 OemToAnsiBuff16(s, d, len): OemToCharBuffA when len is not 0. Void."""
+    return _code_page_buff(wine, arg, "cp437", "cp1252")
+
+
 # ---------------------------------------------------------------- strings, user.c
 
 @handles("USER", 430)
@@ -94,7 +116,7 @@ def _case_buff(wine, arg, upper):
     """AnsiUpperBuff16 / AnsiLowerBuff16(ptr, len): len 0 means 65536. Returns len."""
     length = arg(0) or 0x10000
     data = wine.read(arg(2), arg(1), length)
-    conv = bytes(_bytes(_ansi(bytes([c])).upper() if upper else _ansi(bytes([c])).lower())[:1] or bytes([c]) for c in data)
+    conv = b"".join(_bytes(_ansi(bytes([c])).upper() if upper else _ansi(bytes([c])).lower())[:1] or bytes([c]) for c in data)
     wine.write(arg(2), arg(1), conv)
     return arg(0), 0, None
 
