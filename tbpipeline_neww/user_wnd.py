@@ -265,22 +265,120 @@ def screen_origin(wine, hwnd):
 
 
 HTNOWHERE, HTCLIENT, HTTRANSPARENT = 0, 1, 0xFFFF
+HTCAPTION, HTSYSMENU, HTSIZE, HTMENU, HTHSCROLL, HTVSCROLL, HTMINBUTTON, HTMAXBUTTON = 2, 3, 4, 5, 6, 7, 8, 9
+HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 10, 11, 12, 13, 14, 15, 16, 17
+HTBORDER, HTCLOSE = 18, 20
+WS_EX_LEFTSCROLLBAR, WS_EX_LAYOUTRTL = 0x4000, 0x400000
+WS_MINIMIZEBOX, WS_MAXIMIZEBOX = 0x00020000, 0x00010000
+
+
+def _metric(index):
+    from .wine import METRICS
+    return METRICS[index]
+
+
+def has_nc_icon(wine, w):
+    """get_nc_icon_for_window (win32u/defwnd.c:1143) is not NULL: the window's icons (neww
+    keeps none: WM_SETICON is not handled), the class's small icon or icon, else IDI_WINLOGO
+    unless the window has WS_EX_DLGMODALFRAME."""
+    cls = w.cls
+    if cls is not None and (cls.icon_sm or cls.icon):
+        return True
+    return not w.exstyle & WS_EX_DLGMODALFRAME
 
 
 def nc_hit_test(wine, w, x, y):
-    """defwnd.c handle_nc_hit_test, its first two tests: outside the window is HTNOWHERE,
-    inside the client is HTCLIENT. The frame's parts (borders, caption, menu, scroll bars)
-    stop for now. Returns (hit, stop)."""
+    """handle_nc_hit_test (win32u/defwnd.c:1925) at 96 dpi. Returns (hit, stop)."""
     m = wm(wine)
     px, py = screen_origin(wine, w.parent) if w.parent and w.parent != m.desktop else (0, 0)
-    l, t, r, b = w.rect
-    if not (l + px <= x < r + px and t + py <= y < b + py):
+    wl, wt, wr, wb = w.rect[0] + px, w.rect[1] + py, w.rect[2] + px, w.rect[3] + py
+    cl, ct, cr, cb = w.client[0] + px, w.client[1] + py, w.client[2] + px, w.client[3] + py
+    inside = lambda l, t, r, b: l <= x < r and t <= y < b
+    if not inside(wl, wt, wr, wb):
         return HTNOWHERE, None
-    cl, ct, cr, cb = w.client
-    if cl + px <= x < cr + px and ct + py <= y < cb + py:
+    style, ex = w.style, w.exstyle
+    if inside(cl, ct, cr, cb):
         return HTCLIENT, None
-    return 0, (f"WM_NCHITTEST at ({x}, {y}) on the frame of {w.hwnd:#x}: Wine tells the border, caption, "
-               "menu and scroll bars apart, and neww does not yet")
+    # The borders: has_thick_frame, has_dialog_frame, has_thin_frame (defwnd.c:44-57).
+    if style & WS_THICKFRAME and (style & (WS_DLGFRAME | WS_BORDER)) != WS_DLGFRAME:
+        fx, fy = _metric(32), _metric(33)            # SM_CXFRAME, SM_CYFRAME
+        wl, wt, wr, wb = wl + fx, wt + fy, wr - fx, wb - fy
+        if not inside(wl, wt, wr, wb):
+            sx, sy = _metric(30), _metric(31)        # SM_CXSIZE, SM_CYSIZE
+            if y < wt:
+                return (HTTOPLEFT if x < wl + sx else HTTOPRIGHT if x >= wr - sx else HTTOP), None
+            if y >= wb:
+                return (HTBOTTOMLEFT if x < wl + sx else HTBOTTOMRIGHT if x >= wr - sx else HTBOTTOM), None
+            if x < wl:
+                return (HTTOPLEFT if y < wt + sy else HTBOTTOMLEFT if y >= wb - sy else HTLEFT), None
+            if x >= wr:
+                return (HTTOPRIGHT if y < wt + sy else HTBOTTOMRIGHT if y >= wb - sy else HTRIGHT), None
+    else:
+        if ex & WS_EX_DLGMODALFRAME or (style & WS_DLGFRAME and not style & WS_THICKFRAME):
+            fx, fy = _metric(7), _metric(8)          # SM_CXDLGFRAME, SM_CYDLGFRAME
+            wl, wt, wr, wb = wl + fx, wt + fy, wr - fx, wb - fy
+        elif style & WS_BORDER or not style & (WS_CHILD | WS_POPUP):
+            fx, fy = _metric(5), _metric(6)          # SM_CXBORDER, SM_CYBORDER
+            wl, wt, wr, wb = wl + fx, wt + fy, wr - fx, wb - fy
+        if not inside(wl, wt, wr, wb):
+            return HTBORDER, None
+    if (style & WS_CAPTION) == WS_CAPTION:
+        wt += (_metric(51) if ex & WS_EX_TOOLWINDOW else _metric(4)) - 1    # SM_CYSMCAPTION, SM_CYCAPTION
+        if not inside(wl, wt, wr, wb):
+            box = style & WS_SYSMENU and style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+            caption, size = _metric(4), _metric(30)
+            sysmenu = style & WS_SYSMENU and not ex & WS_EX_TOOLWINDOW and has_nc_icon(wine, w)
+            if ex & WS_EX_LAYOUTRTL:
+                if sysmenu:
+                    wr -= caption - 1
+                    if x > wr:
+                        return HTSYSMENU, None
+                if style & WS_SYSMENU:
+                    wl += caption
+                    if x < wl:
+                        return HTCLOSE, None
+                if box and not ex & WS_EX_TOOLWINDOW:
+                    wl += size
+                    if x < wl:
+                        return HTMAXBUTTON, None
+                    wl += size
+                    if x < wl:
+                        return HTMINBUTTON, None
+            else:
+                if sysmenu:
+                    wl += caption - 1
+                    if x < wl:
+                        return HTSYSMENU, None
+                if style & WS_SYSMENU:
+                    wr -= caption
+                    if x > wr:
+                        return HTCLOSE, None
+                if box and not ex & WS_EX_TOOLWINDOW:
+                    wr -= size
+                    if x > wr:
+                        return HTMAXBUTTON, None
+                    wr -= size
+                    if x > wr:
+                        return HTMINBUTTON, None
+            return HTCAPTION, None
+    if (style & (WS_CHILD | WS_POPUP)) != WS_CHILD and w.menu and y < ct and cl <= x < cr:
+        return HTMENU, None
+    if ex & WS_EX_LAYOUTRTL:
+        ex ^= WS_EX_LEFTSCROLLBAR
+    if style & WS_VSCROLL:
+        if ex & WS_EX_LEFTSCROLLBAR:
+            cl -= _metric(2)                         # SM_CXVSCROLL
+        else:
+            cr += _metric(2)
+        if inside(cl, ct, cr, cb):
+            return HTVSCROLL, None
+    if style & WS_HSCROLL:
+        cb += _metric(3)                             # SM_CYHSCROLL
+        if inside(cl, ct, cr, cb):
+            if style & WS_VSCROLL and (x <= cl + _metric(2) if ex & WS_EX_LEFTSCROLLBAR else x >= cr - _metric(2)):
+                return HTSIZE, None
+            return HTHSCROLL, None
+    return HTNOWHERE, None
 
 
 def window_origin(wine, hwnd):
@@ -473,6 +571,20 @@ def def_window_proc(wine, hwnd, msg, wp, lp):
         if why:
             yield why
         return hit
+    if msg == WM_NCLBUTTONDOWN:
+        # handle_nc_lbutton_down (win32u/defwnd.c:2194).
+        if wp == HTMENU:
+            yield from send(wine, hwnd, WM_SYSCOMMAND, SC_MOUSEMENU, lp)
+        elif wp in (HTHSCROLL, HTVSCROLL):
+            sc = SC_HSCROLL if wp == HTHSCROLL else SC_VSCROLL
+            yield from send(wine, hwnd, WM_SYSCOMMAND, sc + wp, lp)
+        elif wp in (HTCAPTION, HTSYSMENU, HTMINBUTTON, HTMAXBUTTON, HTCLOSE) or HTLEFT <= wp <= HTBOTTOMRIGHT:
+            yield (f"DefWindowProc WM_NCLBUTTONDOWN hit {wp} on {hwnd:#x}: Wine moves, sizes, opens the system "
+                   "menu or tracks a caption button there, and neww does not yet")
+        return 0
+    if msg == WM_SYSCOMMAND:
+        result = yield from sys_command(wine, w, wp, lp)
+        return result
     if msg == WM_NCCALCSIZE:
         if lp:
             if wp:
@@ -581,9 +693,12 @@ def def_window_proc(wine, hwnd, msg, wp, lp):
         dc = gdi16.gdi(wine).get(wp, gdi16.OBJ_DC)
         kind = lp >> 16
         if dc is not None:
-            if kind == 5:  # CTLCOLOR_SCROLLBAR
-                dc.bk_color = 0xFFFFFF
-                return 0, 0, "DefWindowProc WM_CTLCOLOR scrollbar: Wine makes a dithered brush, neww has none"
+            if kind == 5:  # CTLCOLOR_SCROLLBAR, handle_control_color (win32u/defwnd.c:2337)
+                dc.text_color = _colorref(gdi16.SYS_COLORS[15])  # COLOR_3DFACE
+                dc.bk_color = _colorref(gdi16.SYS_COLORS[20])    # COLOR_3DHILIGHT
+                if gdi16.SYS_COLORS[20] == gdi16.SYS_COLORS[5]:  # COLOR_WINDOW
+                    return brush_55aa(wine)
+                return sys_color_brush(wine, 0)                  # COLOR_SCROLLBAR
             text = 8 if kind != 6 else 18  # COLOR_WINDOWTEXT, COLOR_BTNTEXT
             back = 5 if kind not in (4, 6) else 15  # COLOR_WINDOW, COLOR_BTNFACE
             dc.text_color = _colorref(gdi16.SYS_COLORS[text])
@@ -603,6 +718,41 @@ def def_window_proc(wine, hwnd, msg, wp, lp):
     return 0
 
 
+WM_SYSCOMMAND, HCBT_SYSCOMMAND = 0x112, 8
+SC_SIZE, SC_MOVE, SC_MINIMIZE, SC_MAXIMIZE, SC_NEXTWINDOW, SC_PREVWINDOW, SC_CLOSE = (
+    0xF000, 0xF010, 0xF020, 0xF030, 0xF040, 0xF050, 0xF060)
+SC_VSCROLL, SC_HSCROLL, SC_MOUSEMENU, SC_KEYMENU, SC_ARRANGE, SC_RESTORE = 0xF070, 0xF080, 0xF090, 0xF100, 0xF110, 0xF120
+SC_TASKLIST, SC_SCREENSAVE, SC_HOTKEY = 0xF130, 0xF140, 0xF150
+
+
+def sys_command(wine, w, wp, lp):
+    """handle_sys_command (win32u/defwnd.c:961), then user32's NC_HandleSysCommand
+    (nonclient.c:66) for what it leaves to the client side. The window manager's loops (move,
+    size, menu tracking, scroll bar tracking) and show-state changes stop by name."""
+    if w.style & WS_DISABLED:
+        return 0
+    if WH_CBT_INDEX in wine.hooks:
+        refused = yield from call_hook(wine, WH_CBT_INDEX, HCBT_SYSCOMMAND, wp, lp)
+        if refused:
+            return 0
+    sc = wp & 0xFFF0
+    if sc == SC_CLOSE:
+        result = yield from send(wine, w.hwnd, WM_CLOSE, 0, 0)
+        return result
+    names = {SC_SIZE: "SC_SIZE", SC_MOVE: "SC_MOVE", SC_MINIMIZE: "SC_MINIMIZE", SC_MAXIMIZE: "SC_MAXIMIZE",
+             SC_VSCROLL: "SC_VSCROLL", SC_HSCROLL: "SC_HSCROLL", SC_MOUSEMENU: "SC_MOUSEMENU",
+             SC_KEYMENU: "SC_KEYMENU", SC_RESTORE: "SC_RESTORE", SC_TASKLIST: "SC_TASKLIST",
+             SC_SCREENSAVE: "SC_SCREENSAVE"}
+    if sc in names:
+        yield (f"DefWindowProc WM_SYSCOMMAND {names[sc]} ({wp:#x}) on {w.hwnd:#x}: Wine runs "
+               f"{'track_mouse_menu_bar, its menu tracking loop' if sc == SC_MOUSEMENU else 'it'} there, "
+               "and neww does not yet")
+        return 0
+    # SC_HOTKEY, SC_ARRANGE, SC_NEXTWINDOW, SC_PREVWINDOW are a FIXME in Wine; the rest are
+    # the client side's, which does nothing for them.
+    return 0
+
+
 def _colorref(c):
     return c[0] | c[1] << 8 | c[2] << 16
 
@@ -619,6 +769,41 @@ def sys_color_brush(wine, index):
         obj.stock = True
         brushes[index] = g.add(obj)
     return brushes[index]
+
+
+def sys_color_pen(wine, index):
+    """get_sys_color_pen (win32u/sysparams.c:7420): one PS_SOLID width 1 pen per system color,
+    made once, never deleted."""
+    m = wm(wine)
+    pens = getattr(m, "sys_pens", None)
+    if pens is None:
+        pens = m.sys_pens = {}
+    if index not in pens:
+        g = gdi16.gdi(wine)
+        obj = gdi16.GdiObject(gdi16.OBJ_PEN, style=gdi16.PS_SOLID, width=1, color=_colorref(gdi16.SYS_COLORS[index]))
+        obj.stock = True
+        pens[index] = g.add(obj)
+    return pens[index]
+
+
+def brush_55aa(wine):
+    """get_55aa_brush (win32u/sysparams.c:7382): a pattern brush of an 8x8 1-bit bitmap whose
+    rows are the words 0x5555 and 0xaaaa in turn, made once, never deleted."""
+    m = wm(wine)
+    handle = getattr(m, "brush_55aa", None)
+    if handle is None:
+        g = gdi16.gdi(wine)
+        bmp = g.new_bitmap(8, 8, 1)
+        for y in range(8):
+            row = 0x55 if y % 2 == 0 else 0xAA
+            for x in range(8):
+                if row >> (7 - x) & 1:
+                    bmp.image.putpixel((x, y), (255, 255, 255))
+        bmp.stock = True
+        obj = gdi16.GdiObject(gdi16.OBJ_BRUSH, style=gdi16.BS_PATTERN, color=0, hatch=0, bitmap=g.add(bmp))
+        obj.stock = True
+        handle = m.brush_55aa = g.add(obj)
+    return handle
 
 
 def draw_frame(wine, w, active=None):

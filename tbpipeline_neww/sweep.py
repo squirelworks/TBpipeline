@@ -4,9 +4,11 @@
 
 Each book runs in its own process, with a time limit, so one that hangs or crashes does not
 take the others with it. The walk is the same for every book: the first page, then up to
---pages presses of Ctrl+Right (ToolBook's next page), each followed by a wait and a mouse
-move so the book's timers run. A course with its own Next button may not move on a key
-press; the screens count says how far each one got.
+--pages steps to the next page, each followed by a wait and a mouse move so the book's
+timers run. A step is Go > Next (the menu item's WM_COMMAND), Ctrl+Right (ToolBook's next
+page key) or a click on text that reads like a Next button; a way that leaves the screen
+unchanged gives way to the next, and the walk ends when none moves it. The walk letters
+(m, k, t; upper case when the screen changed) and the screens count say how far it got.
 
 A result line holds the stop, the calls, how many distinct screens were seen, the MessageBox
 texts, the spec-row defaults, and the stop's cause: the "MODULE.ordinal Name" it names when
@@ -88,41 +90,174 @@ def next_command(wine):
     return None
 
 
+def screen_hash(wine):
+    """A short hash of the screen, or None before GDI exists (a book that stops that early)."""
+    g = getattr(wine, "gdi", None)
+    if g is None:
+        return None
+    return hashlib.sha256(g.screen.tobytes()).hexdigest()[:16]
+
+
+def _inside(box, outer):
+    return outer[0] <= box[0] and outer[1] <= box[1] and box[2] <= outer[2] and box[3] <= outer[3]
+
+
+def _overlaps(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+class Texts:
+    """Where text is drawn, followed through blits to the screen: gdi16 calls drawn() for each
+    TextOut/ExtTextOut and blitted() for each raster operation when wine.draw_watch is set.
+    Boxes are in the surface's pixels; a page drawn off screen and copied up keeps its words."""
+
+    def __init__(self):
+        self.by_image = {}
+
+    def _list(self, img):
+        entry = self.by_image.get(id(img))
+        if entry is None or entry[0] is not img:
+            entry = self.by_image[id(img)] = (img, [])
+        return entry[1]
+
+    def drawn(self, img, box, text):
+        texts = self._list(img)
+        texts[:] = [t for t in texts if not _overlaps(t[0], box)]
+        if text.strip():
+            texts.append((box, text))
+
+    def blitted(self, img, box, src, srcpos):
+        texts = self._list(img)
+        texts[:] = [t for t in texts if not _overlaps(t[0], box)]
+        if src is None or src is img:
+            return
+        sl, st = srcpos
+        sbox = (sl, st, sl + box[2] - box[0], st + box[3] - box[1])
+        dx, dy = box[0] - sl, box[1] - st
+        for b, text in self._list(src):
+            if _inside(b, sbox):
+                texts.append(((b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy), text))
+
+    def on(self, img):
+        entry = self.by_image.get(id(img))
+        return list(entry[1]) if entry is not None and entry[0] is img else []
+
+
+NEXT_TEXT = re.compile(r"^\s*(next(\s+page)?|continue|forward|>|>>|\u2192)\s*(>|>>|\u00bb)?\s*$", re.I)
+
+
+def next_text(wine):
+    """The centre of the text on the screen that reads like a Next button ("Next", "Continue",
+    ">>"), the lowest, then rightmost one; or None."""
+    watch = getattr(wine, "draw_watch", None)
+    g = getattr(wine, "gdi", None)
+    if watch is None or g is None:
+        return None
+    hits = [b for b, text in watch.on(g.screen) if NEXT_TEXT.match(text)]
+    if not hits:
+        return None
+    b = max(hits, key=lambda b: (b[3], b[2]))
+    return (b[0] + b[2]) // 2, (b[1] + b[3]) // 2
+
+
+class Walk:
+    """The page walk: on each idle, one way of going to the next page. A way that left the
+    screen as it was gives way to the next one (Go > Next as a WM_COMMAND, Ctrl+Right, a click
+    on a Next text); when every way in a row left it unchanged, the walk is stuck and ends.
+    log holds one letter per step, upper case when the screen changed after it."""
+
+    WAYS = ("menu", "key", "text")
+    LETTER = {"menu": "m", "key": "k", "text": "t"}
+
+    def __init__(self, pages, find_menu=None, find_text=None, post=None):
+        self.pages = pages
+        self.find_menu = find_menu or next_command
+        self.find_text = find_text or next_text
+        self.post = post or _post_command
+        self.way, self.unchanged, self.steps = 0, 0, 0
+        self.before = None
+        self.log = []
+        self.screens = []
+        self.stuck = False
+
+    def look(self, wine):
+        h = screen_hash(wine)
+        if h is not None and (not self.screens or self.screens[-1] != h):
+            self.screens.append(h)
+        return h
+
+    def __call__(self, wine):
+        now = self.look(wine)
+        if self.log:
+            if now != self.before:
+                self.log[-1] = self.log[-1].upper()
+                self.unchanged = 0
+            else:
+                self.unchanged += 1
+                self.way = (self.way + 1) % len(self.WAYS)
+        if self.steps >= self.pages:
+            return None
+        tried = 0
+        while tried < len(self.WAYS) and self.unchanged < len(self.WAYS):
+            way = self.WAYS[self.way]
+            script = self._try(wine, way)
+            if script is not None:
+                self.steps += 1
+                self.before = now
+                self.log.append(self.LETTER[way])
+                return script
+            # Not there to try: counts as a way that did not move the page.
+            self.unchanged += 1
+            self.way = (self.way + 1) % len(self.WAYS)
+            tried += 1
+        self.stuck = True
+        return None
+
+    def _try(self, wine, way):
+        x = 320 + self.steps + 1
+        if way == "menu":
+            target = self.find_menu(wine)
+            if target is None:
+                return None
+            self.post(wine, target)
+            return f"wait 4000; move {x},240"
+        if way == "key":
+            return NEXT.format(x=x)
+        spot = self.find_text(wine)
+        if spot is None:
+            return None
+        return f"click {spot[0]},{spot[1]}; wait 4000; move {x},240"
+
+    def summary(self):
+        letters = "".join(self.log).lower()
+        return {"walk": "".join(self.log), "menu_next": letters.count("m"), "keys": letters.count("k"),
+                "text_clicks": letters.count("t"), "moved": sum(c.isupper() for c in self.log),
+                "stuck": self.stuck, "screens": len(set(self.screens))}
+
+
+def _post_command(wine, target):
+    from tbpipeline_neww.user_wnd import wm
+    m = wm(wine)
+    m.queue_of(m.task_of(target[0])).queue.append((target[0], WM_COMMAND, target[1], 0))
+
+
 def run_one(root, book, pages, call_limit):
     from tbpipeline_neww import machine
     host = machine.Machine(root, book, input_script=FIRST, idle_stop=True)
-    screens, steps, menu_steps = [], [0], [0]
-
-    def look(wine):
-        h = hashlib.sha256(wine.gdi.screen.tobytes()).hexdigest()[:16]
-        if not screens or screens[-1] != h:
-            screens.append(h)
-
-    def driver(wine):
-        from tbpipeline_neww.user_wnd import wm
-        look(wine)
-        if steps[0] >= pages:
-            return None
-        steps[0] += 1
-        target = next_command(wine)
-        if target is None:
-            return NEXT.format(x=320 + steps[0])
-        m = wm(wine)
-        m.queue_of(m.task_of(target[0])).queue.append((target[0], WM_COMMAND, target[1], 0))
-        menu_steps[0] += 1
-        return "wait 4000; move {x},240".format(x=320 + steps[0])
-    host.box.wine.on_idle = driver
+    walk = Walk(pages)
+    host.box.wine.draw_watch = Texts()
+    host.box.wine.on_idle = walk
     host.call_limit = call_limit
     host.timeout_us = max(host.timeout_us, call_limit * 1000)
     host.run(limit=call_limit * 1000)
     wine = host.box.wine
-    look(wine)
+    walk.look(wine)
     trace = wine.trace
     boxes = [t for t in trace if t.startswith("USER.1 MessageBox")]
     defaults = sorted({t.split(" (default")[0] for t in trace if "(default" in t})
     stop = str(host.stop)
-    return {"stop": stop, "titles": titles(wine), "cause": cause_of(stop), "calls": host.calls, "keys": steps[0] - menu_steps[0], "menu_next": menu_steps[0],
-            "screens": len(set(screens)), "messageboxes": boxes[:3], "messagebox_count": len(boxes),
+    return {"stop": stop, "titles": titles(wine), "cause": cause_of(stop), "calls": host.calls,
+            **walk.summary(), "messageboxes": boxes[:3], "messagebox_count": len(boxes),
             "defaults": defaults[:5], "default_count": len(defaults)}
 
 
@@ -175,7 +310,7 @@ def main(argv=None):
             r["pass"] = opened(r)
             line = json.dumps(r)
             print(f"{os.path.basename(r['book'])}: {'pass' if r['pass'] else 'stop'} {r.get('cause')} | screens {r.get('screens')} | "
-                  f"calls {r.get('calls')} | {r.get('stop', '')[:120]}", flush=True)
+                  f"walk {r.get('walk', '')} | calls {r.get('calls')} | {r.get('stop', '')[:120]}", flush=True)
             if out:
                 out.write(line + "\n")
                 out.flush()

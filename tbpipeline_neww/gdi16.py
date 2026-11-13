@@ -436,6 +436,13 @@ def blit(wine, dc, rect, rop, src=None, src_xy=(0, 0), pattern=None, pattern_fix
     box = _intersect((l + ox, t + oy, r + ox, b + oy), clip_box(wine, dc))
     if box[2] <= box[0] or box[3] <= box[1]:
         return
+    watch = getattr(wine, "draw_watch", None)
+    if watch is not None:
+        # A tool's view of what is drawn where (the sweep follows text to the screen).
+        srcpos = None
+        if src is not None:
+            srcpos = (src_xy[0] + (box[0] - ox - l), src_xy[1] + (box[1] - oy - t))
+        watch.blitted(img, box, src[0] if src is not None else None, srcpos)
     index = (rop >> 16) & 0xFF
     dst = np.asarray(img.crop(box), dtype=np.uint8)
     w, h = box[2] - box[0], box[3] - box[1]
@@ -1933,6 +1940,11 @@ def draw_text(wine, dc, x, y, text, opaque_rect=None, clip_rect=None):
     sub = (max(box[0] - gx, 0), max(box[1] - gy, 0), min(box[2] - gx, layer.width), min(box[3] - gy, layer.height))
     if sub[2] > sub[0] and sub[3] > sub[1]:
         img.paste(color.crop(sub), (gx + sub[0], gy + sub[1]), mask.crop(sub))
+    watch = getattr(wine, "draw_watch", None)
+    if watch is not None:
+        area = _intersect((gx, gy, gx + width, gy + height), box)
+        if not _empty(area):
+            watch.drawn(img, area, text)
     return width
 
 
