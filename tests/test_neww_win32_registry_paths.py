@@ -82,3 +82,33 @@ class ShortPath(Calls):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Obm(unittest.TestCase):
+    """LoadBitmap(0, OBM_COMBO): user32's own bitmap (dlls/user32/user32.rc, winuser.rh:1025),
+    which new3_a.tbk and new3_b.tbk load for their combo boxes."""
+
+    def setUp(self):
+        import os
+        if not os.environ.get("WINE_SRC"):
+            raise unittest.SkipTest("WINE_SRC is not set")
+
+    def test_obm_combo_is_wines_bitmap(self):
+        from tbpipeline_neww.user_res import user32_bitmap
+        from tbpipeline_neww.user_res import dib_from_bytes
+        data, why = user32_bitmap(32738)
+        self.assertIsNone(why)
+        got, why = dib_from_bytes(data)
+        self.assertIsNone(why)
+        self.assertGreater(got[1], 0)
+
+    def test_an_id_user32_lacks_is_not_found(self):
+        from tbpipeline_neww.user_res import user32_bitmap
+        self.assertEqual(user32_bitmap(12345), (None, ""))
+
+    def test_without_wine_src_it_stops_by_name(self):
+        import os
+        from unittest import mock
+        from tbpipeline_neww.user_res import user32_bitmap
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIn("WINE_SRC", user32_bitmap(32738)[1])

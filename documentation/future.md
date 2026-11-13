@@ -59,7 +59,19 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] Lesson Exit asks "Are you sure you want to Exit the Lesson?". Yes unloads ToolBook's DLLs (`FreeLibrary` at a module's last use calls its WEP).
 - [x] Lesson Exit then ends the task: `TB80OLE` releases the automation object `CreateDispTypeInfo` and `CreateStdDispatch` make, and `FreeLibrary32W` detaches and unloads the 32-bit DLLs ([#233](https://github.com/squirelworks/TBpipeline/issues/233)).
 
-The other NIDA ATT courses are on hold until the week of 2026-11-09.
+## The book sweep (#227)
+
+`python3 -m tbpipeline_neww.sweep` opens every TB80 book we have, one process per book. The findings table lives in the project files (`neww/sweep/findings.md`), not in the repo. Run 1 covered 78 unique books: 54 opened cleanly and 24 stopped.
+
+- [x] Group A: the caret (`CreateCaret`, `SetCaretPos`, `ShowCaret`, `HideCaret`, and the blink through `WM_SYSTIMER`). The five NetClass system books.
+- [x] Group C: `RegOpenKeyA`, `RegOpenKeyExA`, `RegCloseKey` (one registry with SHELL's) and `GetShortPathNameA`.
+- [x] user32's OBM_ bitmaps for `LoadBitmap(0, id)`, read from `WINE_SRC` (new3_a, new3_b).
+- [ ] `EnumFonts` / `EnumFontFamiliesEx` over the installed faces (tb80.sbk).
+- [ ] The EDIT control (scrwalk), the common file dialog (Preventing_Fraud), and `GetBitmapBits` on a 32-bit bitmap (tb80acta).
+- [ ] OLE controls: `CoGetClassObject`, `StringFromGUID2`, then `TB80OCX` (actxexpl, Quizbldr, tb80x, tb80web).
+- [ ] Blocks over 1 MB (Walkthrough) and cross-task `SendMessage` (tb80ftp).
+- [ ] Page walking: menu-bar clicks (non-client hit test, menu tracking), so Go > Next works in every book.
+- [ ] The ~195 NIDA ATT courses in Drive, once they are reachable from the container.
 
 ## Do not do this
 

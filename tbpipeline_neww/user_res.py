@@ -113,14 +113,43 @@ def dib_from_bytes(data):
     return (img, w, h, mono), None
 
 
+def user32_bitmap(name):
+    """user32's OBM_ bitmaps, the RT_BITMAP resources dlls/user32/user32.rc:118-218 builds from
+    dlls/user32/resources/obm_*.bmp, its ids include/winuser.rh:1017-1054. neww reads them
+    from the Wine checkout WINE_SRC names (the .bmp less its 14-byte BITMAPFILEHEADER is the
+    resource). Returns (data, None) or (None, why); an id user32 has no bitmap for is
+    (None, "") as a missing resource."""
+    import os
+    import re
+    from pathlib import Path
+    src = os.environ.get("WINE_SRC")
+    if not src:
+        return None, "a user32 OBM_ bitmap, read from the Wine checkout WINE_SRC, which is not set"
+    if not isinstance(name, int):
+        return None, ""
+    rh = (Path(src) / "include" / "winuser.rh").read_text("latin1")
+    ids = {int(v): k for k, v in re.findall(r"#define\s+(OBM_\w+)\s+(\d+)", rh)}
+    rc = (Path(src) / "dlls" / "user32" / "user32.rc").read_text("latin1")
+    files = dict(re.findall(r"^(OBM_\w+)\s+BITMAP\s+(\S+)", rc, re.M))
+    symbol = ids.get(name)
+    if symbol not in files:
+        return None, ""
+    raw = (Path(src) / "dlls" / "user32" / files[symbol]).read_bytes()
+    return raw[14:], None
+
+
 @api("USER", "LoadBitmap")
 def load_bitmap(wine, arg, inst, name_ptr):
     """user.c LoadImage16 IMAGE_BITMAP: the RT_BITMAP resource through LoadImageW from a file,
     which makes a screen-compatible bitmap (mono for a black-and-white 1-bit DIB)."""
     name = res_arg(wine, name_ptr)
     if not inst:
-        return 0, 0, f"USER.175 LoadBitmap(0, {name!r}): a user32 OBM_ bitmap, and neww has no user32 resources"
-    data, _h = resource_bytes(wine, wine._exe_ptr(inst) or inst, name, RT_BITMAP)
+        # LoadBitmap16(0, id) is user32's own bitmap (LoadImageW with no module).
+        data, why = user32_bitmap(name)
+        if why:
+            return 0, 0, f"USER.175 LoadBitmap(0, {name!r}): {why}"
+    else:
+        data, _h = resource_bytes(wine, wine._exe_ptr(inst) or inst, name, RT_BITMAP)
     if data is None:
         wine.trace[-1] += f" {name!r} not found"
         return 0
