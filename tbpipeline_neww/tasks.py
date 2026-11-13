@@ -21,7 +21,7 @@ moves to the earliest timer of a task waiting for messages, and that task runs. 
 there is no timer either, every task waits for input, and the run stops there.
 """
 
-from .handlers import handles
+from .handlers import handles, segptr
 from .kernel16 import cstr
 
 # The wine fields that belong to the current task. A switch saves them in the old task and
@@ -326,6 +326,41 @@ def win_exec(wine, arg):
     wine.registers = {"switch": Switch("answer", child, answer=answer)}
     return 0, 0, None
 
+
+
+def _notifys(wine):
+    return wine.__dict__.setdefault("notifys", [])
+
+
+@handles("TOOLHELP", 73)
+def notify_register(wine, arg):
+    """NotifyRegister16(htask, lpfnCallback, wFlags) (Wine 2528aff2
+    dlls/toolhelp.dll16/toolhelp.c:550), a semi-stub: htask 0 is the current task; the task's
+    entry is replaced or a new one added; TRUE. Wine never calls the callback, and neither
+    does neww."""
+    htask = arg(3) or wine.htask
+    entry = (htask, segptr(arg(1), arg(2)), arg(0))
+    notifys = _notifys(wine)
+    i = next((i for i, n in enumerate(notifys) if n[0] == htask), None)
+    if i is None:
+        notifys.append(entry)
+    else:
+        notifys[i] = entry
+    return 1, 0, None
+
+
+@handles("TOOLHELP", 74)
+def notify_unregister(wine, arg):
+    """NotifyUnregister16(htask) (Wine 2528aff2 dlls/toolhelp.dll16/toolhelp.c:580): htask 0 is
+    the current task; the last entry for the task is removed, TRUE, or FALSE when it has
+    none."""
+    htask = arg(0) or wine.htask
+    notifys = _notifys(wine)
+    i = next((i for i in range(len(notifys) - 1, -1, -1) if notifys[i][0] == htask), None)
+    if i is None:
+        return 0, 0, None
+    del notifys[i]
+    return 1, 0, None
 
 
 @handles("TOOLHELP", 65)

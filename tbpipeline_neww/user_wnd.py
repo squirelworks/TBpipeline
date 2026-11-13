@@ -2584,6 +2584,14 @@ def _idle(wine, arg, hwnd, first, last, call):
         return None
     if next_ready(wine) is not None:
         return None
+    driver = getattr(wine, "on_idle", None)
+    if driver is not None:
+        # A test's driver (Machine.on_idle) gives the next input from what is on the screen.
+        more = driver(wine)
+        if more:
+            from .input16 import queue_script
+            queue_script(wine, more)
+            return None
     sp, ss = arg.regs("sp"), arg.regs("ss")
     ip, cs = arg.word(ss, sp), arg.word(ss, sp + 2)
     due = earliest_timer(wine)

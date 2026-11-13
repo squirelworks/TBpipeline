@@ -467,6 +467,8 @@ class Wine(KernelState):
         self.size = None
         # Module name -> module handle, and the head of the module list. Set by the machine.
         self.modules = {}
+        self.unloaded = {}         # module name -> its file's name, for what FreeLibrary unloaded
+        self.unload_module = None
         self.first_module = 0
         # Set by the machine: selector -> path of the NE file whose segment it is, or None.
         self.owner = None
@@ -1311,6 +1313,9 @@ class Wine(KernelState):
                 if Path(self.owner(handle)).name.upper() == base.upper():
                     module, mod_name = handle, mname
                     break
+        if module is None and (stem in self.unloaded or base.upper() in self.unloaded.values()):
+            return 0, 0, (f"KERNEL.95 LoadLibrary({name!r}): FreeLibrary unloaded it, and Wine would "
+                          "load it afresh and run its LibMain again, which neww does not do")
         calls = []
         if module is not None and self.reference_module is not None:
             # NE_LoadModule of a loaded module: its count goes up by 1.

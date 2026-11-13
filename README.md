@@ -43,6 +43,8 @@ Tick a box when its PR merges. The issues hold the detail.
 - [x] [Roadmap #201](https://github.com/squirelworks/TBpipeline/issues/201), T0 to T9. Complete, released as `neww-v0.5.0`
 - [x] [#221](https://github.com/squirelworks/TBpipeline/issues/221): metafile playback and `MM_ANISOTROPIC`. The NIDA ATT course `93952606.TBK` now walks past P430 to its Lesson Menu
 - [x] [#225](https://github.com/squirelworks/TBpipeline/issues/225): Wingdings and Symbol-font characters (bullets, π) through the symbol faces Wine installs and the course's own `nida.ttf`
+- [x] [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest of `93952606.TBK`. The Final Quiz runs to its score page, the lesson opens from the menu, and Lesson Exit unloads ToolBook's DLLs
+- [ ] [#233](https://github.com/squirelworks/TBpipeline/issues/233): OLE automation objects, so Lesson Exit ends cleanly
 - [ ] The other NIDA ATT courses: on hold until the week of 2026-11-09
 
 [documentation/future.md](documentation/future.md) has the longer list. [CURSOR.md](CURSOR.md) is the handover note for Cursor (2026-11-08).

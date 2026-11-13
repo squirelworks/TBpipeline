@@ -151,6 +151,9 @@ class Machine:
         self.box.wine.host_time = host_time
         # True ends a run with no input script at its first idle point too (user_wnd._idle).
         self.box.wine.idle_stop = idle_stop
+        # A driver: called with the wine state where the run would stop idle with its input
+        # given; a script it returns is queued and the run goes on (user_wnd._idle).
+        self.box.wine.on_idle = None
         if input_script:
             self.input(input_script)
         self.uc = None
@@ -230,6 +233,7 @@ class Machine:
         self.box.wine.load_module = self._load_module
         self.box.wine.reference_module = lambda name: self._reference(self.box.images[name])
         self.box.wine.release_module = lambda name: self._release(self.box.images[name])
+        self.box.wine.unload_module = self._unload
         self.box.wine.alloc_code = self._alloc_code
         self.box.wine.exe_name = exe.name
         self.uc.hook_add(UC_HOOK_INSN, self._out, None, 1, 0, UC_X86_INS_OUT)
@@ -838,6 +842,54 @@ class Machine:
                 if dll is not None and not dll.synthetic and dll.name in self.referenced:
                     self._release(dll)
         return left
+
+    def _unload(self, name):
+        """NE_FreeModule of a library at its last use (Wine 2528aff2
+        dlls/krnl386.exe16/ne_module.c:1143). Returns (calls, finish) or a stop string.
+
+        In Wine's order: NE_CallUserSignalProc(USIG16_DLL_UNLOAD) (:1161), which is user.c
+        SignalProc16 (dlls/user.exe16/user.c:1891): free_module_classes
+        (dlls/user.exe16/window.c:76) unregisters the classes the module registered, which
+        UnregisterClass refuses while a window of the class is left, and drops them from its list
+        either way. Then MODULE_CallWEP (:1112): WEP(WEP_FREE_DLL) when the module exports it, a
+        Pascal call with one word. finish then takes the module off the module list (:1180), so
+        GetModuleHandle no longer finds it, and frees what it imported (:1189). neww keeps the
+        module's memory. A module an import frees in turn that has a WEP of its own stops, as
+        neww calls one WEP only; so does a later LoadLibrary of the module (wine._load_library),
+        since Wine would load it afresh and run its LibMain again."""
+        from .guest import Call
+        from .user_wnd import wm
+        wine = self.box.wine
+        image = self.box.images[name]
+        module = wine.modules[name]
+        for dep in image.modules:
+            dll = self.box.images.get(dep)
+            if dll is None or dll.synthetic or dll.name not in self.referenced:
+                continue
+            handle = wine.modules.get(dll.name)
+            if handle is not None and wine.usage.get(handle, 1) <= 1 and self._entry_point(dll.path, "WEP"):
+                return (f"unloading {name} frees {dll.name} too, and neww calls one WEP per FreeLibrary: "
+                        f"Wine's NE_FreeModule would call {dll.name}'s WEP next")
+        m = wm(wine)
+        for cls in [c for c in m.classes if c.module == module]:
+            if not any(w.cls is cls and not w.destroyed for w in m.windows.values()):
+                m.classes.remove(cls)
+        calls = []
+        wep = self._entry_point(image.path, "WEP") if image.flags & 0x8000 else None
+        if wep is not None:
+            call = Call(wep[0], wep[1], words=[0])     # WEP_FREE_DLL
+            call.name = f"{name} WEP"
+            calls.append(call)
+
+        def finish():
+            wine.usage[module] = 1
+            self._release(image)
+            wine.modules.pop(name, None)
+            wine.unloaded[name] = Path(image.path).name.upper()
+            if wine.first_module == module:
+                wine.first_module = next(iter(reversed(list(wine.modules.values()))), 0)
+            wine.trace.append(f"  {name} unloaded" + (", its WEP called" if calls else ""))
+        return calls, finish
 
     def _task(self):
         """The first task's handle. The exe's task is linked after the main task at the same

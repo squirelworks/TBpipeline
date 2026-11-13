@@ -18,3 +18,17 @@ def ole_initialize(wine, arg, reserved):
     inits = counts.get(wine.htask, 0)
     counts[wine.htask] = inits + 1
     return (S_FALSE if inits else S_OK), 0
+
+
+E_FAIL = 0x80004005
+
+
+@api("OLE2", "OleFlushClipboard")
+def ole_flush_clipboard(wine, arg):
+    """ole2.c:270 OleFlushClipboard16 -> ole32/clipboard.c:2277 OleFlushClipboard: E_FAIL while
+    the thread's ole_inits is 0 (:2288); else, with no source data object (:2296), S_OK.
+    neww has no OleSetClipboard, which is what sets one (it stops by name), so there is never
+    one here. The spec's -ret16 keeps the low word."""
+    if not wine.__dict__.get("ole_inits", {}).get(wine.htask, 0):
+        return E_FAIL & 0xFFFF
+    return S_OK
