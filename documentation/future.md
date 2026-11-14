@@ -66,7 +66,7 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] Group A: the caret (`CreateCaret`, `SetCaretPos`, `ShowCaret`, `HideCaret`, and the blink through `WM_SYSTIMER`). The five NetClass system books.
 - [x] Group C: `RegOpenKeyA`, `RegOpenKeyExA`, `RegCloseKey` (one registry with SHELL's) and `GetShortPathNameA`.
 - [x] user32's OBM_ bitmaps for `LoadBitmap(0, id)`, read from `WINE_SRC` (new3_a, new3_b).
-- [ ] `EnumFonts` / `EnumFontFamiliesEx` over the installed faces (tb80.sbk).
+- [ ] `EnumFonts` / `EnumFontFamiliesEx` over the installed faces (tb80.sbk). Waiting on Squirrel's choice of font list ([HANDOFF.md](../HANDOFF.md#7-open-decisions-squirrels-call)).
 - [x] `GetBitmapBits` on a 32-bit bitmap and `CreateIcon` (tb80acta).
 - [x] Blocks over 1 MB: page-granular selectors, as `global.c:209` and `selector.c:66` give them (Walkthrough).
 - [x] `DrawText` (single-line and plain multi-line, `DT_CALCRECT`, alignment) and `DrawFocusRect`. The mnemonic is underscored as `TEXT_DrawUnderscore` draws it. Word breaks, tabs and ellipses stop by name.
@@ -79,8 +79,44 @@ Done for [#226](https://github.com/squirelworks/TBpipeline/issues/226): the rest
 - [x] Scroll bars are drawn as Wine draws them: arrows, the interior in the parent's `WM_CTLCOLORSCROLLBAR` brush (DefWindowProc's is the 0x55AA pattern) and the thumb. `SetScrollPos` and `SetScrollRange` with redraw draw at once.
 - [x] The walk tries Go > Next, a Next text, the button pictures on the screen (NIDA's bitmap Next), a click on the page (title pages), then Ctrl+Right, and says when none of them turned a page.
 - [x] The non-client hit test (`handle_nc_hit_test`): a click on the frame, caption or menu bar reaches `WM_SYSCOMMAND`.
-- [ ] Menu tracking (`track_mouse_menu_bar`), moving and sizing: `WM_SYSCOMMAND` stops there by name. 
-- [ ] The ~195 NIDA ATT courses in Drive, once they are reachable from the container.
+- [ ] Menu tracking (`track_mouse_menu_bar`), moving and sizing: `WM_SYSCOMMAND` stops there by name.
+- [ ] `SHELL.21 FindExecutable` (tb80hyp's hyperlink dialog, reached by the #239 walk): `SHELL_FindExecutable` searches the App Paths and the extension's registry class.
+- [x] Regions of many rectangles (`REGION_RegionOp` for every `CombineRgn` mode), clip regions of several rectangles, `InvertRect`, `AnsiToOemBuff`, INT 21h 41h and `GetNextDlgGroupItem` (#239).
+- [x] The 608 NIDA ATT courses on GwenTea2 (`~/TBK/bin/courses`). Run 2: 540 pass, then 605 after #236. Run 3 with the #238 walk: 607 open to idle, 1 stops (9395T903, the COMPOBJ Wine limit), and the walk turned no pages. The table is `neww/sweep/nida-findings.md` in the project files.
+- [ ] Run 4: the 608 courses with the #239 button walk (`--pages 30`). Started on 2026-11-13; its results were never collected.
+
+## Future work
+
+Ideas for taking this further once Roadmap 2 (#230) is done, roughly in order of payoff. None of them is started. Each would be its own work stream, so each is one sizeable PR (or a short series), not one PR per behavior.
+
+1. **A sweep report tool.** `python3 -m tbpipeline_neww.sweep_report run.jsonl [--against older.jsonl]` turns the JSON lines into the findings tables (pass, stuck and stop counts, top stop causes, books that got better or worse, screens per book). Today the tables are made by hand. Everything below leans on this.
+
+2. **Real page-walk coverage across all 608 courses, with regression baselines.**
+   - Measure coverage against the book itself: `tbpipeline_bf` already reads the page list from a `.tbk`, so a walk can report "reached 41 of 131 pages", not just "13 screens".
+   - Explore, don't just walk forward: treat each screen hash as a node and each click (menu Next, button picture, hotword, page click, Back) as an edge, and search breadth-first with a call budget. Use the `Machine.on_idle` hook (#234) to answer quizzes generically (try each choice).
+   - Keep baselines as hashes, not images: a per-book manifest of (step, screen hash, page label) in the project files. A run that reaches a different hash at the same step is a regression to look at. Write the differing screens as PNGs to the project files for review, never to the repo.
+
+3. **CI that runs the sweep on merge.** The books can't go to GitHub, so this needs a self-hosted runner on the machine that has them (GwenTea2). On each push to `main`: the §8.4 runs, the 78-book sweep and a sample of the NIDA courses (all 608 nightly). Compare with the last baseline and fail when a book that passed now stops or reaches fewer screens. Post the summary as a comment on the PR and the full table to the project files. This replaces the hand-run "frozen checkout" comparisons every PR does now.
+
+4. **A Win16 API coverage tracker driven by sweep failures.** From `spec_rows.py`/`spec32_rows.py` and the sweep's JSON: for each module, which ordinals have handlers, which are spec-row defaults, and which ones stopped how many books. Rank the missing calls by books unblocked. Publish it as a table in the project files (or keep one pinned issue updated). It turns "what next?" into a sorted list.
+
+5. **Speed.** A course opens in about 7 s (median) and 30 walk steps take about a minute, so 608 courses take about 2 hours on 6 cores.
+   - Profile first (`cProfile` on one course run) and fix the top items. Likely: the per-call hook path into Unicorn, selector and segment translation, and image work through Pillow per blit (move the screen to a numpy surface).
+   - Snapshot after startup: the first ~20,000 calls (TB80RTM and its DLLs starting) are the same for every course. Save the machine state once and fork or restore it per book.
+   - A faster sweep makes the CI and the coverage ideas above affordable.
+
+6. **A deviations register.** Section 6 of [HANDOFF.md](../HANDOFF.md) lists where neww departs from Wine on purpose (16-bit OLE automation objects, the `GetTickCount` advance, unqueued `SetCursorPos`, the fixed DOS clock). Give each one a marker in the code (`# DEVIATION: ...`) and a test that pins it, and have a test check the list and the markers agree. Then a change of mind is one place to look.
+
+7. **An interactive player.** neww already takes `--input` scripts and draws to an image. Show that image in a window (Tk is already used by opentoolbook8) and feed real mouse and keyboard events in, and NIDA courses become playable without a VM. This is the `v2.0.0` "ToolBook window" above, reached through the real runtime instead of a reimplementation.
+
+8. **Reconcile neww with opentoolbook8.** The two answer different questions: neww runs the real ToolBook runtime, opentoolbook8 is a clean-room reader. Two concrete links:
+   - Port what neww learned that is not ToolBook code: the symbol-font mapping (#232; the opentoolbook8 counterpart PR was never opened), metafile playback and map modes (#224).
+   - Use neww's screens as a second oracle beside Bochs: render the same page in both and diff. Whether that fits opentoolbook8's clean-room rule is Squirrel's call, so ask before doing it.
+   Don't merge the trees (see below).
+
+9. **Package a release.** Release `neww-v0.7.0` now (#232, #234 to #239), and `neww-v0.8.0` when every book in the sweep passes its open (the roadmap's release point). After that: a `pyproject.toml` with a `tbk-run` entry point (`tbk-run --runtime DIR BOOK [--input ...] [--screens OUT]`), pinned dependencies (Pillow below 12 until the NEAREST resize issue is understood), and a short user guide on getting an unpacked runtime folder (`python3 -m tbpipeline_bf.nehost --unpack`).
+
+10. **Wine version hygiene.** Every citation is to Wine `2528aff2`. A script that checks each cited `file:line` still holds the cited function in a newer Wine would make a later bump safe, and would catch citations that drifted when they were written.
 
 ## Do not do this
 
