@@ -1,5 +1,7 @@
 # Cursor handover, 2026-11-05 (takes effect Saturday 2026-11-08)
 
+> **Superseded for TBpipeline by [HANDOFF.md](HANDOFF.md) (2026-11-14).** Start there. Sections 5 (setup and traps) and 7 (where things are) below still apply. Section 6's "one behavior per PR" is replaced: PRs are now sizeable, one per repo per work stream.
+
 This note is for Cursor. It covers what changed since the last Cursor handoff (2026-10-31, `opentoolbook8` at `c260ae3`), what is on hold and why, what to pick up first, and how to run and check the work. The same file is `CURSOR.md` at the root of both `squirelworks/TBpipeline` and `squirelworks/opentoolbook8`. Your environment tarball also has a copy, with the project notes, the books and a ready `TBK_BIN`.
 
 The GitHub issues are the live record. Tick boxes there as work merges:

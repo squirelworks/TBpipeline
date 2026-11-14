@@ -47,7 +47,9 @@ Tick a box when its PR merges. The issues hold the detail.
 - [x] [#233](https://github.com/squirelworks/TBpipeline/issues/233): OLE automation objects and the 32-bit DLL unload. Lesson Exit now ends the task cleanly
 - [ ] [#227](https://github.com/squirelworks/TBpipeline/issues/227): the book sweep. Every TB80 book we have runs through neww, and its stops are fixed by group. This is the top item of [Roadmap 2](https://github.com/squirelworks/TBpipeline/issues/230)
   - [x] The runner (`python3 -m tbpipeline_neww.sweep`), plus the caret, the advapi32 registry, `GetShortPathNameA` and user32's OBM_ bitmaps
-  - [ ] Font enumeration, the EDIT control, the common file dialog, OLE controls, blocks over 1 MB, cross-task `SendMessage`
-  - [ ] Page walking (menu-bar clicks), and the ~195 NIDA ATT courses from Drive
+  - [x] OLE controls (stop where Wine faults), blocks over 1 MB, cross-task broadcast `SendMessage`, `DrawText`, scroll bars, the non-client hit test, regions of many rectangles (#236 to #239)
+  - [x] Page walking: Go > Next, Next text, button pictures and title-page clicks (#238, #239)
+  - [x] The 608 NIDA ATT courses run (Run 3: 607 open to idle). Run 4 with the button walk is still to collect
+  - [ ] Font enumeration (waiting on a decision), the EDIT control, `TB80HYP.SBK` for chewbyte, `FindExecutable`, menu tracking
 
-[documentation/future.md](documentation/future.md) has the longer list. [CURSOR.md](CURSOR.md) is the handover note for Cursor (2026-11-08).
+[documentation/future.md](documentation/future.md) has the longer list. [HANDOFF.md](HANDOFF.md) is the handover note (2026-11-14): how to run the sweeps, where results live, what is open. [CURSOR.md](CURSOR.md) is the earlier one (2026-11-05).
